@@ -10,7 +10,6 @@ This repository is the official code of the paper:
 > &ast; Corresponding Authors. <br> 
 >
 > *under review for journal paper* <br>
-> (Best Research Award 3rd prize for *ICRA* workshop on Future of Construction, 2024.)
 
 ![main](./fig/main.jpg)
 
