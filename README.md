@@ -1,5 +1,5 @@
 # Uni-mapper
-[**Paper**]() | [**Website**](https://sites.google.com/view/uni-mapper/home) | [**Video**](https://www.youtube.com/watch?v=MjOGxNkyeOM)
+[**Video**](https://www.youtube.com/watch?v=GoqtjIIt8MI)
 
 
 This repository is the official code of the paper:
