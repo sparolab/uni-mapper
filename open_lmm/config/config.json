@@ -9,7 +9,7 @@
   },
 
   "directory": {
-    "root_dir_path": "/media/gil/DATA/example",
+    "root_dir_path": "/root/dataset_root/example",
     "sub_dir_list" : [
       "agent1",
       "agent2",
@@ -20,6 +20,6 @@
       "agent7"
     ],
     // outputs are saved in this directory with time info(e.g. ${root_save_dir}/2025_7_22_2_1_24)
-    "root_save_dir" : "/home/gil/3_Research/OpenLMM_ws/output"
+    "root_save_dir" : "/root/workspace/output"
   }
 }

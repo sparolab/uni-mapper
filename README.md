@@ -10,11 +10,6 @@
 ## Uni-mapper
 [<img src="https://img.youtube.com/vi/SK0TU9Vy3Is/maxresdefault.jpg" alt="Uni-Mapper Youtube Video" width="100%">](https://www.youtube.com/watch?v=SK0TU9Vy3Is)
 
-
-
-
-
-
 This repository is the official code of the paper:
 
 > **Uni-Mapper: Unified Mapping Framework for Multi-modal LiDARs in Complex and Dynamic Environments**
@@ -70,41 +65,24 @@ Our approach consists of three core components: dynamic object removal, dynamic-
 
 
 
-<!-- <p align="center">
-  <img width='100%' src="https://gist.github.com/user-attachments/assets/73bade41-570d-447b-9831-6474bc97bbd3.mp4">
-</p> -->
-
 [Click here for a demo!](https://gist.github.com/user-attachments/assets/73bade41-570d-447b-9831-6474bc97bbd3)
-
-<!-- <video width="100%" autoplay loop muted playsinline>
-  <source src="https://gist.github.com/user-attachments/assets/73bade41-570d-447b-9831-6474bc97bbd3.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video> -->
-
-
-
-
 
 
 
 **Features**
-
 - **Data Loader**
   - Supports `pcd`, `bin`, and custom formats for scan data
   - Supports `KITTI`, `TUM`, and custom formats for pose data
-
 - **Loop Detector**
   - Dynamic loading of place recognition (PR) modules
   - Supports k-d tree–based vector search modules (`Scan Context`, `Solid`)
-
 - **Backend Optimizer**
   - Supports `iSAM2` based optimization
-
 - **Dynamic Remover**
   - Dynamic loading of dynamic object removal (DOR) modules
   - Supports online removal modules (`HMM-MOS`, `DUFOMap`)
   - Supports offline removal module (`ERASOR`)
-  
+
 
 ## Setting
 ### System requirenments
@@ -119,8 +97,8 @@ Our approach consists of three core components: dynamic object removal, dynamic-
 mkdir -p ws_OpenLMM/src
 cd ws_OpenLMM/src
 
-# 2. Clone repository
-git clone https://github.com/hwan0806/open-lmm
+2. Clone the repository (renaming the directory to `open-lmm` is important!)
+git clone https://github.com/sparolab/uni-mapper.git open-lmm
 
 # 3. colcon build
 cd ..
@@ -143,8 +121,8 @@ ros2 run open_lmm_ros open_lmm_rosnode
 mkdir -p ws_OpenLMM/src
 cd ws_OpenLMM/src
 
-# 2. Clone repository
-git clone https://github.com/hwan0806/open-lmm
+2. Clone the repository (renaming the directory to `open-lmm` is important!)
+git clone https://github.com/sparolab/uni-mapper.git open-lmm
 
 # 3. Set open-lmm via dockerfile
 cd open-lmm
