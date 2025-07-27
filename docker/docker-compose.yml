@@ -1,0 +1,36 @@
+# Acknowledgement
+#
+# Special thanks to GEONMO YANG(ygm7422@gmail.com)
+# for providing the initial shell script and docker-compose configuration,
+# which played a key role in setting up the Docker-based environment for this project.
+
+version: '3'
+
+services:
+  open-lmm:
+    image: ${DOCKER_IMAGE}
+    build:
+      context: ./
+      dockerfile: ./${DOCKER_FILE}
+      args:
+        workspace_path: ${BASE_PATH}
+    tty: true
+    environment: # used inside a docker.
+      - DEBUG=
+      - DISPLAY=unix${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    container_name: ${WORKSPACE_NAME}
+    ipc: host
+    shm_size: 512M
+    network_mode: host
+    privileged: true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /root/.Xauthority:/root/.Xauthority
+      - /dev/dri:/dev/dri                       #X11 stuff
+      - /dev/snd:/dev/snd                       #X11 stuff
+      - ${BASE_PATH}:/root/workspace
+      - ${DATASET_PATH}:/root/dataset_root
+      # connect devices
+    # entrypoint:
+    command: bash

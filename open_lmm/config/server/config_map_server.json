@@ -1,0 +1,5 @@
+{
+  "map_server": {
+    "enable_map_updater": true
+  }
+}

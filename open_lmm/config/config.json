@@ -1,0 +1,25 @@
+{
+  "global": {
+    "config_path": "",
+    "config_map_server" : "server/config_map_server.json",
+    "config_data_loader": "core/data_loader/file_based.json",
+    "config_loop_detector": "core/loop_detector/scan_context.json",
+    "config_backend_optimizer": "core/backend_optimizer/incremental.json",
+    "config_dynamic_remover": "core/dynamic_remover/hmm_mos.json"
+  },
+
+  "directory": {
+    "root_dir_path": "/media/gil/DATA/example",
+    "sub_dir_list" : [
+      "agent1",
+      "agent2",
+      "agent3",
+      "agent4",
+      "agent5",
+      "agent6",
+      "agent7"
+    ],
+    // outputs are saved in this directory with time info(e.g. ${root_save_dir}/2025_7_22_2_1_24)
+    "root_save_dir" : "/home/gil/3_Research/OpenLMM_ws/output"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "dynamic_remover": {
+    "dynamic_remover_type": "online",
+    "model" : "dufomap",
+    "replace_intensity": true,
+    // core
+    "resolution": 0.2,
+    "inflate_unknown": 1,
+    "inflate_hits_dist": 0.2,
+    // integration
+    "inflate_unknown_compensation": true,
+    "ray_passthrough_hits": false,
+    "down_sampling_method": "center",
+    "max_range": -1,
+    "only_valid": false,
+    "hit_depth": 0,
+    "miss_depth": 0,
+    // "ray_casting_depth": 0,
+    "simple_ray_casting": false,
+    "simple_ray_casting_factor": 1.0,
+    "parallel": true,
+    "num_threads": 8,
+    // map
+    "levels": 20
+  }
+}

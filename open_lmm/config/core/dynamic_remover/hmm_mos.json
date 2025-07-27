@@ -1,0 +1,17 @@
+{
+  "dynamic_remover": {
+    "dynamic_remover_type": "online",
+    "model" : "hmm_mos",
+    "replace_intensity": true,
+    "voxel_size": 0.2,
+    "occupancy_sigma": 0.2,
+    "free_sigma": 0.2,
+    "belief_threshold": 0.99,
+    "conv_size": 5,
+    "local_window_size": 3,
+    "global_window_size": 300,
+    "min_otsu": 3,
+    "max_range": 50,
+    "min_range": 0.5
+  }
+}

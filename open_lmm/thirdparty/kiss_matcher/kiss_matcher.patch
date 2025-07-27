@@ -1,0 +1,39 @@
+--- a/cpp/kiss_matcher/CMakeLists.txt
++++ b/cpp/kiss_matcher/CMakeLists.txt
+@@ -23,1 +23,1 @@
+-option(USE_SYSTEM_ROBIN "Use system pre-installed ROBIN from SPARK @ MIT" ON)
++option(USE_SYSTEM_ROBIN "Use system pre-installed ROBIN from SPARK @ MIT" OFF)
+
+--- a/cpp/kiss_matcher/core/kiss_matcher/KISSMatcher.hpp
++++ b/cpp/kiss_matcher/core/kiss_matcher/KISSMatcher.hpp
+@@ -100,15 +100,15 @@
+-    if ((robin_noise_bound_ > 1.0) && enable_noise_bound_clamping) {
+-      std::cout
+-          << "\033[1;33m[Warning] Too large `robin_noise_bound_` has been set.\n"
+-          << "Empirically, 1.0 tends to work better for large-scale maps.\n"
+-          << "If you do not want to clamp these values, disable `enable_noise_clamping`.\n\033[0m";
+-      robin_noise_bound_ = 1.0;
+-    }
+-
+-    if ((solver_noise_bound_ > 1.0) && enable_noise_bound_clamping) {
+-      std::cout
+-          << "\033[1;33m[Warning] Too large `solver_noise bound_` has been set.\n"
+-          << "Empirically, 1.0 tends to work better for large-scale maps.\n"
+-          << "If you do not want to clamp these values, disable `enable_noise_clamping`.\n\033[0m";
+-      solver_noise_bound_ = 1.0;
+-    }
++    // if ((robin_noise_bound_ > 1.0) && enable_noise_bound_clamping) {
++    //   std::cout
++    //       << "\033[1;33m[Warning] Too large `robin_noise_bound_` has been set.\n"
++    //       << "Empirically, 1.0 tends to work better for large-scale maps.\n"
++    //       << "If you do not want to clamp these values, disable `enable_noise_clamping`.\n\033[0m";
++    //   robin_noise_bound_ = 1.0;
++    // }
++
++    // if ((solver_noise_bound_ > 1.0) && enable_noise_bound_clamping) {
++    //   std::cout
++    //       << "\033[1;33m[Warning] Too large `solver_noise bound_` has been set.\n"
++    //       << "Empirically, 1.0 tends to work better for large-scale maps.\n"
++    //       << "If you do not want to clamp these values, disable `enable_noise_clamping`.\n\033[0m";
++    //   solver_noise_bound_ = 1.0;
++    // }

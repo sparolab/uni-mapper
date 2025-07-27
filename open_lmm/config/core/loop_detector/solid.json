@@ -1,0 +1,23 @@
+{
+  "loop_detector": {
+    "loop_detector_type": "kdtree",
+    "model" : "solid",
+    // solid params
+    "num_range": 40,
+    "num_angle": 60,
+    "num_height": 32,
+    "fov_u": 22.5,
+    "fov_d": -22.5,
+    "min_distance": 3,
+    "max_distance": 80,
+    "voxel_size": 0.4
+  },
+  "database": {
+    // kdtree params
+    "descriptor_vector_dim": 40,
+    "distance_threshold": 0.01,
+    "num_candidates": 3,
+    "rebuild_threshold": 50
+  }
+  
+}

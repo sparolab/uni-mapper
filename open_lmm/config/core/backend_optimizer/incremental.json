@@ -1,0 +1,8 @@
+{
+  "backend_optimizer": {
+    "backend_optimizer_type": "incremental",
+    // isam params
+    "relinearizeThreshold": 0.1,
+    "relinearizeSkip": 1
+  }
+}

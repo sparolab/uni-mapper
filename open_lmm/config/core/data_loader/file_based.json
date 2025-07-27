@@ -1,0 +1,20 @@
+{
+  "data_loader": {
+    // data_loader_type : file / bag
+    "data_loader_type": "file_based",
+    // data_pose_format : kitti / tum
+    "pose_format": "kitti",
+    // data_pose : support txt / csv
+    "pose_file_name": "optimized_poses.txt",
+    "extrinsic": [
+      0, 0, 0, 0, 0, 0, 1
+    ],
+    // data_scan_type : pcd / bin
+    "scan_type": "pcd",
+    "scan_dir_name": "Scans",
+    "voxel_size": 0.4,
+    "min_range": 5.0,
+    "max_range": 50.0,
+    "delimiter": " "
+  }
+}

@@ -1,0 +1,34 @@
+# Config file for the open_lmm package
+#
+# Usage from an external project:
+#
+#  find_package(open_lmm REQUIRED)
+#  target_link_libraries(MY_TARGET_NAME open_lmm::open_lmm)
+#
+@PACKAGE_INIT@
+
+include_guard()
+
+# set(USE_CCACHE @USE_SYSTEM_CCACHE@)
+# set(USE_SYSTEM_EIGEN3 @USE_SYSTEM_EIGEN3@)
+# set(USE_SYSTEM_TBB @USE_SYSTEM_TBB@)
+# set(USE_SYSTEM_PCL @USE_SYSTEM_PCL@)
+# set(USE_SYSTEM_GTSAM @USE_SYSTEM_GTSAM@)
+# set(USE_SYSTEM_SMALL_GICP @USE_SYSTEM_SMALL_GICP@)
+# set(USE_SYSTEM_KISS_MATCHER @USE_SYSTEM_KISS_MATCHER@)
+
+
+include(CMakeFindDependencyMacro)
+find_dependency(Eigen3 REQUIRED)
+find_dependency(TBB REQUIRED)
+find_dependency(PCL REQUIRED)
+find_dependency(GTSAM REQUIRED)
+find_dependency(small_gicp REQUIRED)
+find_dependency(kiss_matcher REQUIRED)
+find_package(fmt REQUIRED)
+find_dependency(spdlog REQUIRED)
+find_dependency(ufomap REQUIRED)
+find_dependency(unordered_dense REQUIRED)
+
+
+include("${CMAKE_CURRENT_LIST_DIR}/open_lmm-targets.cmake")

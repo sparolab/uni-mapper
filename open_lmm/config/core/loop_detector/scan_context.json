@@ -1,0 +1,18 @@
+{
+  "loop_detector": {
+    "loop_detector_type": "kdtree",
+    "model" : "scan_context",
+    // scan_context params
+    "num_ring": 20,
+    "num_sector": 60,
+    "max_range": 50
+    // "search_ratio": 0.1
+  }, 
+  "database": {
+    // kdtree params
+    "descriptor_vector_dim": 20,
+    "distance_threshold": 0.15,
+    "num_candidates": 3,
+    "rebuild_threshold": 50
+  }
+}

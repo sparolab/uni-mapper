@@ -1,0 +1,24 @@
+{
+  "dynamic_remover": {
+    "dynamic_remover_type": "offline",
+    "model" : "erasor",
+    "replace_intensity": true,
+    "max_range": 80.0,
+    "num_rings": 20,
+    "num_sectors": 108,
+    "min_h": -1.7, // [m] Note that it depends on the distance between body frame and ground contact point of mobile robots
+    "max_h": 3.1, // [m] Note that it depends on the distance between body frame and ground contact point of mobile robots
+    "scan_ratio_threshold": 0.20, // The Larger, the more aggressive!!
+    "minimum_num_pts": 6,
+    "gf_dist_thr": 0.125,
+    "gf_iter": 3,
+    "gf_num_lpr": 10,
+    "gf_th_seeds_height": 0.5,
+    "num_lowest_pts": 1,
+    "query_voxel_size": 0.1,
+    "map_voxel_size": 0.2,
+    "voxelization_interval": 10,
+    "removal_interval": 5,
+    "tf_z": 0.7
+  }
+}
