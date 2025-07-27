@@ -38,7 +38,7 @@ Our approach consists of three core components: dynamic object removal, dynamic-
 
 
 ## How to use
-- TBD
+- refer the `workshop` branch
 
 
 ## Updates
@@ -84,7 +84,7 @@ Our approach consists of three core components: dynamic object removal, dynamic-
   - Supports offline removal module (`ERASOR`)
 
 
-## Setting
+## Local Setting
 ### System requirenments
 - [Ubuntu 22.04](https://releases.ubuntu.com/jammy/)
 - [ROS2 Humble](https://docs.ros.org/en/humble/index.html)
@@ -109,13 +109,13 @@ source install/setup.bash
 ros2 run open_lmm_ros open_lmm_rosnode
 ```
 
-## Docker Build
+## Docker Setting
 ### System requirenments
 - docker
 - docker-compose
 
 
-### Docker setting
+### Docker build
 ```
 # 1. make your own workspace in local system
 mkdir -p ws_OpenLMM/src
@@ -138,7 +138,7 @@ ros2 run open_lmm_ros open_lmm_rosnode
 ```
 
 ## How to use?
-### Example dataset
+### Prepare example dataset
 Sample dataset collected in our campus (**[Google Drive link](https://drive.google.com/drive/folders/1MiwAkoHn0tzPc5O6FQhFEykhTY4JBqxU?usp=sharing)**)
 
 ### Data format
@@ -150,10 +150,10 @@ root
 │  │  │  ├─ 000000.pcd
 │  │  │  ├─ 000001.pcd
 │  │  │  └─ ...
-│  │  └─ poses.txt
+│  │  └─ optimized_poses.txt
 │  ├─ agent2
 │  │  ├─ Scans
-│  │  └─ poses.txt
+│  │  └─ optimized_poses.txt
 │  └─ ...
 └─ ...
 ```
@@ -164,9 +164,11 @@ root
 - You can also define a `custom` type for both scan format and pose format.
 - Since **Uni-Mapper** utilizes **STD** as the base loop descriptor, I also use accumulated scans as keyframes (by accumulating 10 frames of Fast-LIO2 output points).
 
+### Config setting
+TBD
 
 
-# TODO
+## TODO
 - [ ] Add visualization support
 - [ ] Refactor the centralized `shared_data` structure
 - [ ] Replace `PCL` types with `Eigen` vectors
@@ -186,5 +188,8 @@ This project stands on the shoulders of giants—it is built upon a foundation o
 - **[Dynamic Benchmark](https://github.com/KTH-RPL/DynamicMap_Benchmark)** – offered C++-refactored versions of dynamic object removal algorithms such as **[ERASOR](https://github.com/LimHyungTae/ERASOR)** and **[DUFOMap](https://github.com/Kin-Zhang/dufomap)**
 - **[HmmMOS](https://github.com/vb44/HMM-MOS)** – referred to as a SOTA online dynamic object removal approach
 
+## License
+Since this repository includes `ERASOR` (licensed under `GPL-3.0`), it is also distributed under the same license.
+
 ## Contact
-Maintained by Gilhwan Kang and please contact the author via gilhwan@hyundai.com
+- Maintainer: Gilhwan Kang (gilhwan@hyundai.com)
