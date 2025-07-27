@@ -1,0 +1,13 @@
+<launch>
+    <arg name="project" default="uni_mapper"/>
+
+    <!-- Parameters -->
+    <rosparam file="$(find uni_mapper)/config/params.yaml" command="load" />
+
+    <!-- main -->
+    <node pkg="uni_mapper" type="main" name="main" output="screen" respawn="false"/>
+
+    <!--- Run Rviz -->
+    <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz_STD" args="-d $(find uni_mapper)/config/unimapper.rviz" />
+
+</launch>
