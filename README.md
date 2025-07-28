@@ -1,7 +1,7 @@
 # OpenLMM
 
 > [!note]
-> This branch is a generalized version of **Uni-Mapper**. As the main author has graduated and follow-up work based on this paper is ongoing, the official code release is limited. Instead, we decided to provide **OpenLMM**, a more generalized version of **Uni-Mapper** that includes multi-map alignment and dynamic object removal modules.
+> This branch is a generalized version of **[Uni-Mapper](https://ieeexplore.ieee.org/abstract/document/11057931)**. As the main author has graduated and follow-up work based on this paper is ongoing, the official code release is limited. Instead, we decided to provide **OpenLMM**, a more generalized version of **Uni-Mapper** that includes multi-map alignment and dynamic object removal modules.
 
 
 <details>
