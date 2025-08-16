@@ -58,8 +58,8 @@ target_link_libraries(open_lmm_rosnode
 
 # Install launch files.
 install(DIRECTORY
-  ${ros_version}/launch
-  ${ros_version}/rviz
+  # ${ros_version}/launch
+  # ${ros_version}/rviz
   DESTINATION share/${PROJECT_NAME}/
 )
 ament_auto_package()
