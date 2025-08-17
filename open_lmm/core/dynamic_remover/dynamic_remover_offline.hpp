@@ -1,8 +1,6 @@
 #pragma once
-#include <tqdmcpp/tqdmcpp.hpp>
-
-
 #include <open_lmm/core/dynamic_remover/remover_factory/offline/interface_offline_plugin.hpp>
+#include <tqdmcpp/tqdmcpp.hpp>
 
 #include "dynamic_remover_base.hpp"
 

@@ -1,11 +1,10 @@
 #pragma once
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
-#include <tqdmcpp/tqdmcpp.hpp>
-
-
-#include <filesystem>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
+#include <tqdmcpp/tqdmcpp.hpp>
+
+#include <filesystem>
+#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
 #include <type_traits>
 
 #include "loop_detector_base.hpp"

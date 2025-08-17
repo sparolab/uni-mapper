@@ -1,9 +1,8 @@
 #pragma once
 
+#include <map>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
-#include <map>
 #include <string>
 #include <vector>
 

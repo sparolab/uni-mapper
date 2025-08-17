@@ -10,10 +10,11 @@
  */
 
 #pragma once
-#include <Eigen/Dense>
-#include <cmath>
 #include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
 #include <open_lmm/utils/config.hpp>
+
+#include <Eigen/Dense>
+#include <cmath>
 #include <vector>
 
 // Parameters for SOLiD descriptor

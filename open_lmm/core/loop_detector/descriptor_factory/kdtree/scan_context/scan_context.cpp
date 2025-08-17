@@ -10,7 +10,6 @@
 #include <iostream>
 #include <numeric>
 
-
 ScanContextParams::ScanContextParams() {
   open_lmm::Config config = open_lmm::Config(
       open_lmm::GlobalConfig::get_global_config_path("config_loop_detector"));
@@ -22,7 +21,7 @@ ScanContextParams::ScanContextParams() {
 bool ScanContextParams::equals(const ScanContextParams& other) const {
   // Check all parameters are equal
   return this->number_sectors == other.number_sectors &&  //
-         this->number_rings == other.number_rings &&      //
+         this->number_rings == other.number_rings &&  //
          this->max_range == other.max_range;
 }
 
@@ -142,9 +141,9 @@ std::shared_ptr<IDescriptorKdtree> ScanContext::makeDescriptor(
   // Iterate over all points
   for (const pcl::PointXYZI& point : lidar_scan->points) {
     // Compute range to point
-    const double x = point.x;                       // meters
-    const double y = point.y;                       // meters
-    const double height = point.z;                  // meters
+    const double x = point.x;  // meters
+    const double y = point.y;  // meters
+    const double height = point.z;  // meters
     const double range = std::sqrt(x * x + y * y);  // meters
     const double angle_rad =
         std::fmod(std::atan2(y, x) + 2 * M_PI, 2 * M_PI);  // radians

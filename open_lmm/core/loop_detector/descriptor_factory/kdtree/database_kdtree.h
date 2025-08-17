@@ -1,10 +1,11 @@
 #pragma once
 
+#include <nanoflann.hpp>
+#include <open_lmm/utils/config.hpp>
+
 #include <Eigen/Dense>
 #include <map>
 #include <memory>
-#include <nanoflann.hpp>
-#include <open_lmm/utils/config.hpp>
 #include <optional>
 
 #include "database_base.hpp"

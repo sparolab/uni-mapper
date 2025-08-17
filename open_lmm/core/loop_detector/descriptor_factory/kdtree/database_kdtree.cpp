@@ -25,8 +25,9 @@ DatabaseKdtree::DatabaseKdtree(const KdtreeParams& params) : params_(params) {
 }
 
 /*********************************************************************************************************************/
-void DatabaseKdtree::insert(char agent_id, size_t key,
-                            const std::shared_ptr<IDescriptorKdtree>& descriptor) {
+void DatabaseKdtree::insert(
+    char agent_id, size_t key,
+    const std::shared_ptr<IDescriptorKdtree>& descriptor) {
   // Guard Code
   // if (!params_.descriptor_params.equals(descriptor.params())) {
   //   throw std::invalid_argument(
@@ -34,8 +35,7 @@ void DatabaseKdtree::insert(char agent_id, size_t key,
   //       parameters to database");
   // }
   // Add the new descriptor to the insertion queue
-  database_.emplace_back(std::make_tuple(
-      agent_id, key, descriptor));
+  database_.emplace_back(std::make_tuple(agent_id, key, descriptor));
   // Rebuild the database if necessary
   tree_descriptor_keys_.data.emplace_back(descriptor->getDescriptorKey());
   tryRebuild();
@@ -112,8 +112,8 @@ void DatabaseKdtree::tryRebuild() {
 
 /*********************************************************************************************************************/
 std::vector<std::pair<size_t, double>>
-DatabaseKdtree::findDescriptorKeyNeighborsSafe(const std::shared_ptr<IDescriptorKdtree>& query,
-                                               size_t k) const {
+DatabaseKdtree::findDescriptorKeyNeighborsSafe(
+    const std::shared_ptr<IDescriptorKdtree>& query, size_t k) const {
   std::vector<std::pair<size_t, double>> neighbors;
   size_t num_results = k;
   // Setup the KNN search

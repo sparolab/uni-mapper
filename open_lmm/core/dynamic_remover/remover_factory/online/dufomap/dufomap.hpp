@@ -2,6 +2,7 @@
 
 // STL
 #include <boost/filesystem.hpp>
+
 #include <iostream>
 #include <thread>
 // 3rdParty
@@ -10,14 +11,13 @@
 // UFO
 #include <ufo/map/ufomap.hpp>
 // PCL
+#include <open_lmm/core/dynamic_remover/remover_factory/online/interface_online_plugin.hpp>
+
 #include <math.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
-#include <open_lmm/core/dynamic_remover/remover_factory/online/interface_online_plugin.hpp>
-
 #include "params.hpp"
-
 
 class DUFOMap : public IOnlineRemoverPlugin {
  public:

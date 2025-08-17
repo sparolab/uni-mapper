@@ -1,10 +1,10 @@
 #pragma once
 
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+#include <boost/circular_buffer.hpp>
 
 #include <Eigen/Core>
-#include <boost/circular_buffer.hpp>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 #include "Map.hpp"
 #include "Scan.hpp"

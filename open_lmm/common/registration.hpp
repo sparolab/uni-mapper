@@ -1,7 +1,6 @@
+#include <Eigen/Core>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
-#include <Eigen/Core>
 
 #include "data_types.hpp"
 #include "shared_data.hpp"

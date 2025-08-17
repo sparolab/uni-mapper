@@ -1,6 +1,5 @@
 #include "hmm_mos.hpp"
 
-
 HmmMos::HmmMos(const HmmMosParams& params)
     : params_(params), scan_(params_), map_(params_) {
   initialize();

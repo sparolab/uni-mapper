@@ -1,11 +1,11 @@
 #include "registration.hpp"
 
-#include <pcl/common/transforms.h>
-#include <pcl/io/pcd_io.h>
-
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/pcl/pcl_registration.hpp>
+
+#include <pcl/common/transforms.h>
+#include <pcl/io/pcd_io.h>
 
 namespace open_lmm {
 pcl::PointCloud<pcl::PointXYZI>::Ptr createSubmap(

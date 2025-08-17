@@ -51,6 +51,4 @@ bool LoopDetectorBase::TryKissMatcher(
   }
 }
 
-
-
 }  // namespace open_lmm

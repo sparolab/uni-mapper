@@ -1,15 +1,15 @@
 #pragma once
 
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+#include <open_lmm/common/data_types.hpp>
+#include <open_lmm/common/shared_data.hpp>
+#include <open_lmm/utils/config.hpp>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <filesystem>
 #include <memory>
-#include <open_lmm/common/data_types.hpp>
-#include <open_lmm/common/shared_data.hpp>
-#include <open_lmm/utils/config.hpp>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 #include <string>
 namespace fs = std::filesystem;
 

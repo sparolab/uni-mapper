@@ -1,5 +1,7 @@
 #include "backend_optimizer_incremental.hpp"
 
+#include <open_lmm/common/registration.hpp>
+
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/GncOptimizer.h>
@@ -8,8 +10,6 @@
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
-
-#include <open_lmm/common/registration.hpp>
 
 #include "BetweenFactorWithAnchoring.h"
 

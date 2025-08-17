@@ -1,6 +1,7 @@
 #pragma once
-#include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <tqdmcpp/tqdmcpp.hpp>
+
+#include <gtsam/nonlinear/NonlinearFactorGraph.h>
 
 #include "backend_optimizer_base.hpp"
 

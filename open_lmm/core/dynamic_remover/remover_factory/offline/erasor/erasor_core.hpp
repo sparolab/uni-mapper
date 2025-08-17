@@ -13,11 +13,10 @@
 
 #pragma once
 #include <math.h>
+#include <mutex>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
-#include <mutex>
 #include <thread>
 
 #include "utils.hpp"
@@ -34,7 +33,7 @@
 #define MAP_IS_HIGHER 0.5
 #define CURR_IS_HIGHER 1.0
 #define LITTLE_NUM 0.0  // For viz: blue - not activated
-#define BLOCKED 0.8     // For viz
+#define BLOCKED 0.8  // For viz
 
 #define MERGE_BINS 0.25
 #define NOT_ASSIGNED 0.0
@@ -106,8 +105,8 @@ class ErasorCore {
   void r_pod2pc(const R_POD& sc, pcl::PointCloud<PointT>& pc);
 
   common::Config cfg_;
-  R_POD r_pod_map;       // R_POD of Map
-  R_POD r_pod_curr;      // R_POD of current pointcloud
+  R_POD r_pod_map;  // R_POD of Map
+  R_POD r_pod_curr;  // R_POD of current pointcloud
   R_POD r_pod_selected;  // R_POD of current pointcloud
   Eigen::MatrixXf normal_;
   double th_dist_d_, d_;

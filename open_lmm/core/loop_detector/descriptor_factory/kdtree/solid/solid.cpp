@@ -29,9 +29,7 @@ bool SolidParams::equals(const SolidParams& other) const {
          max_distance == other.max_distance && voxel_size == other.voxel_size;
 }
 
-const Eigen::MatrixXd& SOLiD::getDescriptor() const {
-  return descriptor_;
-}
+const Eigen::MatrixXd& SOLiD::getDescriptor() const { return descriptor_; }
 
 const Eigen::VectorXd& SOLiD::getDescriptorKey() const { return r_solid_key_; }
 

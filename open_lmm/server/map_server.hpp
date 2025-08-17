@@ -1,9 +1,10 @@
 #pragma once
 
-#include <filesystem>
 #include <open_lmm/common/shared_data.hpp>
 #include <open_lmm/server/map_aligner/map_aligner.hpp>
 #include <open_lmm/server/map_updater/map_updater.hpp>
+
+#include <filesystem>
 #include <vector>
 
 namespace fs = std::filesystem;

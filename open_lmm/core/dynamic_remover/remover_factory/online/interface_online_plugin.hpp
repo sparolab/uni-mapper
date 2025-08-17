@@ -1,9 +1,8 @@
 #pragma once
 
+#include <Eigen/Geometry>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
-#include <Eigen/Geometry>
 
 class IOnlineRemoverPlugin {
  public:

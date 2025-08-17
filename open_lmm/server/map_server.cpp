@@ -1,13 +1,13 @@
 
 #include "map_server.hpp"
 
+#include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/utils/config.hpp>
+
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/Symbol.h>
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
-
-#include <open_lmm/common/pointcloud_utils.hpp>
-#include <open_lmm/utils/config.hpp>
 
 namespace open_lmm {
 

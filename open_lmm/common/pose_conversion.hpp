@@ -1,7 +1,6 @@
 #pragma once
-#include <pcl/io/pcd_io.h>
-
 #include <Eigen/Geometry>
+#include <pcl/io/pcd_io.h>
 #include <vector>
 
 Eigen::Isometry3d kittiPoseToIsometry3d(std::vector<double>& values);

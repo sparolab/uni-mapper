@@ -1,18 +1,17 @@
 #pragma once
 
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
-
-#include <Eigen/Geometry>
-#include <filesystem>
-#include <open_lmm/common/data_types.hpp>
-#include <open_lmm/common/shared_data.hpp>
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
-
 #include <kiss_matcher/FasterPFH.hpp>
 #include <kiss_matcher/GncSolver.hpp>
 #include <kiss_matcher/KISSMatcher.hpp>
+#include <open_lmm/common/data_types.hpp>
+#include <open_lmm/common/shared_data.hpp>
+#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
 #include <open_lmm/utils/config.hpp>
 #include <open_lmm/utils/load_module.hpp>
+
+#include <Eigen/Geometry>
+#include <filesystem>
+#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
 
 namespace open_lmm {
 

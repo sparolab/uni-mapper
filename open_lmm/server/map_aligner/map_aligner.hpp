@@ -5,13 +5,14 @@
 #include <optional>
 
 // #include <Eigen/Core>
-#include <Eigen/Geometry>
 #include <open_lmm/common/shared_data.hpp>
 #include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
 #include <open_lmm/core/loop_detector/loop_detector_base.hpp>
 #include <open_lmm/utils/config.hpp>
+
+#include <Eigen/Geometry>
 
 namespace fs = std::filesystem;
 namespace open_lmm {

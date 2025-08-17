@@ -1,9 +1,8 @@
 #pragma once
 
+#include <Eigen/Core>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
-#include <Eigen/Core>
 
 #include "erasor_core.hpp"
 #include "utils.hpp"

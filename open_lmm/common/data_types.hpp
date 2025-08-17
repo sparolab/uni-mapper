@@ -1,10 +1,9 @@
 #pragma once
 
+#include <Eigen/Geometry>
 #include <open_lmm/core/loop_detector/descriptor_factory/kdtree/scan_context/scan_context.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
-#include <Eigen/Geometry>
 #include <vector>
 
 namespace open_lmm {

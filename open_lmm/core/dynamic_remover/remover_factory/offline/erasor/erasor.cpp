@@ -1,10 +1,10 @@
 #include "erasor.hpp"
 
-#include <pcl/filters/voxel_grid.h>
-
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/util/downsampling_tbb.hpp>
+
+#include <pcl/filters/voxel_grid.h>
 
 // TODO(gil) : remove define
 #define NUM_PTS_LARGE_ENOUGH 200000

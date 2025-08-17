@@ -1,12 +1,11 @@
 #pragma once
-#include <tqdmcpp/tqdmcpp.hpp>
-
-
-#include <filesystem>
-#include <fstream>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/pose_conversion.hpp>
+#include <tqdmcpp/tqdmcpp.hpp>
+
+#include <filesystem>
+#include <fstream>
 
 #include "data_loader_base.hpp"
 

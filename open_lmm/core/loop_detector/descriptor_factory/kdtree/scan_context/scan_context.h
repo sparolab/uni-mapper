@@ -13,13 +13,13 @@
  */
 
 #pragma once
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
+#include <open_lmm/utils/config.hpp>
 
 #include <Eigen/Dense>
 #include <cstddef>
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
-#include <open_lmm/utils/config.hpp>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 #include <vector>
 
 struct ScanContextParams {

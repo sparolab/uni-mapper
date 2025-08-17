@@ -1,7 +1,7 @@
 #include "dynamic_remover_base.hpp"
 
-#include "dynamic_remover_online.hpp"
 #include "dynamic_remover_offline.hpp"
+#include "dynamic_remover_online.hpp"
 
 namespace open_lmm {
 

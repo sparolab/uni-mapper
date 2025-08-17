@@ -1,4 +1,5 @@
 #include <open_lmm/utils/config.hpp>
+
 #include <string>
 
 struct HmmMosParams {

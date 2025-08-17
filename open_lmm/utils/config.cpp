@@ -1,4 +1,5 @@
 #include "config.hpp"
+
 #include "config_impl.hpp"
 
 namespace open_lmm {
@@ -6,8 +7,7 @@ namespace open_lmm {
 GlobalConfig* GlobalConfig::inst = nullptr;
 
 Config::Config(const std::string& config_filename)
-: config_path(config_filename)
-{
+    : config_path(config_filename) {
   nlohmann::json json;
   if (config_filename.empty()) {
     config = json;

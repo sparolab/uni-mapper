@@ -2,10 +2,10 @@
 
 #include "loop_detector_kdtree.hpp"
 
+#include <open_lmm/common/pointcloud_utils.hpp>
+
 #include <pcl/common/transforms.h>
 #include <pcl/kdtree/kdtree_flann.h>
-
-#include <open_lmm/common/pointcloud_utils.hpp>
 
 namespace open_lmm {
 
@@ -45,7 +45,7 @@ std::vector<LoopPair> LoopDetectorKdtree::detectIntraLoops(const ScanVec& scans,
   auto T = tq::trange(0, total_scans);
   T.set_prefix("Intra Loop Detector");
   for (auto idx : T) {
-  // for (size_t idx = 0; idx < scans.size(); ++idx) {
+    // for (size_t idx = 0; idx < scans.size(); ++idx) {
     auto scan = scans[idx];
     auto descriptor = model_descriptor_->makeDescriptor(scan);
     // Check for loop candidates in the database
@@ -78,7 +78,7 @@ std::vector<LoopPair> LoopDetectorKdtree::detectInterLoops(
   auto T = tq::trange(0, total_scans);
   T.set_prefix("Inter Loop Detector");
   for (auto idx : T) {
-  // for (size_t idx = 0; idx < scans.size(); ++idx) {
+    // for (size_t idx = 0; idx < scans.size(); ++idx) {
     auto scan = scans[idx];
     auto descriptor = model_descriptor_->makeDescriptor(scan);
 

@@ -7,13 +7,12 @@
  * Description: Config header
  */
 
-
 #pragma once
-#include <iostream>
-#include <string>
-#include <pcl/point_types.h>
 #include <open_lmm/utils/config.hpp>
 
+#include <iostream>
+#include <pcl/point_types.h>
+#include <string>
 
 #define ANSI_RED "\033[1m\x1b[31m"
 #define ANSI_GREEN "\033[1m\x1b[32m"
@@ -23,8 +22,6 @@
 #define ANSI_CYAN "\033[1m\x1b[36m"
 #define ANSI_RESET "\x1b[0m"
 #define ANSI_BOLD "\033[1m"
-
-
 
 // CHANGE Point Type Here!!! If you want to use XYZI, change to pcl::PointXYZI
 // typedef pcl::PointXYZ PointT;
@@ -70,7 +67,7 @@ struct Config {
   double tf_x = 0.0;
   double tf_y = 0.0;
   double tf_z = 0.0;
-  
+
   bool is_large_scale_ = false;
 };
 

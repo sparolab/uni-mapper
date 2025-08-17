@@ -1,13 +1,13 @@
+#include <open_lmm/common/data_types.hpp>
+#include <open_lmm/common/shared_data.hpp>
+
+#include <Eigen/Dense>
+#include <memory>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
 #include <tbb/concurrent_hash_map.h>
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_sort.h>
-
-#include <Eigen/Dense>
-#include <memory>
-#include <open_lmm/common/data_types.hpp>
-#include <open_lmm/common/shared_data.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -65,6 +65,7 @@ void pclToEigen(const pcl::PointCloud<pcl::PointXYZI>& cloud,
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromPCD(std::string scan_file);
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromBin(std::string scan_file);
-pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromCustomType(std::string scan_file);
+pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromCustomType(
+    std::string scan_file);
 
 }  // namespace open_lmm

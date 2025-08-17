@@ -1,4 +1,5 @@
 #include <open_lmm/utils/load_module.hpp>
+
 #include <dlfcn.h>
 #include <string>
 // #include <spdlog/spdlog.h>
@@ -25,7 +26,8 @@ void* load_symbol(const std::string& so_name, const std::string& symbol_name) {
 
   auto* func = dlsym(handle, symbol_name.c_str());
   if (func == nullptr) {
-    std::cout << "failed to find symbol=" << symbol_name << " in " << so_name << std::endl;
+    std::cout << "failed to find symbol=" << symbol_name << " in " << so_name
+              << std::endl;
     std::cout << dlerror() << std::endl;
     // spdlog::warn("failed to find symbol={} in {}", symbol_name, so_name);
     // spdlog::warn("{}", dlerror());

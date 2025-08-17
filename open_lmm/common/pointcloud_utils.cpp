@@ -1,9 +1,10 @@
 #include "pointcloud_utils.hpp"
 
-#include <Eigen/Dense>
-#include <memory>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/shared_data.hpp>
+
+#include <Eigen/Dense>
+#include <memory>
 #include <vector>
 
 namespace open_lmm {

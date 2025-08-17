@@ -3,9 +3,10 @@
 // #include <string>
 // #include <memory>
 // #include <Eigen/Core>
-#include <Eigen/Geometry>
 #include <open_lmm/common/shared_data.hpp>
 #include <open_lmm/utils/config.hpp>
+
+#include <Eigen/Geometry>
 
 namespace open_lmm {
 

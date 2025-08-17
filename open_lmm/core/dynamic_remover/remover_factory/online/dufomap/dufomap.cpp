@@ -7,8 +7,9 @@ DUFOMap::DUFOMap(const DUFOMapParams& params) : params_(params) {
 }
 
 void DUFOMap::initialize(const DUFOMapParams& params) {
-  ufo_map_ = new ufo::Map < ufo::MapType::SEEN_FREE | ufo::MapType::REFLECTION |
-             ufo::MapType::LABEL > (params.resolution, params.levels);
+  ufo_map_ =
+      new ufo::Map<ufo::MapType::SEEN_FREE | ufo::MapType::REFLECTION |
+                   ufo::MapType::LABEL>(params.resolution, params.levels);
   ufo_map_->reserve(100'000'000);
   static_map_ = pcl::PointCloud<pcl::PointXYZI>::Ptr(
       new pcl::PointCloud<pcl::PointXYZI>());
