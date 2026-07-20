@@ -49,12 +49,12 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::process(
   T.set_prefix("Dynamic Remover");
   int idx = 0;
   for (auto scan : T) {
-    pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan =
-        pcl::PointCloud<pcl::PointXYZI>::Ptr(
-            new pcl::PointCloud<pcl::PointXYZI>());
-    pcl::transformPointCloud(*scan, *transformed_scan,
-                             optimized_poses[idx].second.matrix());
-    offline_model_->run(transformed_scan, optimized_poses[idx].second);
+    // pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan =
+    //     pcl::PointCloud<pcl::PointXYZI>::Ptr(
+    //         new pcl::PointCloud<pcl::PointXYZI>());
+    // pcl::transformPointCloud(*scan, *transformed_scan,
+    //                          optimized_poses[idx].second.matrix());
+    offline_model_->run(scan, optimized_poses[idx].second);
     idx++;
   }
   T.finish();
