@@ -10,7 +10,6 @@ int main(int argc, char** argv) {
 
   auto open_lmm = std::make_shared<open_lmm::OpenLMMROS>(options);
 
-  rclcpp::spin(open_lmm);
   rclcpp::shutdown();
 
   // uni_mapper->wait();
