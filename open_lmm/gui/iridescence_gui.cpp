@@ -17,6 +17,9 @@
 
 namespace open_lmm {
 namespace {
+constexpr float kAlignmentReviewPointScale = 6.0F;
+constexpr float kAlignmentGizmoClipScale = 0.1F;
+
 const char* StageName(StageId stage) {
   switch (stage) {
     case StageId::kDataLoad: return "DataLoad";
@@ -33,6 +36,7 @@ const char* ArtifactName(ArtifactType type) {
     case ArtifactType::kRawData: return "RawData";
     case ArtifactType::kDescriptorState: return "DescriptorState";
     case ArtifactType::kLoopCandidates: return "LoopCandidates";
+    case ArtifactType::kMapAlignment: return "MapAlignment";
     case ArtifactType::kOptimizerState: return "OptimizerState";
     case ArtifactType::kOptimizedPoses: return "OptimizedPoses";
     case ArtifactType::kGlobalMap: return "GlobalMap";
@@ -120,6 +124,7 @@ void IridescenceGui::ViewerLoop() {
     while (!stop_requested_ && viewer->spin_once()) {
       const auto gui_work_begin = std::chrono::steady_clock::now();
       DrainVisualizationSnapshots();
+      SynchronizeAlignmentFeedback();
       const auto events = event_queue_->Drain(128);
       bool needs_resync = false;
       for (const auto& event : events) {
@@ -144,6 +149,9 @@ void IridescenceGui::ViewerLoop() {
                               std::chrono::steady_clock::now() - gui_work_begin)
                               .count();
       max_gui_work_ms_ = std::max(max_gui_work_ms_, last_gui_work_ms_);
+    }
+    if (model_.CanCancel() && model_.Job() && services_.cancel_job) {
+      (void)services_.cancel_job(model_.Job()->id);
     }
     const auto final_queue_stats = event_queue_->Stats();
     std::cout << "[GUI_PROFILE] max_gui_work_ms=" << max_gui_work_ms_
@@ -325,6 +333,8 @@ void IridescenceGui::DrawPipelineUi() {
   }
   ImGui::End();
 
+  DrawAlignmentUi();
+
   ImGui::Begin("OpenLMM Agents and Artifacts");
   if (picked_point_) {
     ImGui::Text("Picked: %.3f %.3f %.3f", (*picked_point_).x(),
@@ -400,6 +410,239 @@ void IridescenceGui::DrawPipelineUi() {
                 event.message.c_str());
   }
   ImGui::EndChild();
+  ImGui::End();
+}
+
+void IridescenceGui::SynchronizeAlignmentFeedback() {
+  if (!services_.alignment_feedback_snapshot) return;
+  auto snapshot = services_.alignment_feedback_snapshot();
+  auto viewer = guik::LightViewer::instance();
+  if (!snapshot) {
+    if (alignment_request_id_ != 0) {
+      viewer->remove_drawable("open_lmm.alignment.target");
+      viewer->remove_drawable("open_lmm.alignment.source");
+      alignment_feedback_.reset();
+      alignment_model_control_.reset();
+      alignment_request_id_ = 0;
+      alignment_manual_mode_ = false;
+    }
+    return;
+  }
+  if (snapshot->proposal.request_id != alignment_request_id_) {
+    alignment_feedback_ = std::move(snapshot);
+    alignment_request_id_ = alignment_feedback_->proposal.request_id;
+    alignment_manual_mode_ =
+        alignment_feedback_->proposal.method == AlignmentMethod::kManual;
+    alignment_model_control_ = std::make_unique<guik::ModelControl>(
+        "Map alignment",
+        alignment_feedback_->proposal.target_T_source.matrix().cast<float>());
+    alignment_model_control_->set_gizmo_clip_scale(
+        kAlignmentGizmoClipScale);
+    alignment_manual_transform_ =
+        alignment_feedback_->proposal.target_T_source;
+    alignment_previous_render_matrix_ =
+        alignment_manual_transform_.matrix().cast<float>();
+    alignment_gizmo_operation_ = 0;
+    alignment_gizmo_mode_ = 0;
+    alignment_model_control_->set_gizmo_operation("TRANSLATE");
+    alignment_model_control_->set_gizmo_mode(alignment_gizmo_mode_);
+    if (alignment_feedback_->proposal.method == AlignmentMethod::kKissMatcher) {
+      alignment_kiss_transform_ =
+          alignment_feedback_->proposal.target_T_source.matrix();
+      alignment_descriptor_transform_.reset();
+    } else if (alignment_feedback_->proposal.method ==
+               AlignmentMethod::kDescriptor) {
+      alignment_descriptor_transform_ =
+          alignment_feedback_->proposal.target_T_source.matrix();
+    }
+    if (alignment_manual_mode_) alignment_model_control_->enable_gizmo();
+    else alignment_model_control_->disable_gizmo();
+
+    std::vector<Eigen::Vector3f> target;
+    std::vector<Eigen::Vector3f> source;
+    target.reserve(alignment_feedback_->target_points.size());
+    source.reserve(alignment_feedback_->source_points.size());
+    for (const auto& point : alignment_feedback_->target_points) {
+      target.emplace_back(point.x, point.y, point.z);
+    }
+    for (const auto& point : alignment_feedback_->source_points) {
+      source.emplace_back(point.x, point.y, point.z);
+    }
+    viewer->update_drawable(
+        "open_lmm.alignment.target",
+        std::make_shared<glk::PointCloudBuffer>(target),
+        guik::FlatBlue().set_point_scale(kAlignmentReviewPointScale));
+    viewer->update_drawable(
+        "open_lmm.alignment.source",
+        std::make_shared<glk::PointCloudBuffer>(source),
+        guik::FlatOrange(alignment_model_control_->model_matrix())
+            .set_point_scale(kAlignmentReviewPointScale));
+  }
+  if (alignment_model_control_) {
+    viewer->update_drawable(
+        "open_lmm.alignment.source",
+        viewer->find_drawable("open_lmm.alignment.source").second,
+        guik::FlatOrange(alignment_model_control_->model_matrix())
+            .set_point_scale(kAlignmentReviewPointScale));
+  }
+}
+
+void IridescenceGui::SetManualAlignmentTransform(
+    const Eigen::Isometry3d& transform) {
+  alignment_manual_transform_ = transform;
+  alignment_previous_render_matrix_ = transform.matrix().cast<float>();
+  if (alignment_model_control_) {
+    alignment_model_control_->set_model_matrix(
+        alignment_previous_render_matrix_);
+  }
+}
+
+void IridescenceGui::SynchronizeManualAlignmentTransform() {
+  if (!alignment_model_control_) return;
+  const Eigen::Matrix4f rendered = alignment_model_control_->model_matrix();
+  if (rendered.isApprox(alignment_previous_render_matrix_)) return;
+  const Eigen::Isometry3f previous(alignment_previous_render_matrix_);
+  const Eigen::Isometry3f current(rendered);
+  const Eigen::Isometry3d delta =
+      (current * previous.inverse()).cast<double>();
+  alignment_manual_transform_ = delta * alignment_manual_transform_;
+  Eigen::Quaterniond rotation(alignment_manual_transform_.linear());
+  alignment_manual_transform_.linear() =
+      rotation.normalized().toRotationMatrix();
+  alignment_previous_render_matrix_ =
+      alignment_manual_transform_.matrix().cast<float>();
+  alignment_model_control_->set_model_matrix(
+      alignment_previous_render_matrix_);
+}
+
+void IridescenceGui::DrawAlignmentUi() {
+  if (!alignment_feedback_ || !alignment_model_control_) return;
+  ImGui::Begin("Map Alignment Review");
+  const auto& proposal = alignment_feedback_->proposal;
+  const char* method = proposal.method == AlignmentMethod::kKissMatcher
+                           ? "KISS Matcher"
+                           : proposal.method == AlignmentMethod::kDescriptor
+                                 ? "Descriptor"
+                                 : "Manual";
+  ImGui::Text("Agent: %c <- %c", proposal.target_agent,
+              proposal.source_agent);
+  ImGui::Text("Method: %s", method);
+  ImGui::Text("Rotation inliers: %zu", proposal.metrics.rotation_inliers);
+  ImGui::Text("Final inliers: %zu", proposal.metrics.final_inliers);
+  ImGui::Text("Map correspondences: %zu",
+              proposal.metrics.correspondence_count);
+  ImGui::Text("Consensus: %zu", proposal.metrics.consensus_size);
+  if (proposal.metrics.overlap_ratio) {
+    ImGui::Text("Map overlap: %.1f%%",
+                *proposal.metrics.overlap_ratio * 100.0);
+  } else {
+    ImGui::TextUnformatted("Map overlap: unavailable");
+  }
+  if (proposal.metrics.fitness) {
+    ImGui::Text("NN fitness (mean squared distance): %.4f",
+                *proposal.metrics.fitness);
+  } else {
+    ImGui::TextUnformatted("NN fitness: unavailable");
+  }
+  if ((proposal.metrics.overlap_ratio &&
+       *proposal.metrics.overlap_ratio < 0.2) ||
+      (proposal.metrics.fitness && *proposal.metrics.fitness > 4.0)) {
+    ImGui::TextColored(ImVec4(1.0F, 0.65F, 0.0F, 1.0F),
+                       "Warning: weak map-level alignment quality");
+  }
+
+  if (alignment_manual_mode_) {
+    alignment_model_control_->draw_gizmo();
+    SynchronizeManualAlignmentTransform();
+    ImGui::Separator();
+    ImGui::TextUnformatted(
+        "Move the orange source cloud onto the blue target cloud.");
+    if (ImGui::RadioButton("Translate", alignment_gizmo_operation_ == 0)) {
+      alignment_gizmo_operation_ = 0;
+      alignment_model_control_->set_gizmo_operation("TRANSLATE");
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Rotate", alignment_gizmo_operation_ == 1)) {
+      alignment_gizmo_operation_ = 1;
+      alignment_model_control_->set_gizmo_operation("ROTATE");
+    }
+    if (ImGui::RadioButton("Local axes", alignment_gizmo_mode_ == 0)) {
+      alignment_gizmo_mode_ = 0;
+      alignment_model_control_->set_gizmo_mode(alignment_gizmo_mode_);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("World axes", alignment_gizmo_mode_ == 1)) {
+      alignment_gizmo_mode_ = 1;
+      alignment_model_control_->set_gizmo_mode(alignment_gizmo_mode_);
+    }
+  }
+
+  const auto respond = [this](AlignmentDecision decision,
+                              std::optional<Eigen::Isometry3d> transform =
+                                  std::nullopt) {
+    if (!services_.respond_to_alignment || !model_.Job()) return;
+    AlignmentResponse response;
+    response.request_id = alignment_request_id_;
+    response.decision = decision;
+    response.manual_target_T_source = std::move(transform);
+    auto result = services_.respond_to_alignment(model_.Job()->id,
+                                                  std::move(response));
+    command_error_ = result ? std::string{} : result.GetError().Message();
+  };
+
+  if (!alignment_manual_mode_) {
+    if (ImGui::Button("Accept")) respond(AlignmentDecision::kAccept);
+    if (proposal.method == AlignmentMethod::kKissMatcher) {
+      ImGui::SameLine();
+      if (ImGui::Button("Try Descriptor")) {
+        respond(AlignmentDecision::kTryDescriptor);
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Manual Align")) {
+      alignment_manual_mode_ = true;
+      SetManualAlignmentTransform(proposal.target_T_source);
+      alignment_model_control_->enable_gizmo();
+    }
+  } else {
+    if (ImGui::Button("Apply Manual Transform")) {
+      SynchronizeManualAlignmentTransform();
+      respond(AlignmentDecision::kManual, alignment_manual_transform_);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Proposal")) {
+      SetManualAlignmentTransform(proposal.target_T_source);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Identity")) {
+      const Eigen::Matrix4d identity = Eigen::Matrix4d::Identity();
+      SetManualAlignmentTransform(Eigen::Isometry3d(identity));
+    }
+    if (alignment_kiss_transform_) {
+      ImGui::SameLine();
+      if (ImGui::Button("Reset KISS")) {
+        SetManualAlignmentTransform(
+            Eigen::Isometry3d(*alignment_kiss_transform_));
+      }
+    }
+    if (alignment_descriptor_transform_) {
+      ImGui::SameLine();
+      if (ImGui::Button("Reset Descriptor")) {
+        SetManualAlignmentTransform(
+            Eigen::Isometry3d(*alignment_descriptor_transform_));
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) {
+      alignment_manual_mode_ = false;
+      alignment_model_control_->disable_gizmo();
+      SetManualAlignmentTransform(proposal.target_T_source);
+    }
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel Alignment")) {
+    respond(AlignmentDecision::kCancel);
+  }
   ImGui::End();
 }
 

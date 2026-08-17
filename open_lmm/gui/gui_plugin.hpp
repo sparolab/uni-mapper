@@ -18,6 +18,10 @@ struct GuiServices {
   std::function<PipelineSnapshot()> snapshot;
   std::function<Result<VisualizationSnapshot>(char, std::size_t)>
       visualization_snapshot;
+  std::function<std::optional<AlignmentFeedbackSnapshot>()>
+      alignment_feedback_snapshot;
+  std::function<Result<void>(uint64_t, AlignmentResponse)>
+      respond_to_alignment;
   std::function<ExecutionEventSubscription(
       std::function<void(const ExecutionEvent&)>)> subscribe_events;
 };

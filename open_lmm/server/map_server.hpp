@@ -24,6 +24,8 @@ class MapServer : public StageRunner {
   // Backward-compatible full pipeline entry point.
   Result<void> process();
   void SetCancellationToken(std::shared_ptr<CancellationToken> token) override;
+  void SetAlignmentFeedbackBroker(
+      std::shared_ptr<AlignmentFeedbackBroker> broker) override;
   Result<void> RunStage(StageId stage) override;
   Result<void> RunNode(NodeId node, std::optional<char> agent) override;
   Result<void> RunOptimizeThrough(char target_agent) override;
@@ -42,6 +44,10 @@ class MapServer : public StageRunner {
   Result<void> validateInputFiles() const;
   Result<void> runDataLoadStage();
   Result<void> runAlignmentStage();
+  Result<void> saveAlignmentArtifacts() const;
+  void computeAlignmentFingerprints();
+  void loadAlignmentCache();
+  void installStoredAlignments();
   Result<void> runMapUpdateStage();
   Result<void> runSaveStage();
 
@@ -50,12 +56,18 @@ class MapServer : public StageRunner {
   int agent_num_ = 0;
   std::vector<fs::path> data_dir_list_;
   std::string output_save_dir_;
+  fs::path alignment_cache_path_;
+  std::string alignment_config_fingerprint_;
+  std::map<char, std::string> alignment_input_fingerprints_;
+  std::string alignment_session_fingerprint_;
+  std::map<char, StoredAlignment> cached_alignments_;
   std::optional<Config> config_map_server_;
   bool enable_map_updater_ = false;
   int anchor_agent_index_ = 0;
   double save_voxel_size_ = 0.2;
   std::vector<AgentPipelineCtx> contexts_;
   std::shared_ptr<CancellationToken> cancellation_;
+  std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback_;
 
   std::shared_ptr<BackendOptimizerBase> backend_optimizer_;
   std::optional<Error> initialization_error_;

@@ -15,7 +15,7 @@ namespace open_lmm {
 struct KdtreeParams {
  public:
   //   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  explicit KdtreeParams();
+  explicit KdtreeParams(const Config& config);
   ~KdtreeParams() = default;
 
  public:
@@ -24,6 +24,14 @@ struct KdtreeParams {
   double distance_threshold{0.2};
   size_t kdtree_rebuild_threshold{50};
   std::string model;
+  double pcm_translation_threshold{10.0};
+  double pcm_rotation_threshold_deg{20.0};
+  // adaptive is the backward-compatible implicit default: interactive when a
+  // GUI broker is enabled, automatic otherwise. Explicit interactive/manual
+  // modes must never silently fall back to headless execution.
+  std::string feedback_mode{"adaptive"};
+  std::string headless_policy{"legacy_combined"};
+  int feedback_timeout_sec{0};
 };
 
 /**
@@ -57,7 +65,12 @@ class LoopDetectorKdtree : public LoopDetectorBase {
   // transformed_map_points를 out 파라미터로 반환
   std::vector<LoopPair> detectKissMatcherLoops(
       const LoopDetectorInput& input,
-      std::vector<Eigen::Vector3f>& out_transformed_map_points);
+      std::vector<Eigen::Vector3f>& out_transformed_map_points,
+      std::optional<MapAlignmentProposal>& out_proposal);
+
+  std::vector<LoopPair> loopsFromGlobalTransform(
+      const LoopDetectorInput& input,
+      const Eigen::Isometry3d& target_T_source);
 
   std::vector<LoopPair> findLoopPairsFromKdTree(
       const std::map<char, AgentOptimizedData>& all_optimized,

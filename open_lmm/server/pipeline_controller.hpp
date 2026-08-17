@@ -21,13 +21,15 @@ struct ExecutionEventSubscriberRegistry;
 
 enum class JobState : uint8_t {
   kQueued, kWaitingForDependency, kRunning, kCancelling,
-  kSucceeded, kFailed, kCancelled
+  kWaitingForAlignmentFeedback, kSucceeded, kFailed, kCancelled
 };
 enum class EventType : uint8_t {
   kJobQueued, kJobStarted, kStageStarted, kNodeStarted,
   kProgressUpdated, kArtifactCommitted, kArtifactInvalidated,
   kNodeFailed, kStageCompleted, kStageFailed,
-  kCancellationRequested, kJobCompleted, kJobCancelled
+  kCancellationRequested, kAlignmentFeedbackRequested,
+  kAlignmentProposalAccepted, kAlignmentProposalRejected,
+  kAlignmentFeedbackCancelled, kJobCompleted, kJobCancelled
 };
 
 struct ExecutionEvent {
@@ -89,6 +91,11 @@ class PipelineController {
   [[nodiscard]] PipelineSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
       char agent, std::size_t max_points) const;
+  [[nodiscard]] std::optional<AlignmentFeedbackSnapshot>
+  GetAlignmentFeedbackSnapshot() const;
+  Result<void> RespondToAlignment(uint64_t job_id,
+                                  AlignmentResponse response);
+  void SetAlignmentFeedbackEnabled(bool enabled);
   [[nodiscard]] ExecutionEventSubscription SubscribeEvents(
       std::function<void(const ExecutionEvent&)> callback);
   void SetEventCallback(std::function<void(const ExecutionEvent&)> callback);
@@ -112,6 +119,7 @@ class PipelineController {
   std::thread worker_;
   std::atomic<bool> cancel_requested_{false};
   std::shared_ptr<CancellationToken> cancellation_;
+  std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback_;
   uint64_t next_job_id_ = 1;
   uint64_t next_event_sequence_ = 1;
   uint64_t config_revision_ = 1;

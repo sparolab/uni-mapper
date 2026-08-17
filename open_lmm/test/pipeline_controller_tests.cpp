@@ -1,4 +1,5 @@
 #include <open_lmm/server/pipeline_controller.hpp>
+#include <open_lmm/core/loop_detector/map_alignment_coordinator.hpp>
 
 #include <cstdlib>
 #include <iostream>
@@ -21,6 +22,10 @@ class FakeRunner final : public StageRunner {
   void SetCancellationToken(std::shared_ptr<CancellationToken> token) override {
     cancellation = std::move(token);
   }
+  void SetAlignmentFeedbackBroker(
+      std::shared_ptr<AlignmentFeedbackBroker> value) override {
+    alignment_feedback = std::move(value);
+  }
   Result<void> RunNode(NodeId, std::optional<char>) override {
     node_entered.store(true);
     if (block_node_until_cancel) {
@@ -31,8 +36,50 @@ class FakeRunner final : public StageRunner {
     }    return Result<void>::Ok();
   }
   Result<void> RunStage(StageId stage) override {
-    std::lock_guard lock(mutex);
-    calls.push_back(stage);
+    {
+      std::lock_guard lock(mutex);
+      calls.push_back(stage);
+    }
+    if (stage == StageId::kAlignment && request_alignment_feedback) {
+      AlignmentFeedbackSnapshot snapshot;
+      snapshot.proposal.target_agent = 'A';
+      snapshot.proposal.source_agent = 'B';
+      snapshot.proposal.method = AlignmentMethod::kKissMatcher;
+      auto response = alignment_feedback->Request(std::move(snapshot), cancellation);
+      if (!response) return Result<void>::Failure(response.GetError());
+      if (response.Value().decision == AlignmentDecision::kCancel) {
+        return Result<void>::Failure(Error::Cancelled("feedback cancelled"));
+      }
+    }
+    if (stage == StageId::kAlignment && coordinate_alignment) {
+      MapAlignmentCoordinatorInput input;
+      input.feedback = alignment_feedback;
+      input.cancellation = cancellation;
+      input.feedback_timeout = alignment_timeout;
+      input.target_agent = 'A';
+      input.source_agent = 'B';
+      input.kiss_proposer = [] {
+        MapAlignmentProposal proposal;
+        proposal.target_agent = 'A';
+        proposal.source_agent = 'B';
+        proposal.method = AlignmentMethod::kKissMatcher;
+        proposal.target_T_source.translation().x() = 1;
+        return std::optional(proposal);
+      };
+      input.descriptor_proposer = [] {
+        MapAlignmentProposal proposal;
+        proposal.target_agent = 'A';
+        proposal.source_agent = 'B';
+        proposal.method = AlignmentMethod::kDescriptor;
+        proposal.target_T_source.translation().x() = 2;
+        return std::optional(proposal);
+      };
+      auto coordinated = MapAlignmentCoordinator().Align(input);
+      if (!coordinated) {
+        return Result<void>::Failure(coordinated.GetError());
+      }
+      coordinated_alignment = coordinated.Value();
+    }
     if (fail_stage && *fail_stage == stage) {
       return Result<void>::Failure(Error::InvalidArgument("induced failure"));
     }
@@ -54,6 +101,11 @@ class FakeRunner final : public StageRunner {
   bool block_node_until_cancel = false;
   std::atomic<bool> node_entered{false};
   std::shared_ptr<CancellationToken> cancellation;
+  std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
+  bool request_alignment_feedback = false;
+  bool coordinate_alignment = false;
+  std::chrono::milliseconds alignment_timeout{};
+  std::optional<MapAlignmentProposal> coordinated_alignment;
   std::vector<char> agent_ids{'A', 'B'};
 };
 
@@ -81,6 +133,9 @@ void TestRunAllAndArtifacts() {
         "raw artifact ready");
   Check(StateOf(snapshot, ArtifactType::kOptimizerState) == ArtifactState::kReady,
         "optimizer artifact ready");
+  Check(StateOf(snapshot, ArtifactType::kMapAlignment, 'B') ==
+            ArtifactState::kReady,
+        "map alignment artifact ready");
   Check(StateOf(snapshot, ArtifactType::kPoseFile, 'B') == ArtifactState::kReady,
         "pose artifact ready");
 }
@@ -254,6 +309,106 @@ void TestSessionRunnerReplacement() {
         "new session resets artifacts");
 }
 
+void TestAlignmentFeedbackAcceptAndStaleResponse() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->request_alignment_feedback = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "interactive alignment submitted");
+  std::optional<AlignmentFeedbackSnapshot> request;
+  while (!(request = controller.GetAlignmentFeedbackSnapshot())) {
+    std::this_thread::yield();
+  }
+  Check(controller.Snapshot().job->state ==
+            JobState::kWaitingForAlignmentFeedback,
+        "job waits for alignment feedback");
+  AlignmentResponse response{request->proposal.request_id,
+                             AlignmentDecision::kAccept, std::nullopt};
+  Check(controller.RespondToAlignment(job.Value(), response).IsOk(),
+        "alignment response accepted");
+  Check(controller.Wait(job.Value()).IsOk(), "alignment resumes after feedback");
+  Check(!controller.RespondToAlignment(job.Value(), response),
+        "stale alignment response rejected");
+}
+
+void TestAlignmentFeedbackCancellation() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->request_alignment_feedback = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "cancellable alignment submitted");
+  while (!controller.GetAlignmentFeedbackSnapshot()) std::this_thread::yield();
+  Check(controller.Cancel(job.Value()).IsOk(),
+        "feedback wait accepts cancellation");
+  Check(!controller.Wait(job.Value()), "cancelled feedback job fails wait");
+  Check(controller.Snapshot().job->state == JobState::kCancelled,
+        "feedback cancellation reaches cancelled state");
+}
+
+void TestControllerCoordinatorFullFallbackIntegration() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->coordinate_alignment = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "coordinator integration submitted");
+
+  std::optional<AlignmentFeedbackSnapshot> request;
+  while (!(request = controller.GetAlignmentFeedbackSnapshot())) {
+    std::this_thread::yield();
+  }
+  const uint64_t kiss_request = request->proposal.request_id;
+  Check(controller.RespondToAlignment(
+            job.Value(), {kiss_request, AlignmentDecision::kTryDescriptor,
+                          std::nullopt}).IsOk(),
+        "integration rejects KISS");
+  do {
+    request = controller.GetAlignmentFeedbackSnapshot();
+    std::this_thread::yield();
+  } while (!request || request->proposal.request_id == kiss_request);
+  Check(request->proposal.method == AlignmentMethod::kDescriptor,
+        "integration reaches Descriptor");
+
+  Eigen::Isometry3d invalid = Eigen::Isometry3d::Identity();
+  invalid.linear()(0, 0) = 2;
+  Check(!controller.RespondToAlignment(
+            job.Value(), {request->proposal.request_id,
+                          AlignmentDecision::kManual, invalid}),
+        "integration rejects invalid Manual transform");
+  Check(controller.Snapshot().job->state ==
+            JobState::kWaitingForAlignmentFeedback,
+        "invalid response keeps integration waiting");
+
+  Eigen::Isometry3d manual = Eigen::Isometry3d::Identity();
+  manual.translation().z() = 9;
+  Check(controller.RespondToAlignment(
+            job.Value(), {request->proposal.request_id,
+                          AlignmentDecision::kManual, manual}).IsOk(),
+        "integration accepts valid Manual transform");
+  Check(controller.Wait(job.Value()).IsOk(), "integration job completes");
+  Check(runner->coordinated_alignment &&
+            runner->coordinated_alignment->method == AlignmentMethod::kManual &&
+            runner->coordinated_alignment->target_T_source.translation().z() == 9,
+        "integration preserves Manual result");
+}
+
+void TestControllerCoordinatorTimeoutIntegration() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->coordinate_alignment = true;
+  runner->alignment_timeout = std::chrono::milliseconds(5);
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "timeout integration submitted");
+  Check(!controller.Wait(job.Value()), "timeout integration fails job");
+  Check(controller.Snapshot().job->state == JobState::kFailed,
+        "timeout integration reaches failed state");
+  Check(!controller.GetAlignmentFeedbackSnapshot(),
+        "timeout integration clears feedback request");
+}
+
 }  // namespace
 
 int main() {
@@ -266,6 +421,10 @@ int main() {
   TestConfigApplyInvalidation();
   TestNodeCancellationRollsBackArtifacts();
   TestSessionRunnerReplacement();
+  TestAlignmentFeedbackAcceptAndStaleResponse();
+  TestAlignmentFeedbackCancellation();
+  TestControllerCoordinatorFullFallbackIntegration();
+  TestControllerCoordinatorTimeoutIntegration();
   std::cout << "pipeline controller tests passed\n";
   return 0;
 }

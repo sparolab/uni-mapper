@@ -139,6 +139,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
 
   //! 4. inter-loop (follower만)
   if (!ctx.is_anchor()) {
+    std::size_t valid_inter_loop_count = 0;
     auto T2 = tq::tqdm(inter_loops);
     T2.set_prefix("Inter Backend Optimizer");
     for (auto loop : T2) {
@@ -154,9 +155,14 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
         working_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
             node_from, node_to, gtsam::Pose3(refined.value().matrix()),
             robust_loop_noise_));
+        ++valid_inter_loop_count;
       }
     }
     T2.finish();
+    if (valid_inter_loop_count == 0) {
+      throw std::runtime_error(
+          "all inter-agent loop registration refinements were rejected");
+    }
   }
 
   //! 5. ISAM2 최적화 (누적된 전체 그래프로 배치 최적화)

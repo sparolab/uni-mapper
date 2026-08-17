@@ -36,7 +36,7 @@ std::vector<ArtifactType> ArtifactRepository::ProducedBy(StageId stage) {
     case StageId::kDataLoad: return {ArtifactType::kRawData};
     case StageId::kAlignment:
       return {ArtifactType::kDescriptorState, ArtifactType::kLoopCandidates, ArtifactType::kOptimizerState,
-              ArtifactType::kOptimizedPoses};
+              ArtifactType::kMapAlignment, ArtifactType::kOptimizedPoses};
     case StageId::kMapUpdate:
       return {ArtifactType::kGlobalMap, ArtifactType::kPcdFile};
     case StageId::kSave: return {ArtifactType::kPoseFile};
@@ -48,6 +48,7 @@ void ArtifactRepository::RegisterAgents(const std::vector<char>& agents) {
   std::lock_guard lock(mutex_);
   agents_ = agents;
   for (auto type : {ArtifactType::kRawData, ArtifactType::kLoopCandidates,
+                    ArtifactType::kMapAlignment,
                     ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
                     ArtifactType::kPoseFile, ArtifactType::kPcdFile}) {
     for (char agent : agents_) {
@@ -97,7 +98,8 @@ void ArtifactRepository::setTypes(const std::vector<ArtifactType>& types,
 void ArtifactRepository::invalidateDownstream(StageId stage) {
   std::vector<ArtifactType> types;
   if (stage == StageId::kDataLoad) {
-    types = {ArtifactType::kLoopCandidates, ArtifactType::kOptimizerState,
+    types = {ArtifactType::kLoopCandidates, ArtifactType::kMapAlignment,
+             ArtifactType::kOptimizerState,
              ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
              ArtifactType::kPoseFile, ArtifactType::kPcdFile};
   } else if (stage == StageId::kAlignment) {
@@ -225,6 +227,7 @@ void ArtifactRepository::BeginNode(NodeId node, std::optional<char> agent) {
   if (node == NodeId::kDataLoad || node == NodeId::kLoopDetect) {
     stale(ArtifactType::kDescriptorState, false);
     stale(ArtifactType::kLoopCandidates, true);
+    stale(ArtifactType::kMapAlignment, true);
     stale(ArtifactType::kOptimizerState, false);
     stale(ArtifactType::kOptimizedPoses, true);
     stale(ArtifactType::kGlobalMap, true);
@@ -286,12 +289,14 @@ void ArtifactRepository::ApplyConfig(ConfigDomain domain,
   std::vector<ArtifactType> stale;
   if (domain == ConfigDomain::kGlobal || domain == ConfigDomain::kDataLoader) {
     stale = {ArtifactType::kRawData, ArtifactType::kDescriptorState,
-             ArtifactType::kLoopCandidates, ArtifactType::kOptimizerState,
+             ArtifactType::kLoopCandidates, ArtifactType::kMapAlignment,
+             ArtifactType::kOptimizerState,
              ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
              ArtifactType::kPoseFile, ArtifactType::kPcdFile};
   } else if (domain == ConfigDomain::kLoopDetector) {
     stale = {ArtifactType::kDescriptorState, ArtifactType::kLoopCandidates,
-             ArtifactType::kOptimizerState, ArtifactType::kOptimizedPoses,
+             ArtifactType::kMapAlignment, ArtifactType::kOptimizerState,
+             ArtifactType::kOptimizedPoses,
              ArtifactType::kGlobalMap, ArtifactType::kPoseFile,
              ArtifactType::kPcdFile};
   } else if (domain == ConfigDomain::kOptimizer) {

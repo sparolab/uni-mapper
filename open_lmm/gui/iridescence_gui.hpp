@@ -4,6 +4,7 @@
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/gui/visualization_repository.hpp>
 #include <open_lmm/gui/visualization_snapshot_worker.hpp>
+#include <guik/model_control.hpp>
 #include <atomic>
 #include <array>
 #include <condition_variable>
@@ -24,6 +25,10 @@ class IridescenceGui final : public GuiPlugin {
   void ViewerLoop();
   void DrawPipelineUi();
   void DrawConfigEditorUi();
+  void DrawAlignmentUi();
+  void SynchronizeAlignmentFeedback();
+  void SetManualAlignmentTransform(const Eigen::Isometry3d& transform);
+  void SynchronizeManualAlignmentTransform();
   void LoadConfigEditor();
   void SynchronizeModel();
   void RequestVisualization(char agent);
@@ -57,6 +62,16 @@ class IridescenceGui final : public GuiPlugin {
   double last_gui_work_ms_ = 0.0;
   double max_gui_work_ms_ = 0.0;
   std::optional<Eigen::Vector3f> picked_point_;
+  std::optional<AlignmentFeedbackSnapshot> alignment_feedback_;
+  std::unique_ptr<guik::ModelControl> alignment_model_control_;
+  uint64_t alignment_request_id_ = 0;
+  bool alignment_manual_mode_ = false;
+  int alignment_gizmo_operation_ = 0;
+  int alignment_gizmo_mode_ = 0;
+  std::optional<Eigen::Matrix4d> alignment_kiss_transform_;
+  std::optional<Eigen::Matrix4d> alignment_descriptor_transform_;
+  Eigen::Isometry3d alignment_manual_transform_ = Eigen::Isometry3d::Identity();
+  Eigen::Matrix4f alignment_previous_render_matrix_ = Eigen::Matrix4f::Identity();
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> open_{false};
   std::mutex start_mutex_;

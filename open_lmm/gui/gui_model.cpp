@@ -14,7 +14,9 @@ GuiModel::GuiModel() {
 bool GuiModel::IsActive(JobState state) {
   return state == JobState::kQueued ||
          state == JobState::kWaitingForDependency ||
-         state == JobState::kRunning || state == JobState::kCancelling;
+         state == JobState::kRunning ||
+         state == JobState::kWaitingForAlignmentFeedback ||
+         state == JobState::kCancelling;
 }
 
 void GuiModel::Synchronize(PipelineSnapshot snapshot) {
@@ -60,6 +62,14 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
     case EventType::kCancellationRequested:
       job_->state = JobState::kCancelling;
       if (event.stage) stages_[*event.stage].state = GuiStageState::kCancelling;
+      break;
+    case EventType::kAlignmentFeedbackRequested:
+      job_->state = JobState::kWaitingForAlignmentFeedback;
+      break;
+    case EventType::kAlignmentProposalAccepted:
+    case EventType::kAlignmentProposalRejected:
+    case EventType::kAlignmentFeedbackCancelled:
+      job_->state = JobState::kRunning;
       break;
     case EventType::kJobCancelled:
       job_->state = JobState::kCancelled;
@@ -108,7 +118,8 @@ bool GuiModel::CanSubmitCommand() const {
 bool GuiModel::CanCancel() const {
   return job_ && (job_->state == JobState::kQueued ||
                   job_->state == JobState::kWaitingForDependency ||
-                  job_->state == JobState::kRunning);
+                  job_->state == JobState::kRunning ||
+                  job_->state == JobState::kWaitingForAlignmentFeedback);
 }
 
 uint64_t GuiModel::LastSequence() const { return last_sequence_; }

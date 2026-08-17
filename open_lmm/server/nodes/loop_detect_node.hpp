@@ -29,14 +29,29 @@ class LoopDetectNode : public PipelineNodeBase {
     }
     auto detector = std::move(detector_result).Value();
 
+    const auto stored = db.stored_alignments.find(ctx.agent.id);
     LoopDetectorInput input{
         .agent_ctx        = ctx.agent,
         .current          = *ctx.raw_data,
         .descriptor_store = db.descriptor_store,
         .all_raw_data     = db.raw_data,
         .all_optimized    = db.optimized_data,
+        .alignment_feedback = db.alignment_feedback,
+        .cancellation     = ctx.cancellation,
+        .stored_alignment = stored == db.stored_alignments.end()
+                                ? nullptr
+                                : &stored->second,
     };
-    ctx.loop_output = detector->Process(input);
+    try {
+      ctx.loop_output = detector->Process(input);
+    } catch (const CancellationException& e) {
+      ctx.loop_output.reset();
+      return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
+    } catch (const std::exception& e) {
+      ctx.loop_output.reset();
+      return Result<ControlFlow>::Failure(
+          Error::InvalidArgument("LoopDetect failed: " + std::string(e.what())));
+    }
     if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
       ctx.loop_output.reset();
       return Result<ControlFlow>::Failure(
@@ -45,13 +60,11 @@ class LoopDetectNode : public PipelineNodeBase {
 
     // DescriptorStore 업데이트 (server 레이어 책임)
     if (ctx.agent.is_anchor()) {
-      db.descriptor_store.set_anchor(
-          std::move(ctx.loop_output->agent_db),
-          ctx.raw_data->map_points);
+      db.descriptor_store.set_anchor_descriptor(
+          std::move(ctx.loop_output->agent_db));
     } else {
       db.descriptor_store.merge_descriptor_db(
           std::move(ctx.loop_output->agent_db));
-      db.descriptor_store.merge_map(ctx.loop_output->transformed_map_points);
     }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);

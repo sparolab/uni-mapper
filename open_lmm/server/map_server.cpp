@@ -7,7 +7,11 @@
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <chrono>
 #include <fstream>
+#include <iomanip>
+#include <nlohmann/json.hpp>
+#include <sstream>
 
 // Pipeline nodes
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
@@ -17,6 +21,50 @@
 #include <open_lmm/server/nodes/optimize_node.hpp>
 
 namespace open_lmm {
+namespace {
+void HashBytes(uint64_t& hash, const char* data, std::size_t size) {
+  constexpr uint64_t kFnvPrime = 1099511628211ULL;
+  for (std::size_t i = 0; i < size; ++i) {
+    hash ^= static_cast<unsigned char>(data[i]);
+    hash *= kFnvPrime;
+  }
+}
+
+void HashText(uint64_t& hash, const std::string& text) {
+  HashBytes(hash, text.data(), text.size());
+}
+
+bool HashFile(uint64_t& hash, const fs::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) return false;
+  char buffer[8192];
+  while (input.read(buffer, sizeof(buffer)) || input.gcount() > 0) {
+    HashBytes(hash, buffer, static_cast<std::size_t>(input.gcount()));
+  }
+  return true;
+}
+
+std::string HexFingerprint(uint64_t hash) {
+  std::ostringstream output;
+  output << std::hex << std::setfill('0') << std::setw(16) << hash;
+  return output.str();
+}
+
+std::optional<Eigen::Isometry3d> MatrixFromJson(const nlohmann::json& value) {
+  if (!value.is_array() || value.size() != 16) return std::nullopt;
+  Eigen::Matrix4d matrix;
+  for (int row = 0; row < 4; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      if (!value[row * 4 + col].is_number()) return std::nullopt;
+      matrix(row, col) = value[row * 4 + col].get<double>();
+    }
+  }
+  Eigen::Isometry3d transform(matrix);
+  return IsFiniteRigidTransform(transform)
+             ? std::optional<Eigen::Isometry3d>(transform)
+             : std::nullopt;
+}
+}  // namespace
 
 MapServer::MapServer() {
   try {
@@ -134,6 +182,127 @@ void MapServer::parseConfig() {
   }
   backend_optimizer_ = std::shared_ptr<BackendOptimizerBase>(
       std::move(optimizer_result).Value());
+  computeAlignmentFingerprints();
+  loadAlignmentCache();
+}
+
+void MapServer::computeAlignmentFingerprints() {
+  constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
+  uint64_t config_hash = kFnvOffset;
+  for (const char* name : {"config_map_server", "config_data_loader",
+                           "config_loop_detector", "config_backend_optimizer",
+                           "config_dynamic_remover"}) {
+    const auto path = GlobalConfig::get_global_config_path(name);
+    HashText(config_hash, path);
+    HashFile(config_hash, path);
+  }
+  HashText(config_hash, std::to_string(anchor_agent_index_));
+  alignment_config_fingerprint_ = HexFingerprint(config_hash);
+
+  alignment_input_fingerprints_.clear();
+  const auto pose_name = config_data_loader_->param<std::string>(
+      "data_loader", "pose_file_name", "");
+  const auto scan_dir_name = config_data_loader_->param<std::string>(
+      "data_loader", "scan_dir_name", "");
+  const auto scan_type = config_data_loader_->param<std::string>(
+      "data_loader", "scan_type", "");
+  for (std::size_t i = 0; i < data_dir_list_.size(); ++i) {
+    uint64_t input_hash = kFnvOffset;
+    HashText(input_hash, data_dir_list_[i].string());
+    HashFile(input_hash, data_dir_list_[i] / pose_name);
+    std::vector<fs::path> scans;
+    const fs::path scan_dir = data_dir_list_[i] / scan_dir_name;
+    for (const auto& entry : fs::directory_iterator(scan_dir)) {
+      if (entry.is_regular_file() &&
+          entry.path().extension() == "." + scan_type) {
+        scans.push_back(entry.path());
+      }
+    }
+    std::sort(scans.begin(), scans.end());
+    for (const auto& scan : scans) {
+      std::error_code error;
+      HashText(input_hash, scan.filename().string());
+      HashText(input_hash, std::to_string(fs::file_size(scan, error)));
+      error.clear();
+      const auto modified = fs::last_write_time(scan, error);
+      if (!error) HashText(input_hash, std::to_string(modified.time_since_epoch().count()));
+    }
+    alignment_input_fingerprints_[static_cast<char>('A' + i)] =
+        HexFingerprint(input_hash);
+  }
+  uint64_t session_hash = config_hash;
+  for (const auto& [agent, fingerprint] : alignment_input_fingerprints_) {
+    HashText(session_hash, std::string(1, agent));
+    HashText(session_hash, fingerprint);
+  }
+  alignment_session_fingerprint_ = HexFingerprint(session_hash);
+  const auto root_save_dir = GlobalConfig::instance()->param<std::string>(
+      "directory", "root_save_dir", "");
+  alignment_cache_path_ = fs::path(root_save_dir) / "map_alignment_cache.json";
+}
+
+void MapServer::loadAlignmentCache() {
+  cached_alignments_.clear();
+  std::ifstream input(alignment_cache_path_);
+  if (!input) return;
+  try {
+    nlohmann::json root;
+    input >> root;
+    if (root.value("version", 0) != 2 ||
+        root.value("session_fingerprint", std::string()) !=
+            alignment_session_fingerprint_) {
+      return;
+    }
+    for (const auto& item : root.at("alignments")) {
+      if (item.value("approval", std::string()) != "user") continue;
+      const auto source = item.value("source_agent", std::string());
+      const auto target = item.value("target_agent", std::string());
+      if (source.size() != 1 || target.size() != 1) continue;
+      auto transform = MatrixFromJson(item["accepted_global_T_agent"]);
+      if (!transform) continue;
+      StoredAlignment stored;
+      stored.proposal.source_agent = source.front();
+      stored.proposal.target_agent = target.front();
+      const auto method = item.value("method", std::string());
+      if (method == "manual") {
+        stored.proposal.method = AlignmentMethod::kManual;
+      } else if (method == "descriptor") {
+        stored.proposal.method = AlignmentMethod::kDescriptor;
+      } else if (method == "kiss_matcher") {
+        stored.proposal.method = AlignmentMethod::kKissMatcher;
+      } else {
+        continue;
+      }
+      stored.proposal.target_T_source = *transform;
+      if (item.contains("metrics")) {
+        const auto& metrics = item["metrics"];
+        stored.proposal.metrics.correspondence_count =
+            metrics.value("correspondence_count", 0UL);
+        stored.proposal.metrics.rotation_inliers =
+            metrics.value("rotation_inliers", 0UL);
+        stored.proposal.metrics.final_inliers =
+            metrics.value("final_inliers", 0UL);
+        stored.proposal.metrics.consensus_size =
+            metrics.value("consensus_size", 0UL);
+        if (metrics.contains("fitness")) {
+          stored.proposal.metrics.fitness = metrics["fitness"].get<double>();
+        }
+        if (metrics.contains("overlap_ratio")) {
+          stored.proposal.metrics.overlap_ratio =
+              metrics["overlap_ratio"].get<double>();
+        }
+      }
+      stored.approval = AlignmentApproval::kUser;
+      stored.accepted_at_unix_ms = item.value("accepted_at_unix_ms", 0ULL);
+      cached_alignments_[source.front()] = std::move(stored);
+    }
+  } catch (const std::exception&) {
+    cached_alignments_.clear();
+  }
+}
+
+void MapServer::installStoredAlignments() {
+  shared_data_->stored_alignments = cached_alignments_;
 }
 
 std::vector<AgentPipelineCtx> MapServer::buildContexts() const {
@@ -255,6 +424,13 @@ void MapServer::SetCancellationToken(std::shared_ptr<CancellationToken> token) {
   for (auto& ctx : contexts_) ctx.cancellation = cancellation_;
 }
 
+void MapServer::SetAlignmentFeedbackBroker(
+    std::shared_ptr<AlignmentFeedbackBroker> broker) {
+  std::lock_guard lock(state_mutex_);
+  alignment_feedback_ = std::move(broker);
+  shared_data_->alignment_feedback = alignment_feedback_;
+}
+
 Result<void> MapServer::RunStage(StageId stage) {
   std::lock_guard lock(state_mutex_);
   auto ready = ensureReady();
@@ -292,7 +468,7 @@ Result<void> MapServer::RunNode(NodeId node, std::optional<char> agent) {
     auto result = load_node.Process(*it, *shared_data_);
     if (!result) return Result<void>::Failure(result.GetError());
     const auto changed = std::distance(contexts_.begin(), it);
-    shared_data_->descriptor_store.total_db.clear();
+    shared_data_->descriptor_store.clear();
     shared_data_->optimized_data.clear();
     backend_optimizer_->Reset();
     for (std::size_t i = static_cast<std::size_t>(changed);
@@ -345,6 +521,8 @@ Result<void> MapServer::ResetSession() {
   auto ready = ensureReady();
   if (!ready) return ready;
   shared_data_ = std::make_shared<SharedDatabase>();
+  shared_data_->alignment_feedback = alignment_feedback_;
+  installStoredAlignments();
   backend_optimizer_->Reset();
   contexts_ = buildContexts();
   return Result<void>::Ok();
@@ -353,6 +531,8 @@ Result<void> MapServer::ResetSession() {
 Result<void> MapServer::runDataLoadStage() {
   OPEN_LMM_ZONE_N("MapServer.DataLoadStage");
   shared_data_ = std::make_shared<SharedDatabase>();
+  shared_data_->alignment_feedback = alignment_feedback_;
+  installStoredAlignments();
   backend_optimizer_->Reset();
   contexts_ = buildContexts();
   auto loader = DataLoaderBase::createInstance(config_data_loader_.value());
@@ -368,7 +548,7 @@ Result<void> MapServer::runAlignmentStage() {
     return Result<void>::Failure(Error::InvalidArgument(
         "DataLoad stage must complete before Alignment"));
   }
-  shared_data_->descriptor_store.total_db.clear();
+  shared_data_->descriptor_store.clear();
   shared_data_->optimized_data.clear();
   backend_optimizer_->Reset();
   for (auto& ctx : contexts_) {
@@ -382,7 +562,139 @@ Result<void> MapServer::runAlignmentStage() {
             return LoopDetectorBase::createInstance(cfg);
           }))
       .AddNode(std::make_unique<OptimizeNode>(backend_optimizer_));
-  return pipeline.Run(contexts_, *shared_data_);
+  auto result = pipeline.Run(contexts_, *shared_data_);
+  if (!result) return result;
+  return saveAlignmentArtifacts();
+}
+
+Result<void> MapServer::saveAlignmentArtifacts() const {
+  nlohmann::json root;
+  root["version"] = 2;
+  root["transform_convention"] = "global_T_agent";
+  root["generated_at_unix_ms"] = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count());
+  root["config_fingerprint"] = alignment_config_fingerprint_;
+  root["session_fingerprint"] = alignment_session_fingerprint_;
+  root["input_fingerprints"] = nlohmann::json::object();
+  for (const auto& [agent, fingerprint] : alignment_input_fingerprints_) {
+    root["input_fingerprints"][std::string(1, agent)] = fingerprint;
+  }
+  root["alignments"] = nlohmann::json::array();
+  const auto method_name = [](AlignmentMethod method) {
+    switch (method) {
+      case AlignmentMethod::kKissMatcher: return "kiss_matcher";
+      case AlignmentMethod::kDescriptor: return "descriptor";
+      case AlignmentMethod::kManual: return "manual";
+    }
+    return "unknown";
+  };
+  const auto matrix_json = [](const Eigen::Isometry3d& transform) {
+    nlohmann::json values = nlohmann::json::array();
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        values.push_back(transform.matrix()(row, col));
+      }
+    }
+    return values;
+  };
+  const auto approval_name = [](AlignmentApproval approval) {
+    return approval == AlignmentApproval::kUser ? "user" : "automatic";
+  };
+
+  for (const auto& ctx : contexts_) {
+    if (!ctx.loop_output || !ctx.loop_output->accepted_global_T_agent ||
+        !ctx.loop_output->accepted_alignment_method ||
+        !ctx.loop_output->accepted_alignment_approval) {
+      return Result<void>::Failure(Error::IoError(
+          "cannot save incomplete alignment artifact for agent " +
+          std::string(1, ctx.agent.id)));
+    }
+    nlohmann::json item;
+    item["agent"] = std::string(1, ctx.agent.id);
+    item["source_agent"] = std::string(1, ctx.agent.id);
+    item["target_agent"] =
+        std::string(1, ctx.loop_output->accepted_target_agent);
+    item["method"] = method_name(*ctx.loop_output->accepted_alignment_method);
+    item["approval"] = approval_name(
+        *ctx.loop_output->accepted_alignment_approval);
+    item["accepted_at_unix_ms"] = ctx.loop_output->accepted_at_unix_ms;
+    item["accepted_global_T_agent"] =
+        matrix_json(*ctx.loop_output->accepted_global_T_agent);
+    const auto optimized = shared_data_->descriptor_store.aligned_maps.find(
+        ctx.agent.id);
+    if (optimized != shared_data_->descriptor_store.aligned_maps.end()) {
+      item["optimized_global_T_agent"] =
+          matrix_json(optimized->second.global_T_agent);
+      item["map_revision"] = optimized->second.revision;
+    }
+    const auto& metrics = ctx.loop_output->accepted_alignment_metrics;
+    item["metrics"] = {
+        {"correspondence_count", metrics.correspondence_count},
+        {"rotation_inliers", metrics.rotation_inliers},
+        {"final_inliers", metrics.final_inliers},
+        {"consensus_size", metrics.consensus_size},
+    };
+    if (metrics.fitness) item["metrics"]["fitness"] = *metrics.fitness;
+    if (metrics.overlap_ratio) {
+      item["metrics"]["overlap_ratio"] = *metrics.overlap_ratio;
+    }
+    root["alignments"].push_back(std::move(item));
+  }
+
+  const fs::path destination =
+      fs::path(output_save_dir_) / "map_alignments.json";
+  const fs::path temporary = destination.string() + ".tmp";
+  {
+    std::ofstream output(temporary);
+    if (!output) {
+      return Result<void>::Failure(Error::IoError(
+          "failed to open alignment artifact " + temporary.string()));
+    }
+    output << root.dump(2) << '\n';
+    if (!output) {
+      return Result<void>::Failure(Error::IoError(
+          "failed to write alignment artifact " + temporary.string()));
+    }
+  }
+  std::error_code error;
+  fs::rename(temporary, destination, error);
+  if (error) {
+    fs::remove(temporary);
+    return Result<void>::Failure(Error::IoError(
+        "failed to commit alignment artifact " + destination.string() +
+        ": " + error.message()));
+  }
+  const bool has_user_approval = std::any_of(
+      contexts_.begin(), contexts_.end(), [](const auto& ctx) {
+        return ctx.loop_output &&
+               ctx.loop_output->accepted_alignment_approval ==
+                   AlignmentApproval::kUser;
+      });
+  if (has_user_approval) {
+    const fs::path cache_temporary = alignment_cache_path_.string() + ".tmp";
+    {
+      std::ofstream cache(cache_temporary);
+      if (!cache) {
+        return Result<void>::Failure(Error::IoError(
+            "failed to open alignment cache " + cache_temporary.string()));
+      }
+      cache << root.dump(2) << '\n';
+      if (!cache) {
+        return Result<void>::Failure(Error::IoError(
+            "failed to write alignment cache " + cache_temporary.string()));
+      }
+    }
+    error.clear();
+    fs::rename(cache_temporary, alignment_cache_path_, error);
+    if (error) {
+      fs::remove(cache_temporary);
+      return Result<void>::Failure(Error::IoError(
+          "failed to commit alignment cache " +
+          alignment_cache_path_.string() + ": " + error.message()));
+    }
+  }
+  return Result<void>::Ok();
 }
 
 Result<void> MapServer::RunOptimizeThrough(char target_agent) {

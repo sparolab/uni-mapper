@@ -10,6 +10,8 @@ endif()
 # 이 구조를 유지하는 이유: thirdparty/ 안에 의존성별 세부 cmake 파일이 있어
 # 외부 소스는 건드리지 않고 CMake include 경로만 교체.
 include(${CMAKE_CURRENT_LIST_DIR}/../thirdparty/find_dependencies.cmake)
+find_package(Threads REQUIRED)
+include(${CMAKE_CURRENT_LIST_DIR}/../thirdparty/gkcm/gkcm.cmake)
 
 if(OPEN_LMM_ENABLE_TRACY)
   include(FetchContent)

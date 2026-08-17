@@ -10,6 +10,7 @@ Result<T> ControllerExpired() {
 
 GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controller,
                             std::string config_file_path) {
+  if (controller) controller->SetAlignmentFeedbackEnabled(true);
   std::weak_ptr<PipelineController> weak = controller;
   GuiServices services;
   services.config_file_path = std::move(config_file_path);
@@ -50,6 +51,17 @@ GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controlle
     auto locked = weak.lock();
     return locked ? locked->GetVisualizationSnapshot(agent, max_points)
                   : ControllerExpired<VisualizationSnapshot>();
+  };
+  services.alignment_feedback_snapshot = [weak] {
+    auto locked = weak.lock();
+    return locked ? locked->GetAlignmentFeedbackSnapshot()
+                  : std::optional<AlignmentFeedbackSnapshot>{};
+  };
+  services.respond_to_alignment = [weak](uint64_t job_id,
+                                          AlignmentResponse response) {
+    auto locked = weak.lock();
+    return locked ? locked->RespondToAlignment(job_id, std::move(response))
+                  : ControllerExpired<void>();
   };
   services.subscribe_events = [weak](auto callback) {
     auto locked = weak.lock();

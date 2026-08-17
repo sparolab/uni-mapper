@@ -108,6 +108,47 @@ void TestRigidTransformInverse() {
   }
 }
 
+void TestGlobalAlignmentLoopConvention() {
+  Eigen::Isometry3d global_T_target = Eigen::Isometry3d::Identity();
+  global_T_target.translation() = Eigen::Vector3d(10.0, 2.0, 0.0);
+  Eigen::Isometry3d global_T_source = Eigen::Isometry3d::Identity();
+  global_T_source.translation() = Eigen::Vector3d(13.0, 5.0, 1.0);
+  const auto target_T_source = open_lmm::TargetFromSourceScanTransform(
+      global_T_target, global_T_source);
+  const Eigen::Vector3d source_origin_in_target = target_T_source.translation();
+  Expect(source_origin_in_target.isApprox(Eigen::Vector3d(3.0, 3.0, 1.0)),
+         "global alignment loop must map source scan into target scan frame");
+  Expect((global_T_target * target_T_source).matrix().isApprox(
+             global_T_source.matrix(), 1e-12),
+         "target_T_source convention must reconstruct global source pose");
+}
+
+void TestAlignedMapRebuildUsesLatestTransform() {
+  open_lmm::DescriptorStore store;
+  std::vector<Eigen::Vector3f> anchor{{1.0F, 0.0F, 0.0F}};
+  std::vector<Eigen::Vector3f> follower{{0.0F, 2.0F, 0.0F}};
+  store.set_agent_map('A', anchor, Eigen::Isometry3d::Identity(),
+                      open_lmm::AlignmentMethod::kKissMatcher,
+                      open_lmm::AlignmentApproval::kAutomatic, 'A', 1);
+  Eigen::Isometry3d initial = Eigen::Isometry3d::Identity();
+  initial.translation() = Eigen::Vector3d(10.0, 0.0, 0.0);
+  store.set_agent_map('B', follower, initial,
+                      open_lmm::AlignmentMethod::kManual,
+                      open_lmm::AlignmentApproval::kUser, 'A', 2);
+  Expect(store.merged_map.size() == 2,
+         "aligned map store must rebuild all accepted agent maps");
+  Expect(store.merged_map[1].isApprox(Eigen::Vector3f(10.0F, 2.0F, 0.0F)),
+         "accepted transform must place follower map in target frame");
+
+  Eigen::Isometry3d optimized = Eigen::Isometry3d::Identity();
+  optimized.translation() = Eigen::Vector3d(20.0, 0.0, 0.0);
+  store.update_transform('B', optimized);
+  Expect(store.merged_map.size() == 2,
+         "optimized rebuild must replace rather than append follower points");
+  Expect(store.merged_map[1].isApprox(Eigen::Vector3f(20.0F, 2.0F, 0.0F)),
+         "latest backend transform must replace the provisional transform");
+}
+
 void TestInputValidation() {
   Expect(open_lmm::ValidateScanPoseCount(2, 2, "test").IsOk(),
          "equal scan/pose counts must pass");
@@ -237,9 +278,14 @@ void TestOptimizerLifecycle() {
              !optimizer.HasProcessedAgent("B"[0]),
          "failed optimizer transaction must preserve committed state");
 
-  (void)optimizer.Process(follower, raw_b, {}, {}, {});
-  Expect(optimizer.ProcessedAgentCount() == 2,
-         "retry after transactional failure must succeed");
+  try {
+    (void)optimizer.Process(follower, raw_b, {}, {}, {});
+    Expect(false, "follower without a refined inter-agent loop must fail");
+  } catch (const std::runtime_error&) {
+  }
+  Expect(optimizer.ProcessedAgentCount() == 1 &&
+             !optimizer.HasProcessedAgent("B"[0]),
+         "zero-factor rejection must preserve optimizer transaction");
   optimizer.Reset();
   Expect(optimizer.ProcessedAgentCount() == 0 &&
              !optimizer.HasProcessedAgent("A"[0]),
@@ -339,6 +385,8 @@ void TestPointCloudInputValidation() {
 int main() {
   TestAgentContext();
   TestRigidTransformInverse();
+  TestGlobalAlignmentLoopConvention();
+  TestAlignedMapRebuildUsesLatestTransform();
   TestInputValidation();
   TestPipelineControlFlow();
   TestPluginFailurePropagation();

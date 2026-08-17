@@ -20,6 +20,12 @@ class OptimizeNode : public PipelineNodeBase {
 
     auto loops_valid = ValidateLoops(ctx, db);
     if (!loops_valid) return Result<ControlFlow>::Failure(loops_valid.GetError());
+    if (!ctx.loop_output->accepted_global_T_agent ||
+        !ctx.loop_output->accepted_alignment_method ||
+        !ctx.loop_output->accepted_alignment_approval) {
+      return Result<ControlFlow>::Failure(Error::InvalidArgument(
+          "alignment output is missing its accepted global transform"));
+    }
 
     std::map<char, AgentOptimizedData> all_opt;
     try {
@@ -34,9 +40,27 @@ class OptimizeNode : public PipelineNodeBase {
           "agent " + std::string{ctx.agent.id} + ": " + e.what()));
     }
 
+    std::map<char, Eigen::Isometry3d> optimized_map_transforms;
     for (auto& [id, opt] : all_opt) {
+      const auto raw = db.raw_data.find(id);
+      if (raw != db.raw_data.end() && !opt.optimized_poses.empty()) {
+        const auto& [index, global_pose] = opt.optimized_poses.front();
+        if (index >= 0 &&
+            static_cast<std::size_t>(index) < raw->second.odom_poses.size()) {
+          optimized_map_transforms[id] =
+              global_pose * raw->second.odom_poses[index].inverse();
+        }
+      }
       db.optimized_data[id] = std::move(opt);
     }
+    db.descriptor_store.set_agent_map(
+        ctx.agent.id, ctx.raw_data->map_points,
+        *ctx.loop_output->accepted_global_T_agent,
+        *ctx.loop_output->accepted_alignment_method,
+        *ctx.loop_output->accepted_alignment_approval,
+        ctx.loop_output->accepted_target_agent,
+        ctx.loop_output->accepted_at_unix_ms);
+    db.descriptor_store.update_transforms(optimized_map_transforms);
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
   }

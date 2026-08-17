@@ -25,6 +25,16 @@ openlmm_set_global_target_properties(open_lmm_pipeline_controller_tests)
 add_test(NAME open_lmm_pipeline_controller_tests
          COMMAND open_lmm_pipeline_controller_tests)
 
+add_executable(open_lmm_map_alignment_coordinator_tests
+  map_alignment_coordinator_tests.cpp
+)
+target_link_libraries(open_lmm_map_alignment_coordinator_tests PRIVATE
+  open_lmm_loop_detector
+)
+openlmm_set_global_target_properties(open_lmm_map_alignment_coordinator_tests)
+add_test(NAME open_lmm_map_alignment_coordinator_tests
+         COMMAND open_lmm_map_alignment_coordinator_tests)
+
 add_executable(open_lmm_gui_plugin_tests gui_plugin_tests.cpp)
 target_link_libraries(open_lmm_gui_plugin_tests PRIVATE open_lmm_gui_core)
 openlmm_set_global_target_properties(open_lmm_gui_plugin_tests)

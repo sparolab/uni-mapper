@@ -47,13 +47,32 @@ void ExecutionEventSubscription::Reset() {
 
 PipelineController::PipelineController(std::shared_ptr<StageRunner> runner)
     : runner_(std::move(runner)),
-      event_subscribers_(std::make_shared<ExecutionEventSubscriberRegistry>()) {
-  if (runner_) artifacts_.RegisterAgents(runner_->AgentIds());
+      event_subscribers_(std::make_shared<ExecutionEventSubscriberRegistry>()),
+      alignment_feedback_(std::make_shared<AlignmentFeedbackBroker>()) {
+  alignment_feedback_->SetNotification(
+      [this](const AlignmentFeedbackSnapshot& snapshot) {
+        uint64_t job_id = 0;
+        {
+          std::lock_guard lock(mutex_);
+          if (!job_) return;
+          job_id = job_->id;
+          job_->state = JobState::kWaitingForAlignmentFeedback;
+          job_->message = "waiting for map alignment feedback";
+        }
+        emit({job_id, EventType::kAlignmentFeedbackRequested,
+              StageId::kAlignment, "map alignment feedback requested", 0,
+              NodeId::kLoopDetect, snapshot.proposal.source_agent});
+      });
+  if (runner_) {
+    runner_->SetAlignmentFeedbackBroker(alignment_feedback_);
+    artifacts_.RegisterAgents(runner_->AgentIds());
+  }
 }
 
 PipelineController::~PipelineController() {
   cancel_requested_ = true;
   if (cancellation_) cancellation_->Request();
+  if (alignment_feedback_) alignment_feedback_->Cancel();
   if (worker_.joinable()) worker_.join();
 }
 
@@ -66,6 +85,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
     std::lock_guard lock(mutex_);
     if (job_ && (job_->state == JobState::kQueued ||
                  job_->state == JobState::kRunning ||
+                 job_->state == JobState::kWaitingForAlignmentFeedback ||
                  job_->state == JobState::kCancelling)) {
       return Result<uint64_t>::Failure(
           Error::InvalidArgument("another pipeline job is already running"));
@@ -82,6 +102,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
   }
   cancellation_ = std::make_shared<CancellationToken>();
   runner_->SetCancellationToken(cancellation_);
+  runner_->SetAlignmentFeedbackBroker(alignment_feedback_);
   emit({id, EventType::kJobQueued, std::nullopt, {}});
   worker_ = std::thread([this, id, work = std::move(work)]() mutable {
     OPEN_LMM_THREAD_NAME("open_lmm.pipeline");
@@ -169,6 +190,7 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
     std::lock_guard lock(mutex_);
     if (job_ && (job_->state == JobState::kQueued ||
                  job_->state == JobState::kRunning ||
+                 job_->state == JobState::kWaitingForAlignmentFeedback ||
                  job_->state == JobState::kCancelling)) {
       return Result<void>::Failure(
           Error::InvalidArgument("cannot apply config while a job is running"));
@@ -193,6 +215,7 @@ Result<void> PipelineController::ReplaceRunner(
     std::lock_guard lock(mutex_);
     if (job_ && (job_->state == JobState::kQueued ||
                  job_->state == JobState::kRunning ||
+                 job_->state == JobState::kWaitingForAlignmentFeedback ||
                  job_->state == JobState::kCancelling)) {
       return Result<void>::Failure(
           Error::InvalidArgument("cannot create a session while a job is running"));
@@ -203,6 +226,7 @@ Result<void> PipelineController::ReplaceRunner(
   {
     std::lock_guard lock(mutex_);
     runner_ = std::move(runner);
+    runner_->SetAlignmentFeedbackBroker(alignment_feedback_);
     job_.reset();
     cancellation_.reset();
     cancel_requested_ = false;
@@ -285,12 +309,14 @@ Result<void> PipelineController::Cancel(uint64_t job_id) {
     }
     if (job_->state != JobState::kQueued &&
         job_->state != JobState::kRunning &&
-        job_->state != JobState::kWaitingForDependency) {
+        job_->state != JobState::kWaitingForDependency &&
+        job_->state != JobState::kWaitingForAlignmentFeedback) {
       return Result<void>::Failure(Error::InvalidArgument("job is not running"));
     }
     cancel_requested_ = true;
     job_->state = JobState::kCancelling;
     if (cancellation_) cancellation_->Request();
+    if (alignment_feedback_) alignment_feedback_->Cancel();
   }
   emit({job_id, EventType::kCancellationRequested, std::nullopt,
         "cancellation requested; waiting for the next safe point"});
@@ -378,6 +404,50 @@ Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     }
   }
   return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
+}
+
+std::optional<AlignmentFeedbackSnapshot>
+PipelineController::GetAlignmentFeedbackSnapshot() const {
+  return alignment_feedback_ ? alignment_feedback_->Snapshot() : std::nullopt;
+}
+
+Result<void> PipelineController::RespondToAlignment(
+    uint64_t job_id, AlignmentResponse response) {
+  AlignmentDecision decision = response.decision;
+  {
+    std::lock_guard lock(mutex_);
+    if (!job_ || job_->id != job_id) {
+      return Result<void>::Failure(Error::InvalidArgument("unknown job id"));
+    }
+    if (job_->state != JobState::kWaitingForAlignmentFeedback) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("job is not waiting for alignment feedback"));
+    }
+    job_->state = JobState::kRunning;
+    job_->message.clear();
+  }
+  auto result = alignment_feedback_->Respond(std::move(response));
+  if (!result) {
+    std::lock_guard lock(mutex_);
+    if (job_ && job_->id == job_id) {
+      job_->state = JobState::kWaitingForAlignmentFeedback;
+      job_->message = "waiting for map alignment feedback";
+    }
+    return result;
+  }
+  EventType type = EventType::kAlignmentProposalRejected;
+  if (decision == AlignmentDecision::kAccept ||
+      decision == AlignmentDecision::kManual) {
+    type = EventType::kAlignmentProposalAccepted;
+  } else if (decision == AlignmentDecision::kCancel) {
+    type = EventType::kAlignmentFeedbackCancelled;
+  }
+  emit({job_id, type, StageId::kAlignment, "alignment feedback received"});
+  return Result<void>::Ok();
+}
+
+void PipelineController::SetAlignmentFeedbackEnabled(bool enabled) {
+  if (alignment_feedback_) alignment_feedback_->SetEnabled(enabled);
 }
 
 void PipelineController::SetEventCallback(

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <open_lmm/common/result.hpp>
+#include <open_lmm/common/alignment_feedback.hpp>
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/visualization_snapshot.hpp>
 #include <memory>
@@ -18,7 +19,7 @@ enum class NodeId : uint8_t {
 };
 enum class ArtifactType : uint8_t {
   kConfigSnapshot, kAgentInput, kRawData, kDescriptorState,
-  kLoopCandidates, kOptimizerState, kOptimizedPoses, kGlobalMap,
+  kLoopCandidates, kMapAlignment, kOptimizerState, kOptimizedPoses, kGlobalMap,
   kPoseFile, kPcdFile, kProfileRecord,
 };
 enum class ConfigDomain : uint8_t {
@@ -42,6 +43,8 @@ class StageRunner {
  public:
   virtual ~StageRunner() = default;
   virtual void SetCancellationToken(std::shared_ptr<CancellationToken> token) = 0;
+  virtual void SetAlignmentFeedbackBroker(
+      std::shared_ptr<AlignmentFeedbackBroker>) {}
   virtual Result<void> RunStage(StageId stage) = 0;
   virtual Result<void> RunNode(NodeId node, std::optional<char> agent) = 0;
   virtual Result<void> RunOptimizeThrough(char target_agent) = 0;
