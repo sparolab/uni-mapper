@@ -44,7 +44,7 @@ class FakeRunner final : public StageRunner {
         ? Result<void>::Failure(Error::OptimizationFailed("induced replay"))
         : Result<void>::Ok();
   }
-  std::vector<char> AgentIds() const override { return {'A', 'B'}; }
+  std::vector<char> AgentIds() const override { return agent_ids; }
 
   mutable std::mutex mutex;
   std::vector<StageId> calls;
@@ -54,6 +54,7 @@ class FakeRunner final : public StageRunner {
   bool block_node_until_cancel = false;
   std::atomic<bool> node_entered{false};
   std::shared_ptr<CancellationToken> cancellation;
+  std::vector<char> agent_ids{'A', 'B'};
 };
 
 ArtifactState StateOf(const PipelineSnapshot& snapshot, ArtifactType type,
@@ -235,6 +236,24 @@ void TestNodeCancellationRollsBackArtifacts() {
   Check(preserved, "cancel restores committed artifact revision");
 }
 
+void TestSessionRunnerReplacement() {
+  auto first = std::make_shared<FakeRunner>();
+  PipelineController controller(first);
+  auto replacement = std::make_shared<FakeRunner>();
+  replacement->agent_ids = {'C'};
+  const auto before_revision = controller.Snapshot().config_revision;
+  Check(controller.ReplaceRunner(replacement).IsOk(),
+        "idle controller accepts a new session runner");
+  const auto snapshot = controller.Snapshot();
+  Check(snapshot.config_revision == before_revision + 1,
+        "new session advances config revision");
+  Check(snapshot.agents == std::vector<char>{'C'},
+        "new session resets registered agents");
+  Check(StateOf(snapshot, ArtifactType::kAgentInput, 'C') ==
+            ArtifactState::kReady,
+        "new session resets artifacts");
+}
+
 }  // namespace
 
 int main() {
@@ -246,6 +265,7 @@ int main() {
   TestNodeCommandsAndMetadata();
   TestConfigApplyInvalidation();
   TestNodeCancellationRollsBackArtifacts();
+  TestSessionRunnerReplacement();
   std::cout << "pipeline controller tests passed\n";
   return 0;
 }

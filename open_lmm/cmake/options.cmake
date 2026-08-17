@@ -13,6 +13,7 @@ option(USE_SYSTEM_TQDMCPP     "Use system pre-installed tqdmcpp"       OFF)  # f
 option(USE_SYSTEM_SMALL_GICP  "Use system pre-installed small_gicp"    OFF)
 option(USE_SYSTEM_KISS_MATCHER "Use system pre-installed kiss_matcher"  OFF)
 option(USE_SYSTEM_NLOHMANN_JSON "Use system pre-installed nlohmann_json" OFF)
+option(USE_SYSTEM_IRIDESCENCE "Use system pre-installed Iridescence" ON)
 
 # ccache 설정
 if(USE_CCACHE)

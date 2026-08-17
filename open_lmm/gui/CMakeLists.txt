@@ -1,4 +1,5 @@
 add_library(open_lmm_gui_core STATIC
+  config_editor.cpp
   gui_controller_bridge.cpp
   gui_event_queue.cpp
   gui_model.cpp
@@ -10,7 +11,6 @@ target_link_libraries(open_lmm_gui_core PUBLIC open_lmm_map_server open_lmm_util
 openlmm_set_global_target_properties(open_lmm_gui_core)
 
 if(OPEN_LMM_BUILD_IRIDESCENCE_GUI)
-  find_package(Iridescence REQUIRED)
   add_library(open_lmm_iridescence_gui SHARED iridescence_gui.cpp)
   target_link_libraries(open_lmm_iridescence_gui PRIVATE
     open_lmm_gui_core Iridescence::Iridescence)

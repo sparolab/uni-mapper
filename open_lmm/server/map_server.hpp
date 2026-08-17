@@ -31,6 +31,7 @@ class MapServer : public StageRunner {
   [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
       char agent, std::size_t max_points) const override;
   Result<void> ResetSession();
+  Result<void> ValidateReady();
 
   Result<void> saveOptimizedPoses(const std::string& save_dir);
   Result<void> saveOptimizedMap(const std::string& save_dir);
@@ -38,6 +39,7 @@ class MapServer : public StageRunner {
  private:
   std::vector<AgentPipelineCtx> buildContexts() const;
   Result<void> ensureReady();
+  Result<void> validateInputFiles() const;
   Result<void> runDataLoadStage();
   Result<void> runAlignmentStage();
   Result<void> runMapUpdateStage();
@@ -61,6 +63,7 @@ class MapServer : public StageRunner {
   std::optional<Config> config_loop_detector_;
   std::optional<Config> config_dynamic_remover_;
   mutable std::recursive_mutex state_mutex_;
+  bool inputs_validated_ = false;
 };
 
 }  // namespace open_lmm

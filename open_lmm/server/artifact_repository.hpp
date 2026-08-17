@@ -30,6 +30,7 @@ struct ArtifactMetadata {
 class ArtifactRepository {
  public:
   void RegisterAgents(const std::vector<char>& agents);
+  void Reset(const std::vector<char>& agents);
   void BeginStage(StageId stage);
   void CompleteStage(StageId stage);
   void FailStage(StageId stage, std::string detail);

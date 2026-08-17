@@ -7,6 +7,7 @@
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <fstream>
 
 // Pipeline nodes
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
@@ -184,8 +185,59 @@ Result<void> MapServer::ensureReady() {
         "anchor_agent_index " + std::to_string(anchor_agent_index_) +
         " is out of range for " + std::to_string(agent_num_) + " agents"));
   }
+  if (!inputs_validated_) {
+    auto inputs = validateInputFiles();
+    if (!inputs) return inputs;
+    inputs_validated_ = true;
+  }
   if (contexts_.empty()) contexts_ = buildContexts();
   return Result<void>::Ok();
+}
+
+Result<void> MapServer::validateInputFiles() const {
+  if (!config_data_loader_) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "data loader config is unavailable"));
+  }
+  const auto pose_name = config_data_loader_->param<std::string>(
+      "data_loader", "pose_file_name", "");
+  const auto scan_dir_name = config_data_loader_->param<std::string>(
+      "data_loader", "scan_dir_name", "");
+  const auto scan_type = config_data_loader_->param<std::string>(
+      "data_loader", "scan_type", "");
+  for (std::size_t i = 0; i < data_dir_list_.size(); ++i) {
+    const char agent = static_cast<char>('A' + i);
+    const auto pose_path = data_dir_list_[i] / pose_name;
+    const auto scan_path = data_dir_list_[i] / scan_dir_name;
+    if (!fs::is_regular_file(pose_path)) {
+      return Result<void>::Failure(Error::FileNotFound(
+          "agent " + std::string(1, agent) + " pose " + pose_path.string()));
+    }
+    if (!fs::is_directory(scan_path)) {
+      return Result<void>::Failure(Error::FileNotFound(
+          "agent " + std::string(1, agent) + " scans " + scan_path.string()));
+    }
+    std::ifstream poses(pose_path);
+    std::size_t pose_count = 0;
+    for (std::string line; std::getline(poses, line);)
+      if (!line.empty()) ++pose_count;
+    std::size_t scan_count = 0;
+    for (const auto& entry : fs::directory_iterator(scan_path)) {
+      if (entry.is_regular_file() &&
+          entry.path().extension() == "." + scan_type) ++scan_count;
+    }
+    if (pose_count == 0 || scan_count == 0 || pose_count != scan_count) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "agent " + std::string(1, agent) + " input count mismatch: poses=" +
+          std::to_string(pose_count) + ", scans=" + std::to_string(scan_count)));
+    }
+  }
+  return Result<void>::Ok();
+}
+
+Result<void> MapServer::ValidateReady() {
+  std::lock_guard lock(state_mutex_);
+  return ensureReady();
 }
 
 std::vector<char> MapServer::AgentIds() const {

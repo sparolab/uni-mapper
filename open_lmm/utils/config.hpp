@@ -1,11 +1,13 @@
 #pragma once
 
 #include <any>
+#include <open_lmm/common/result.hpp>
 #include <vector>
 #include <string>
 #include <memory>
 #include <optional>
 #include <iostream>
+#include <mutex>
 
 namespace open_lmm {
 
@@ -119,9 +121,11 @@ protected:
 class GlobalConfig : public Config {
 private:
   GlobalConfig(const std::string& global_config_path) : Config(global_config_path) {}
-  virtual ~GlobalConfig() override {}
 
 public:
+  ~GlobalConfig() override = default;
+  static Result<void> reload(const std::string& config_path);
+  static std::string config_directory();
   static GlobalConfig* instance(const std::string& config_path = std::string()) {
     if (inst == nullptr) {
       inst = new GlobalConfig(config_path + "/config.json");
@@ -162,6 +166,7 @@ public:
   }
 
   static GlobalConfig* inst;
+  static std::mutex inst_mutex;
   std::string date;
 };
 

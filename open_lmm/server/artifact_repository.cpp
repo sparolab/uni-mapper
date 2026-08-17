@@ -3,6 +3,16 @@
 #include <algorithm>
 
 namespace open_lmm {
+
+void ArtifactRepository::Reset(const std::vector<char>& agents) {
+  {
+    std::lock_guard lock(mutex_);
+    artifacts_.clear();
+    agents_.clear();
+    next_revision_ = 1;
+  }
+  RegisterAgents(agents);
+}
 namespace {
 const char* StageName(StageId stage) {
   switch (stage) {

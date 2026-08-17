@@ -82,6 +82,7 @@ class PipelineController {
   Result<uint64_t> SubmitNode(NodeId node, char agent);
   Result<uint64_t> SubmitOptimizeThrough(char target_agent);
   Result<void> ApplyConfig(ConfigDomain domain, uint64_t revision);
+  Result<void> ReplaceRunner(std::shared_ptr<StageRunner> runner);
   [[nodiscard]] std::vector<NodeDescriptor> NodeDescriptors() const;
   Result<void> Cancel(uint64_t job_id);
   Result<void> Wait(uint64_t job_id);

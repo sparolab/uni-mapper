@@ -185,6 +185,35 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
   return Result<void>::Ok();
 }
 
+Result<void> PipelineController::ReplaceRunner(
+    std::shared_ptr<StageRunner> runner) {
+  if (!runner) return Result<void>::Failure(
+      Error::InvalidArgument("pipeline stage runner is null"));
+  {
+    std::lock_guard lock(mutex_);
+    if (job_ && (job_->state == JobState::kQueued ||
+                 job_->state == JobState::kRunning ||
+                 job_->state == JobState::kCancelling)) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("cannot create a session while a job is running"));
+    }
+  }
+  if (worker_.joinable()) worker_.join();
+  const auto agents = runner->AgentIds();
+  {
+    std::lock_guard lock(mutex_);
+    runner_ = std::move(runner);
+    job_.reset();
+    cancellation_.reset();
+    cancel_requested_ = false;
+    ++config_revision_;
+  }
+  artifacts_.Reset(agents);
+  emit({0, EventType::kArtifactInvalidated, std::nullopt,
+        "new pipeline session created"});
+  return Result<void>::Ok();
+}
+
 std::vector<NodeDescriptor> PipelineController::NodeDescriptors() const {
   std::vector<NodeDescriptor> result;
   for (NodeId node : {NodeId::kDataLoad, NodeId::kLoopDetect,
@@ -329,11 +358,16 @@ PipelineSnapshot PipelineController::Snapshot() const {
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     char agent, std::size_t max_points) const {
-  if (!runner_) {
+  std::shared_ptr<StageRunner> runner;
+  {
+    std::lock_guard lock(mutex_);
+    runner = runner_;
+  }
+  if (!runner) {
     return Result<VisualizationSnapshot>::Failure(
         Error::InvalidArgument("stage runner is not available"));
   }
-  auto result = runner_->CreateVisualizationSnapshot(agent, max_points);
+  auto result = runner->CreateVisualizationSnapshot(agent, max_points);
   if (!result) return result;
   auto snapshot = std::move(result).Value();
   for (const auto& artifact : artifacts_.Snapshot()) {

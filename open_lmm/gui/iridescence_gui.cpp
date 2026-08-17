@@ -1,14 +1,18 @@
 #include <open_lmm/gui/iridescence_gui.hpp>
+#include <open_lmm/gui/config_editor.hpp>
 #include <glk/pointcloud_buffer.hpp>
 #include <glk/primitives/primitives.hpp>
 #include <glk/thin_lines.hpp>
 #include <guik/viewer/light_viewer.hpp>
 #include <imgui.h>
+#include <iridescence/portable-file-dialogs.h>
 #include <algorithm>
 #include <chrono>
 #include <exception>
 #include <iostream>
 #include <map>
+#include <cstdio>
+#include <sstream>
 #include <utility>
 
 namespace open_lmm {
@@ -47,12 +51,23 @@ const char* ArtifactStateName(ArtifactState state) {
   }
   return "Unknown";
 }
+template <std::size_t N>
+void SetBuffer(std::array<char, N>& buffer, const std::string& value) {
+  std::snprintf(buffer.data(), buffer.size(), "%s", value.c_str());
+}
 }  // namespace
 IridescenceGui::~IridescenceGui() { RequestStop(); Join(); }
 
 Result<void> IridescenceGui::Start(GuiServices services) {
   if (thread_.joinable()) return Result<void>::Failure(Error::InvalidArgument("Iridescence GUI is already started"));
   services_ = std::move(services);
+  SetBuffer(session_config_path_, services_.config_file_path);
+  if (!services_.config_file_path.empty())
+    recent_config_paths_.push_back(services_.config_file_path);
+  LoadConfigEditor();
+  if (services_.node_descriptors) {
+    node_descriptors_ = services_.node_descriptors();
+  }
   if (services_.visualization_snapshot) {
     visualization_worker_ = std::make_unique<VisualizationSnapshotWorker>(
         services_.visualization_snapshot, 1'000'000);
@@ -318,6 +333,26 @@ void IridescenceGui::DrawPipelineUi() {
   ImGui::Text("Agents");
   for (const char agent : model_.Agents()) {
     ImGui::BulletText("Agent %c", agent);
+    ImGui::PushID(static_cast<int>(agent));
+    for (const auto& descriptor : node_descriptors_) {
+      if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+      const std::string label = std::string(descriptor.name) + "##node";
+      if (ImGui::SmallButton(label.c_str()) && services_.submit_node) {
+        auto result = services_.submit_node(descriptor.id, agent);
+        command_error_ = result ? std::string{} : result.GetError().Message();
+      }
+      if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+      ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+    if (ImGui::SmallButton("Optimize through##replay") &&
+        services_.submit_optimize_through) {
+      auto result = services_.submit_optimize_through(agent);
+      command_error_ = result ? std::string{} : result.GetError().Message();
+    }
+    if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+    ImGui::PopID();
   }
   ImGui::Separator();
   if (ImGui::BeginTable("artifacts", 5,
@@ -346,25 +381,7 @@ void IridescenceGui::DrawPipelineUi() {
   }
   ImGui::End();
 
-  ImGui::Begin("OpenLMM Config");
-  static const char* domains[] = {"Global", "DataLoader", "LoopDetector",
-                                  "Optimizer", "DynamicRemover", "MapSave"};
-  ImGui::Combo("Domain", &config_domain_, domains, 6);
-  ImGui::InputScalar("New revision", ImGuiDataType_U64,
-                     &config_revision_draft_);
-  const bool invalid_revision =
-      config_revision_draft_ <= model_.ConfigRevision();
-  if (invalid_revision || !model_.CanSubmitCommand()) ImGui::BeginDisabled();
-  if (ImGui::Button("Apply config revision") && services_.apply_config) {
-    auto result = services_.apply_config(
-        static_cast<ConfigDomain>(config_domain_), config_revision_draft_);
-    command_error_ = result ? std::string{} : result.GetError().Message();
-  }
-  if (invalid_revision || !model_.CanSubmitCommand()) ImGui::EndDisabled();
-  ImGui::TextWrapped(
-      "This panel commits an already validated config revision. Parameter "
-      "editing/schema widgets require the config draft provider.");
-  ImGui::End();
+  DrawConfigEditorUi();
 
   ImGui::Begin("OpenLMM Job and Event Log");
   if (model_.Job()) {
@@ -383,6 +400,133 @@ void IridescenceGui::DrawPipelineUi() {
                 event.message.c_str());
   }
   ImGui::EndChild();
+  ImGui::End();
+}
+
+void IridescenceGui::LoadConfigEditor() {
+  if (services_.config_file_path.empty()) return;
+  auto loaded = ConfigEditorDocument::Load(services_.config_file_path);
+  if (!loaded) { config_editor_status_ = loaded.GetError().Message(); return; }
+  auto values = loaded.Value().Values();
+  if (!values) { config_editor_status_ = values.GetError().Message(); return; }
+  const auto& value = values.Value();
+  SetBuffer(config_map_server_, value.config_map_server);
+  SetBuffer(config_data_loader_, value.config_data_loader);
+  SetBuffer(config_loop_detector_, value.config_loop_detector);
+  SetBuffer(config_backend_optimizer_, value.config_backend_optimizer);
+  SetBuffer(config_dynamic_remover_, value.config_dynamic_remover);
+  SetBuffer(root_dir_path_, value.root_dir_path);
+  SetBuffer(root_save_dir_, value.root_save_dir);
+  std::ostringstream agents;
+  for (std::size_t i = 0; i < value.sub_dir_list.size(); ++i) {
+    if (i) agents << '\n';
+    agents << value.sub_dir_list[i];
+  }
+  SetBuffer(sub_dir_list_, agents.str());
+  config_editor_status_ = "Loaded " + services_.config_file_path;
+}
+
+void IridescenceGui::DrawConfigEditorUi() {
+  ImGui::Begin("OpenLMM Config");
+  if (services_.config_file_path.empty()) {
+    ImGui::TextWrapped("No editable config path was provided by the host.");
+    ImGui::End();
+    return;
+  }
+  ImGui::TextWrapped("%s", services_.config_file_path.c_str());
+  ImGui::InputText("Session config", session_config_path_.data(),
+                   session_config_path_.size());
+  ImGui::SameLine();
+  if (ImGui::Button("Browse") && !file_dialog_future_.valid()) {
+    const std::string initial = session_config_path_.data();
+    file_dialog_future_ = std::async(std::launch::async, [initial] {
+      return pfd::open_file("Select OpenLMM config.json", initial,
+                            {"JSON configuration", "*.json"},
+                            false).result();
+    });
+  }
+  if (file_dialog_future_.valid() &&
+      file_dialog_future_.wait_for(std::chrono::milliseconds(0)) ==
+          std::future_status::ready) {
+    auto selected = file_dialog_future_.get();
+    if (!selected.empty()) {
+      SetBuffer(session_config_path_, selected.front());
+      if (std::find(recent_config_paths_.begin(), recent_config_paths_.end(),
+                    selected.front()) == recent_config_paths_.end())
+        recent_config_paths_.push_back(selected.front());
+    }
+  }
+  if (ImGui::BeginCombo("Recent configs", session_config_path_.data())) {
+    for (const auto& path : recent_config_paths_) {
+      if (ImGui::Selectable(path.c_str(), path == session_config_path_.data()))
+        SetBuffer(session_config_path_, path);
+    }
+    ImGui::EndCombo();
+  }
+  if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+  if (ImGui::Button("Create Session") && services_.create_session) {
+    auto result = services_.create_session(session_config_path_.data());
+    if (result) {
+      services_.config_file_path = session_config_path_.data();
+      LoadConfigEditor();
+      SynchronizeModel();
+      config_editor_status_ = "New session created from selected config.";
+    } else {
+      config_editor_status_ = result.GetError().Message();
+    }
+  }
+  if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+  ImGui::Separator();
+  ImGui::InputText("Map server", config_map_server_.data(), config_map_server_.size());
+  ImGui::InputText("Data loader", config_data_loader_.data(), config_data_loader_.size());
+  ImGui::InputText("Loop detector", config_loop_detector_.data(), config_loop_detector_.size());
+  ImGui::InputText("Optimizer", config_backend_optimizer_.data(), config_backend_optimizer_.size());
+  ImGui::InputText("Dynamic remover", config_dynamic_remover_.data(), config_dynamic_remover_.size());
+  ImGui::Separator();
+  ImGui::InputText("Dataset root", root_dir_path_.data(), root_dir_path_.size());
+  ImGui::SameLine();
+  if (ImGui::Button("Browse dataset") && !dataset_dialog_future_.valid()) {
+    const std::string initial = root_dir_path_.data();
+    dataset_dialog_future_ = std::async(std::launch::async, [initial] {
+      return pfd::select_folder("Select dataset root", initial).result();
+    });
+  }
+  if (dataset_dialog_future_.valid() &&
+      dataset_dialog_future_.wait_for(std::chrono::milliseconds(0)) ==
+          std::future_status::ready) {
+    auto selected = dataset_dialog_future_.get();
+    if (!selected.empty()) SetBuffer(root_dir_path_, selected);
+  }
+  ImGui::InputTextMultiline("Agent directories", sub_dir_list_.data(),
+                            sub_dir_list_.size(), ImVec2(-1.0f, 100.0f));
+  ImGui::InputText("Output root", root_save_dir_.data(), root_save_dir_.size());
+  if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+  if (ImGui::Button("Validate and Save")) {
+    auto loaded = ConfigEditorDocument::Load(services_.config_file_path);
+    if (!loaded) {
+      config_editor_status_ = loaded.GetError().Message();
+    } else {
+      auto document = std::move(loaded).Value();
+      ConfigEditorValues value{config_map_server_.data(), config_data_loader_.data(),
+          config_loop_detector_.data(), config_backend_optimizer_.data(),
+          config_dynamic_remover_.data(), root_dir_path_.data(), {},
+          root_save_dir_.data()};
+      std::istringstream agents(sub_dir_list_.data());
+      for (std::string line; std::getline(agents, line);) {
+        if (!line.empty()) value.sub_dir_list.push_back(std::move(line));
+      }
+      auto updated = document.SetValues(value);
+      auto saved = updated ? document.Save() : updated;
+      config_editor_status_ = saved
+          ? "Validated and saved. Create a new session to apply."
+          : saved.GetError().Message();
+    }
+  }
+  if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+  ImGui::SameLine();
+  if (ImGui::Button("Reload")) LoadConfigEditor();
+  if (!config_editor_status_.empty())
+    ImGui::TextWrapped("%s", config_editor_status_.c_str());
   ImGui::End();
 }
 }  // namespace open_lmm

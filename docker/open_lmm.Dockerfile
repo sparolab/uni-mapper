@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     wget \
     git \
+    software-properties-common \
     libeigen3-dev \
     libboost-all-dev \
     libtbb-dev \
@@ -20,11 +21,23 @@ RUN apt-get update && apt-get install -y \
     libnanoflann-dev \
     libspdlog-dev \
     libfmt-dev \
+    # for optional Iridescence GUI build
+    libgl1-mesa-dev \
+    libglm-dev \
+    libglfw3-dev \
+    libpng-dev \
+    libjpeg-dev \
     # for docker GUI
     libglib2.0-0 \
     libgl1-mesa-glx \
     x11-apps \
     && rm -rf /var/lib/apt/lists/*
+
+#! official Iridescence PPA and prebuilt development package
+RUN add-apt-repository -y ppa:koide3/iridescence && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libiridescence-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120 && \
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 120 && \

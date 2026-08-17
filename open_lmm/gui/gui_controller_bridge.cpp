@@ -8,9 +8,11 @@ Result<T> ControllerExpired() {
 }
 }  // namespace
 
-GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controller) {
+GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controller,
+                            std::string config_file_path) {
   std::weak_ptr<PipelineController> weak = controller;
   GuiServices services;
+  services.config_file_path = std::move(config_file_path);
   services.submit_run_all = [weak] {
     auto locked = weak.lock();
     return locked ? locked->SubmitRunAll() : ControllerExpired<uint64_t>();
@@ -35,6 +37,10 @@ GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controlle
     auto locked = weak.lock();
     return locked ? locked->ApplyConfig(domain, revision)
                   : ControllerExpired<void>();
+  };
+  services.node_descriptors = [weak] {
+    auto locked = weak.lock();
+    return locked ? locked->NodeDescriptors() : std::vector<NodeDescriptor>{};
   };
   services.snapshot = [weak] {
     auto locked = weak.lock();

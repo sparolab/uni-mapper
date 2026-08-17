@@ -2,15 +2,19 @@
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/server/pipeline_controller.hpp>
 #include <functional>
+#include <string>
 
 namespace open_lmm {
 struct GuiServices {
+  std::string config_file_path;
   std::function<Result<uint64_t>()> submit_run_all;
   std::function<Result<uint64_t>(StageId)> submit_stage;
   std::function<Result<uint64_t>(NodeId, char)> submit_node;
   std::function<Result<uint64_t>(char)> submit_optimize_through;
   std::function<Result<void>(uint64_t)> cancel_job;
   std::function<Result<void>(ConfigDomain, uint64_t)> apply_config;
+  std::function<Result<void>(const std::string&)> create_session;
+  std::function<std::vector<NodeDescriptor>()> node_descriptors;
   std::function<PipelineSnapshot()> snapshot;
   std::function<Result<VisualizationSnapshot>(char, std::size_t)>
       visualization_snapshot;

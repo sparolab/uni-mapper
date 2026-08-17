@@ -1,5 +1,6 @@
 #include <open_lmm/gui/gui_plugin_host.hpp>
 #include <open_lmm/gui/gui_controller_bridge.hpp>
+#include <open_lmm/gui/config_editor.hpp>
 #include <open_lmm/gui/gui_event_queue.hpp>
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/gui/visualization_repository.hpp>
@@ -56,6 +57,27 @@ void Require(bool condition, const char* message) {
 }  // namespace
 
 int main() {
+  const std::string config_text = R"({
+    "global": {
+      "config_map_server":"map.json", "config_data_loader":"loader.json",
+      "config_loop_detector":"loop.json", "config_backend_optimizer":"optimizer.json",
+      "config_dynamic_remover":"remover.json"
+    },
+    "directory": {"root_dir_path":"/data", "sub_dir_list":["test1","test2"],
+                  "root_save_dir":"/output"}
+  })";
+  auto config_document = open_lmm::ConfigEditorDocument::Parse(config_text);
+  Require(config_document.IsOk(), "schema config document parses");
+  auto config_values = config_document.Value().Values();
+  Require(config_values.IsOk() && config_values.Value().sub_dir_list.size() == 2,
+          "schema config fields are projected");
+  auto invalid_values = config_values.Value();
+  invalid_values.sub_dir_list.clear();
+  auto mutable_config_document = std::move(config_document).Value();
+  Require(!mutable_config_document.SetValues(invalid_values).IsOk(),
+          "schema rejects an empty agent list");
+  Require(!open_lmm::ConfigEditorDocument::Parse("{}").IsOk(),
+          "schema rejects missing required fields");
   auto plugin = std::make_shared<FakeGui>();
   {
     open_lmm::GuiPluginHost host(plugin);
@@ -104,6 +126,8 @@ int main() {
           "command bridge applies config revision");
   Require(services.snapshot().config_revision == 2,
           "applied config revision is visible in snapshot");
+  Require(services.node_descriptors().size() == 5,
+          "node descriptors are exposed to GUI controls");
   auto visualization = services.visualization_snapshot('A', 100);
   Require(visualization.IsOk() && visualization.Value().agent == 'A',
           "visualization snapshot is bridged without exposing runner state");

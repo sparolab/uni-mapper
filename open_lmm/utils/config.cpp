@@ -4,6 +4,27 @@
 namespace open_lmm {
 
 GlobalConfig* GlobalConfig::inst = nullptr;
+std::mutex GlobalConfig::inst_mutex;
+
+Result<void> GlobalConfig::reload(const std::string& config_path) {
+  auto candidate = std::unique_ptr<GlobalConfig>(
+      new GlobalConfig(config_path + "/config.json"));
+  if (!candidate->is_valid()) {
+    return Result<void>::Failure(Error::ParseError(candidate->error_message()));
+  }
+  candidate->override_param("global", "config_path", config_path);
+  candidate->date = candidate->create_date();
+  std::lock_guard lock(inst_mutex);
+  delete inst;
+  inst = candidate.release();
+  return Result<void>::Ok();
+}
+
+std::string GlobalConfig::config_directory() {
+  std::lock_guard lock(inst_mutex);
+  if (!inst) return {};
+  return inst->param<std::string>("global", "config_path", "");
+}
 
 Config::Config(const std::string& config_filename)
 : config_path(config_filename)
