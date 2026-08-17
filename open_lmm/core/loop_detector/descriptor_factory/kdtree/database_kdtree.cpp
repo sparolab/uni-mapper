@@ -17,6 +17,10 @@ KdtreeParams::KdtreeParams() {
       config.param<int>("database", "rebuild_threshold", 50);
   descriptor_vector_dim =
       config.param<int>("database", "descriptor_vector_dim", 128);
+  if (num_candidates <= 0 || distance_threshold < 0.0 ||
+      kdtree_rebuild_threshold <= 0 || descriptor_vector_dim <= 0) {
+    throw std::invalid_argument("database KD-tree parameters are out of range");
+  }
 }
 
 DatabaseKdtree::DatabaseKdtree(const KdtreeParams& params) : params_(params) {

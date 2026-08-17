@@ -10,6 +10,20 @@ namespace open_lmm {
 DataLoaderFile::DataLoaderFile(Config config) {
   parseConfig(config);
 
+  if (param_.pose_file_name.empty() || param_.scan_dir_name.empty()) {
+    initialization_error_ = Error::InvalidArgument(
+        "data_loader pose_file_name and scan_dir_name must be non-empty");
+  } else if (param_.voxel_size <= 0.0f) {
+    initialization_error_ = Error::InvalidArgument(
+        "data_loader voxel_size must be greater than zero");
+  } else if (param_.min_range < 0.0f || param_.max_range <= param_.min_range) {
+    initialization_error_ = Error::InvalidArgument(
+        "data_loader range must satisfy 0 <= min_range < max_range");
+  } else if (param_.delimiter.size() != 1) {
+    initialization_error_ = Error::InvalidArgument(
+        "data_loader delimiter must be exactly one character");
+  }
+
   if (param_.pose_format == "kitti") {
     transformFunctor = kittiPoseToIsometry3d;
   } else if (param_.pose_format == "tum") {
@@ -186,12 +200,21 @@ Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
   std::sort(scan_files.begin(), scan_files.end());
 
   ScanVec raw_scans;
-  ScanVec filtered_scans;
 
-  for (auto scan_file : scan_files) {
-    const pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan =
-        convertScanFunctor(scan_file.string());
-    raw_scans.push_back(p_scan);
+  if (scan_files.empty()) {
+    return Result<ScanVec>::Failure(Error::InvalidArgument(
+        "No ." + param_.scan_type + " scan files found in " +
+        scan_dir_path.string()));
+  }
+
+  for (const auto& scan_file : scan_files) {
+    try {
+      raw_scans.push_back(convertScanFunctor(scan_file.string()));
+    } catch (const std::exception& e) {
+      return Result<ScanVec>::Failure(Error::IoError(
+          "agent data " + data_dir_path.string() + ", scan " +
+          scan_file.string() + ": " + e.what()));
+    }
   }
 
   return Result<ScanVec>::Ok(std::move(raw_scans));

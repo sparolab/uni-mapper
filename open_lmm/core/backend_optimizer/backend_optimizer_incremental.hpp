@@ -22,9 +22,8 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
   ~BackendOptimizerIncremental() override;
   void parseConfig(Config config) override;
 
-  // GraphStore 제거 — 누적 graph/values를 클래스 멤버로 관리
-  // (MapAligner가 에이전트마다 BackendOptimizer를 새로 생성하므로
-  //  ISAM2 객체를 클래스 멤버로 공유하는 대신 accumulated graph를 멤버로 유지)
+  // ISAM2 자체는 Process 호출마다 생성한다. committed graph/values는 agent 간
+  // 누적하며, 각 호출은 working copy에서 처리한 후 성공 시에만 commit한다.
   std::map<char, AgentOptimizedData> Process(
       const AgentContext&                 ctx,
       const AgentRawData&                 raw_data,
@@ -33,6 +32,9 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
       const std::map<char, AgentRawData>& all_raw_data) override;
 
   void initNoise();
+  void Reset() override;
+  [[nodiscard]] bool HasProcessedAgent(char agent_id) const override;
+  [[nodiscard]] std::size_t ProcessedAgentCount() const override;
 
  private:
   BackendOptimizerIncrementalParam param_;
@@ -40,6 +42,7 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
   // 에이전트 간 공유 팩터 그래프 — 클래스 멤버로 누적 (GraphStore 대체)
   gtsam::NonlinearFactorGraph accumulated_graph_;
   gtsam::Values               accumulated_values_;
+  std::set<char>              processed_agents_;
 
   gtsam::noiseModel::Diagonal::shared_ptr prior_noise_;
   gtsam::noiseModel::Diagonal::shared_ptr odometry_noise_;

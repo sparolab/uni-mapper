@@ -141,7 +141,17 @@ std::optional<T> Config::param(const std::string& module_name, const std::string
     return std::nullopt;
   }
 
-  return traits<T>::convert(parameter->get<typename traits<T>::InType>());
+  try {
+    auto converted = traits<T>::convert(
+        parameter->get<typename traits<T>::InType>());
+    if (!converted) {
+      throw std::runtime_error("invalid value shape");
+    }
+    return converted;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("invalid config parameter " + config_path + ":" +
+                             module_name + "/" + param_name + ": " + e.what());
+  }
 }
 
 template <typename T>
@@ -200,7 +210,19 @@ std::optional<T> Config::param_nested(const std::vector<std::string>& nested_mod
     return std::nullopt;
   }
 
-  return traits<T>::convert(parameter->get<typename traits<T>::InType>());
+  try {
+    auto converted = traits<T>::convert(
+        parameter->get<typename traits<T>::InType>());
+    if (!converted) {
+      throw std::runtime_error("invalid value shape");
+    }
+    return converted;
+  } catch (const std::exception& e) {
+    std::stringstream full_name;
+    for (const auto& name : nested_module_names) full_name << name << "/";
+    throw std::runtime_error("invalid config parameter " + config_path + ":" +
+                             full_name.str() + param_name + ": " + e.what());
+  }
 }
 
 template <typename T>

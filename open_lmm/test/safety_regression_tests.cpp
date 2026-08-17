@@ -7,6 +7,9 @@
 
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/pipeline.hpp>
+#include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/core/data_loader/data_loader_file.hpp>
+#include <open_lmm/core/backend_optimizer/backend_optimizer_incremental.hpp>
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/utils/load_module.hpp>
 #include <open_lmm/utils/config.hpp>
@@ -157,6 +160,60 @@ void TestPluginFailurePropagation() {
   }
 }
 
+void TestOptimizerLifecycle() {
+  const std::string config_path = "/tmp/open_lmm_optimizer_lifecycle.json";
+  {
+    std::ofstream output(config_path);
+    output << R"({"backend_optimizer":{"relinearizeThreshold":0.1,"relinearizeSkip":1,"isam_extra_updates":0,"min_loop_frame_gap":30,"icp_search_num":0}})";
+  }
+
+  open_lmm::BackendOptimizerIncremental optimizer{open_lmm::Config(config_path)};
+  open_lmm::AgentContext anchor{
+      .id = "A"[0], .role = open_lmm::AgentRole::kAnchor, .order = 0};
+  open_lmm::AgentRawData raw_a;
+  raw_a.agent_id = "A"[0];
+  raw_a.odom_poses.push_back(Eigen::Isometry3d::Identity());
+  (void)optimizer.Process(anchor, raw_a, {}, {}, {});
+  Expect(optimizer.ProcessedAgentCount() == 1 &&
+             optimizer.HasProcessedAgent("A"[0]),
+         "successful optimizer call must commit its agent");
+
+  try {
+    (void)optimizer.Process(anchor, raw_a, {}, {}, {});
+    Expect(false, "duplicate optimizer agent must fail");
+  } catch (const std::invalid_argument&) {
+  }
+  Expect(optimizer.ProcessedAgentCount() == 1,
+         "duplicate failure must not mutate optimizer lifecycle");
+
+  open_lmm::AgentContext follower{
+      .id = "B"[0], .role = open_lmm::AgentRole::kFollower, .order = 1};
+  open_lmm::AgentRawData raw_b;
+  raw_b.agent_id = "B"[0];
+  raw_b.odom_poses.push_back(Eigen::Isometry3d::Identity());
+  open_lmm::LoopPair inter_loop{
+      .to = {"A"[0], 0},
+      .from = {"B"[0], 0},
+      .init_rel_pose = Eigen::Isometry3d::Identity()};
+  try {
+    (void)optimizer.Process(follower, raw_b, {}, {inter_loop}, {});
+    Expect(false, "optimizer task exception must fail");
+  } catch (const std::out_of_range&) {
+  }
+  Expect(optimizer.ProcessedAgentCount() == 1 &&
+             !optimizer.HasProcessedAgent("B"[0]),
+         "failed optimizer transaction must preserve committed state");
+
+  (void)optimizer.Process(follower, raw_b, {}, {}, {});
+  Expect(optimizer.ProcessedAgentCount() == 2,
+         "retry after transactional failure must succeed");
+  optimizer.Reset();
+  Expect(optimizer.ProcessedAgentCount() == 0 &&
+             !optimizer.HasProcessedAgent("A"[0]),
+         "Reset must clear graph lifecycle metadata");
+  std::remove(config_path.c_str());
+}
+
 void TestConfigFailurePropagation() {
   open_lmm::Config missing(
       "/tmp/open_lmm_config_file_that_does_not_exist.json");
@@ -173,6 +230,66 @@ void TestConfigFailurePropagation() {
   std::remove(malformed_path.c_str());
 }
 
+void TestConfigContractValidation() {
+  const std::string type_path = "/tmp/open_lmm_wrong_type_config.json";
+  {
+    std::ofstream output(type_path);
+    output << R"({"module":{"count":"not-an-integer"}})";
+  }
+  try {
+    open_lmm::Config config(type_path);
+    (void)config.param<int>("module", "count", 1);
+    Expect(false, "wrong config type must throw");
+  } catch (const std::exception& e) {
+    const std::string message = e.what();
+    Expect(message.find(type_path) != std::string::npos &&
+               message.find("module/count") != std::string::npos,
+           "config type error must include file and parameter context");
+  }
+  std::remove(type_path.c_str());
+
+  const std::string range_path = "/tmp/open_lmm_invalid_loader_config.json";
+  {
+    std::ofstream output(range_path);
+    output << R"({"data_loader":{"pose_format":"kitti","scan_type":"pcd","scan_dir_name":"Scans","pose_file_name":"poses.txt","voxel_size":0.0,"min_range":5.0,"max_range":1.0,"delimiter":" "}})";
+  }
+  open_lmm::DataLoaderFile loader{open_lmm::Config(range_path)};
+  open_lmm::AgentContext agent{
+      .id = "A"[0], .role = open_lmm::AgentRole::kAnchor, .order = 0};
+  auto result = loader.Process(agent, "/tmp");
+  Expect(!result.IsOk(), "invalid DataLoader numeric range must fail");
+  std::remove(range_path.c_str());
+
+  try {
+    open_lmm::Config empty_config("");
+    empty_config.save("/tmp/open_lmm_missing_dir/config.json");
+    Expect(false, "config save to missing directory must throw");
+  } catch (const std::exception&) {
+  }
+}
+
+void TestPointCloudInputValidation() {
+  try {
+    (void)open_lmm::readPointsFromPCD(
+        "/tmp/open_lmm_scan_that_does_not_exist.pcd");
+    Expect(false, "missing PCD must throw");
+  } catch (const std::exception&) {
+  }
+
+  const std::string truncated_path = "/tmp/open_lmm_truncated_scan.bin";
+  {
+    std::ofstream output(truncated_path, std::ios::binary);
+    const float incomplete[] = {1.0f, 2.0f, 3.0f};
+    output.write(reinterpret_cast<const char*>(incomplete), sizeof(incomplete));
+  }
+  try {
+    (void)open_lmm::readPointsFromBin(truncated_path);
+    Expect(false, "truncated BIN record must throw");
+  } catch (const std::exception&) {
+  }
+  std::remove(truncated_path.c_str());
+}
+
 }  // namespace
 
 int main() {
@@ -180,7 +297,10 @@ int main() {
   TestInputValidation();
   TestPipelineControlFlow();
   TestPluginFailurePropagation();
+  TestOptimizerLifecycle();
   TestConfigFailurePropagation();
+  TestConfigContractValidation();
+  TestPointCloudInputValidation();
   if (failures != 0) {
     std::cerr << failures << " safety regression test(s) failed\n";
     return 1;

@@ -17,6 +17,12 @@ KdtreeParams::KdtreeParams() {
   kdtree_rebuild_threshold =
       config.param<int>("database", "rebuild_threshold", 50);
   model = config.param<std::string>("loop_detector", "model", "");
+  if (num_candidates <= 0 || distance_threshold < 0.0 ||
+      kdtree_rebuild_threshold <= 0 || model.empty()) {
+    throw std::invalid_argument(
+        "loop detector requires positive candidate/rebuild values, "
+        "nonnegative distance_threshold, and a model");
+  }
 }
 
 LoopDetectorKdtree::LoopDetectorKdtree(

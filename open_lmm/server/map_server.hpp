@@ -19,7 +19,7 @@ class MapServer {
   ~MapServer();
   void parseConfig();
   Result<void> process();
-  void saveOptimizedPoses(const std::string& save_dir);
+  Result<void> saveOptimizedPoses(const std::string& save_dir);
   Result<void> saveOptimizedMap(const std::string& save_dir);
 
  private:

@@ -6,4 +6,5 @@ log/
 data/
 output/
 
+# Documentation is maintained locally and excluded from Git.
 docs/

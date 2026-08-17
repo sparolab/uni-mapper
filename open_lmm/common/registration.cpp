@@ -2,6 +2,7 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
+#include <spdlog/spdlog.h>
 
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
@@ -50,7 +51,13 @@ small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> setupRegistration(
 std::optional<Eigen::Isometry3d> calculateFinalTransform(
     small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI>& reg,
     const Eigen::Isometry3d& init_rel_pose) {
-  if (reg.hasConverged() == false || reg.getFitnessScore() > 0.5) {
+  if (!reg.hasConverged()) {
+    spdlog::debug("registration rejected: solver did not converge");
+    return std::nullopt;
+  }
+  if (reg.getFitnessScore() > 0.5) {
+    spdlog::debug("registration rejected: fitness score {} exceeds 0.5",
+                 reg.getFitnessScore());
     return std::nullopt;
   }
   Eigen::Isometry3d T_to_rot;

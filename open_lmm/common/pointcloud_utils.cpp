@@ -1,6 +1,8 @@
 #include "pointcloud_utils.hpp"
 
 #include <Eigen/Dense>
+#include <array>
+#include <stdexcept>
 #include <memory>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/shared_data.hpp>
@@ -110,27 +112,33 @@ void pclToEigen(const pcl::PointCloud<pcl::PointXYZI>& cloud,
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromPCD(std::string scan_file) {
-  pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
-      new pcl::PointCloud<pcl::PointXYZI>);
-  pcl::io::loadPCDFile(scan_file, *cloud);
+  auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  if (pcl::io::loadPCDFile(scan_file, *cloud) != 0) {
+    throw std::runtime_error("failed to load PCD file: " + scan_file);
+  }
+  if (cloud->empty()) {
+    throw std::runtime_error("PCD file contains no points: " + scan_file);
+  }
   return cloud;
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromBin(
     const std::string scan_file) {
-  pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
-      new pcl::PointCloud<pcl::PointXYZI>);
-  cloud->clear();
-  std::fstream input(scan_file, std::ios::in | std::ios::binary);
-  while (input.good() && !input.eof()) {
-    Eigen::Vector3f point;
-    float intensity;
-    input.read((char*)&point.x(), sizeof(float));
-    input.read((char*)&point.y(), sizeof(float));
-    input.read((char*)&point.z(), sizeof(float));
-    input.read((char*)&intensity, sizeof(float));
-    cloud->push_back(
-        pcl::PointXYZI(point.x(), point.y(), point.z(), intensity));
+  auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  std::ifstream input(scan_file, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("failed to open BIN file: " + scan_file);
+  }
+
+  std::array<float, 4> values{};
+  while (input.read(reinterpret_cast<char*>(values.data()), sizeof(values))) {
+    cloud->emplace_back(values[0], values[1], values[2], values[3]);
+  }
+  if (!input.eof() || input.gcount() != 0) {
+    throw std::runtime_error("truncated BIN point record: " + scan_file);
+  }
+  if (cloud->empty()) {
+    throw std::runtime_error("BIN file contains no points: " + scan_file);
   }
   return cloud;
 }

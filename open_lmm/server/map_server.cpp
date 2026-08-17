@@ -26,14 +26,58 @@ MapServer::MapServer() {
 MapServer::~MapServer() {}
 
 void MapServer::parseConfig() {
-  const fs::path root_data_dir = fs::path(GlobalConfig::get_root_data_dir());
-  for (const std::string& sub_dir : GlobalConfig::get_sub_dir_list()) {
-    data_dir_list_.push_back(fs::path(root_data_dir / sub_dir));
+  auto* global = GlobalConfig::instance();
+  if (!global->is_valid()) {
+    initialization_error_ = Error::ParseError(global->error_message());
+    return;
+  }
+  for (const char* config_name : {"config_map_server", "config_data_loader",
+                                  "config_loop_detector",
+                                  "config_backend_optimizer",
+                                  "config_dynamic_remover"}) {
+    const auto path = global->param_cast<std::string>("global", config_name);
+    if (path.empty()) {
+      initialization_error_ = Error::InvalidArgument(
+          std::string("global/") + config_name + " must be non-empty");
+      return;
+    }
+  }
+
+  const fs::path root_data_dir = global->param_cast<std::string>(
+      "directory", "root_dir_path");
+  const auto sub_dirs = global->param_cast<std::vector<std::string>>(
+      "directory", "sub_dir_list");
+  const fs::path root_save_dir = global->param_cast<std::string>(
+      "directory", "root_save_dir");
+  if (root_data_dir.empty() || root_save_dir.empty() || sub_dirs.empty()) {
+    initialization_error_ = Error::InvalidArgument(
+        "directory root_dir_path, root_save_dir, and sub_dir_list must be non-empty");
+    return;
+  }
+  for (const std::string& sub_dir : sub_dirs) {
+    if (sub_dir.empty()) {
+      initialization_error_ = Error::InvalidArgument(
+          "directory/sub_dir_list must not contain empty agent paths");
+      return;
+    }
+    const fs::path data_dir = root_data_dir / sub_dir;
+    if (!fs::is_directory(data_dir)) {
+      initialization_error_ = Error::FileNotFound(data_dir.string());
+      return;
+    }
+    data_dir_list_.push_back(data_dir);
   }
   agent_num_ = data_dir_list_.size();
 
-  output_save_dir_ = GlobalConfig::get_save_dir_path();
-  fs::create_directories(output_save_dir_);
+  output_save_dir_ = (root_save_dir / global->date).string();
+  std::error_code directory_error;
+  fs::create_directories(output_save_dir_, directory_error);
+  if (directory_error || !fs::is_directory(output_save_dir_)) {
+    initialization_error_ = Error::IoError(
+        "failed to create output directory " + output_save_dir_ + ": " +
+        directory_error.message());
+    return;
+  }
 
   config_map_server_ =
       Config(GlobalConfig::get_global_config_path("config_map_server"));
@@ -47,6 +91,11 @@ void MapServer::parseConfig() {
       config_map_server_->param<int>("map_server", "anchor_agent_index", 0);
   save_voxel_size_ =
       config_map_server_->param<double>("map_server", "save_voxel_size", 0.2);
+  if (save_voxel_size_ <= 0.0) {
+    initialization_error_ = Error::InvalidArgument(
+        "map_server/save_voxel_size must be greater than zero");
+    return;
+  }
 
   config_data_loader_ =
       Config(GlobalConfig::get_global_config_path("config_data_loader"));
@@ -170,7 +219,8 @@ Result<void> MapServer::process() {
   }
 
   std::cout << "SAVING OPTIMIZED POSES & MAPS" << std::endl;
-  saveOptimizedPoses(output_save_dir_);
+  auto pose_save_result = saveOptimizedPoses(output_save_dir_);
+  if (!pose_save_result) return pose_save_result;
   if (!enable_map_updater_) {
     auto save_result = saveOptimizedMap(output_save_dir_);
     if (!save_result) return save_result;
@@ -181,13 +231,21 @@ Result<void> MapServer::process() {
   return Result<void>::Ok();
 }
 
-void MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
+Result<void> MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
   for (const auto& [agent_id, opt_data] : shared_data_->optimized_data) {
     fs::path output_save_dir_path(output_save_dir);
     fs::path output_pose_file =
         output_save_dir_path /
         ("optimized_poses_" + std::string{agent_id} + ".txt");
+    if (opt_data.optimized_poses.empty()) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "No optimized poses to save for agent " + std::string{agent_id}));
+    }
     std::ofstream file(output_pose_file);
+    if (!file) {
+      return Result<void>::Failure(Error::IoError(
+          "failed to open pose output: " + output_pose_file.string()));
+    }
 
     for (const auto& pose : opt_data.optimized_poses) {
       int scan_idx = pose.first;
@@ -199,8 +257,13 @@ void MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
            << quaternion.y() << "," << quaternion.z() << "," << quaternion.w()
            << "\n";
     }
-    file.close();
+    file.flush();
+    if (!file) {
+      return Result<void>::Failure(Error::IoError(
+          "failed to write pose output: " + output_pose_file.string()));
+    }
   }
+  return Result<void>::Ok();
 }
 
 Result<void> MapServer::saveOptimizedMap(const std::string& output_save_dir) {
@@ -229,10 +292,18 @@ Result<void> MapServer::saveOptimizedMap(const std::string& output_save_dir) {
       *optimized_map += *transformed_scan;
     }
 
+    if (optimized_map->empty()) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "Optimized map is empty for agent " + std::string{agent_id}));
+    }
+
     fs::path output_map_file =
         fs::path(output_save_dir_) /
         ("global_map_" + std::string{agent_id} + ".pcd");
-    pcl::io::savePCDFileBinaryCompressed(output_map_file, *optimized_map);
+    if (pcl::io::savePCDFileBinaryCompressed(output_map_file, *optimized_map) != 0) {
+      return Result<void>::Failure(Error::IoError(
+          "failed to save map output: " + output_map_file.string()));
+    }
   }
   return Result<void>::Ok();
 }

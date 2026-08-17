@@ -49,7 +49,9 @@ void Config::save(const std::string& path) const {
   const auto& json = std::any_cast<const nlohmann::json&>(config);
 
   std::ofstream ofs(path);
+  if (!ofs) throw std::runtime_error("failed to open config output: " + path);
   ofs << std::setw(2) << json << std::endl;
+  if (!ofs) throw std::runtime_error("failed to write config output: " + path);
 }
 
 DEFINE_CONFIG_IO_SPECIALIZATION(bool)

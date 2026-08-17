@@ -21,11 +21,15 @@ class OptimizeNode : public PipelineNodeBase {
     auto loops_valid = ValidateLoops(ctx, db);
     if (!loops_valid) return Result<ControlFlow>::Failure(loops_valid.GetError());
 
-    auto all_opt = optimizer_->Process(
-        ctx.agent, *ctx.raw_data,
-        ctx.loop_output->intra_loops,
-        ctx.loop_output->inter_loops,
-        db.raw_data);
+    std::map<char, AgentOptimizedData> all_opt;
+    try {
+      all_opt = optimizer_->Process(
+          ctx.agent, *ctx.raw_data, ctx.loop_output->intra_loops,
+          ctx.loop_output->inter_loops, db.raw_data);
+    } catch (const std::exception& e) {
+      return Result<ControlFlow>::Failure(Error::OptimizationFailed(
+          "agent " + std::string{ctx.agent.id} + ": " + e.what()));
+    }
 
     for (auto& [id, opt] : all_opt) {
       db.optimized_data[id] = std::move(opt);

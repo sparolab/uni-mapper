@@ -1,8 +1,11 @@
 #pragma once
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
+
+#include <spdlog/spdlog.h>
 
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/agent_data.hpp>
@@ -52,7 +55,20 @@ class Pipeline {
       for (auto& node : nodes_) {
         if (ctx.flow == ControlFlow::kSkip) break;
 
-        auto r = node->Process(ctx, db);
+        const auto started_at = std::chrono::steady_clock::now();
+        auto r = [&]() -> Result<ControlFlow> {
+          try {
+            return node->Process(ctx, db);
+          } catch (const std::exception& e) {
+            return Result<ControlFlow>::Failure(Error::InvalidArgument(
+                "agent " + std::string{ctx.agent.id} + ", module " +
+                node->Name() + ": " + e.what()));
+          }
+        }();
+        const auto elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at);
+        spdlog::info("[PROFILE] agent={} module={} elapsed_ms={:.3f}",
+                     ctx.agent.id, node->Name(), elapsed.count());
         if (!r) {
           ctx.flow = ControlFlow::kKill;
           return Result<void>::Failure(r.GetError());

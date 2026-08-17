@@ -47,15 +47,25 @@ class MapUpdateNode : public PipelineNodeBase {
     }
     auto dynamic_remover = std::move(remover_result).Value();
     auto static_map = dynamic_remover->process(raw_scans, it->second.optimized_poses);
+    if (!static_map || static_map->empty()) {
+      return Result<ControlFlow>::Failure(Error::InvalidArgument(
+          "Dynamic remover produced an empty map for agent " +
+          std::string{ctx.agent.id}));
+    }
 
     auto ds_map = downsampleWithRangeFilter(
         static_map, static_cast<float>(save_voxel_size_), 0.0f, 0.0f, false);
 
+    if (!ds_map || ds_map->empty()) {
+      return Result<ControlFlow>::Failure(Error::InvalidArgument(
+          "Downsampled map is empty for agent " + std::string{ctx.agent.id}));
+    }
+
     fs::path map_file = fs::path(save_dir_) /
                         ("global_map_" + std::string{ctx.agent.id} + ".pcd");
     if (pcl::io::savePCDFileBinaryCompressed(map_file, *ds_map) != 0) {
-      return Result<ControlFlow>::Failure(Error::InvalidArgument(
-          "Failed to save map file: " + map_file.string()));
+      return Result<ControlFlow>::Failure(Error::IoError(
+          "failed to save map file: " + map_file.string()));
     }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);

@@ -12,7 +12,11 @@ int main(int argc, char** argv) {
   std::string config_dir_path = argv[1];
   open_lmm::GlobalConfig::instance(config_dir_path);
   open_lmm::MapServer map_server;
-  map_server.process();
+  auto result = map_server.process();
+  if (!result) {
+    std::cerr << result.GetError().Message() << std::endl;
+    return 1;
+  }
 
   return 0;
 }

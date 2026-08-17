@@ -16,6 +16,9 @@ struct Error {
     kInvalidArgument,
     kPluginLoadFailed,
     kRegistrationFailed,
+    kOptimizationFailed,
+    kIoError,
+    kCancelled,
   };
 
   Code        code;
@@ -34,6 +37,20 @@ struct Error {
   }
   static Error PluginLoadFailed(std::string_view detail) {
     return {Code::kPluginLoadFailed, "Plugin load failed: " + std::string(detail)};
+  }
+  static Error RegistrationFailed(std::string_view detail) {
+    return {Code::kRegistrationFailed,
+            "Registration failed: " + std::string(detail)};
+  }
+  static Error OptimizationFailed(std::string_view detail) {
+    return {Code::kOptimizationFailed,
+            "Optimization failed: " + std::string(detail)};
+  }
+  static Error IoError(std::string_view detail) {
+    return {Code::kIoError, "I/O error: " + std::string(detail)};
+  }
+  static Error Cancelled(std::string_view detail) {
+    return {Code::kCancelled, "Cancelled: " + std::string(detail)};
   }
 };
 
