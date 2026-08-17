@@ -17,7 +17,7 @@ namespace otd {
 template <typename PointT>
 class Grd_Seg {
    public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     Grd_Seg(double sensor_height, double tau_seeds, double tau_dis, bool kitti_en = false);
     ~Grd_Seg(){}
@@ -102,8 +102,7 @@ void Grd_Seg<PointT>::SeparateLines(typename pcl::PointCloud<PointT>::Ptr raw_pt
         if(selected&&(selectcount<10)) {selectcount++;}
         else selected = false;
 
-        // ~是取反操作符,对二进制来讲与!一样
-        if (((angle-last_point_angle)>=90)&&(~selected)&&((angle-back_point_angle)>=90)) 
+        if (((angle-last_point_angle)>=90)&&(!selected)&&((angle-back_point_angle)>=90))
         {
         beam_count++ ;
         index[beam_count] = i;
@@ -258,8 +257,8 @@ void Grd_Seg<PointT>::GroundSegmentation(typename pcl::PointCloud<PointT>::Ptr r
     }
 
     for(int i=0;i<3;i++){
-        Eigen::Matrix3f cov;
-        Eigen::Vector4f pc_mean;
+        Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+        Eigen::Vector4f pc_mean = Eigen::Vector4f::Zero();
         pcl::computeMeanAndCovarianceMatrix(cloud_ground_iter, cov, pc_mean);
         // Singular Value Decomposition: SVD
         Eigen::JacobiSVD<Eigen::MatrixXf> svd(cov,Eigen::DecompositionOptions::ComputeFullU);

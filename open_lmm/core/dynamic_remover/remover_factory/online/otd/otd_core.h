@@ -240,8 +240,11 @@ class Otd3D {
 
 template <typename PointT>
 Otd3D<PointT>::Otd3D(const double tau_ob_ratio, const double resolution)
-    : tau_ob_ratio_(tau_ob_ratio), resolution_(resolution) {
-  inv_resolution_ = 1. / resolution_;
+    : resolution_(resolution),
+      inv_resolution_(1. / resolution),
+      tau_ob_ratio_(tau_ob_ratio),
+      t_otd_sum_(0.),
+      frame_sum_(0) {
   printf("The tau_ob_ratio is %lf\n", tau_ob_ratio_);
   printf("The resolution and inv_resolution is %lf and %lf\n", resolution_,
          inv_resolution_);
@@ -250,8 +253,6 @@ Otd3D<PointT>::Otd3D(const double tau_ob_ratio, const double resolution)
   nonground_tosave_.reset(new pcl::PointCloud<PointT>);
   dynamic_tosave_.reset(new pcl::PointCloud<PointT>);
 
-  t_otd_sum_ = 0.;
-  frame_sum_ = 0;
   nearby_grids_ = {KeyType3D(0, 0, 0), KeyType3D(-1, 0, 0), KeyType3D(1, 0, 0),
                    KeyType3D(0, 1, 0), KeyType3D(0, -1, 0)};
 }
@@ -703,8 +704,9 @@ class Otd2D {
 
 template <typename PointT>
 Otd2D<PointT>::Otd2D(const double tau_ob_ratio, const double resolution)
-    : tau_ob_ratio_(tau_ob_ratio), resolution_(resolution) {
-  inv_resolution_ = 1. / resolution_;
+    : resolution_(resolution),
+      inv_resolution_(1. / resolution),
+      tau_ob_ratio_(tau_ob_ratio) {
   printf("The tau_ob_ratio is %lf\n", tau_ob_ratio_);
   printf("The resolution and inv_resolution is %lf and %lf\n", resolution_,
          inv_resolution_);

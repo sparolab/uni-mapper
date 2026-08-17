@@ -25,6 +25,11 @@ add_subdirectory(common)
 add_subdirectory(core)
 add_subdirectory(server)
 
+include(CTest)
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()
+
 # TODO(gil) : make it can build only selected models
 #! install create_*.so libraries for ROS build
 foreach(create_target ${OPEN_LMM_CREATE_LIBRARIES})

@@ -3,7 +3,6 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
-#include <spdlog/spdlog.h>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/utils/config.hpp>

@@ -4,6 +4,8 @@
 
 message(STATUS "================  BUILDING OTD  ======================")
 
+find_package(OpenMP REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # add_compile_options(-std=c++2a -O3)
@@ -19,6 +21,7 @@ add_library(otd SHARED)
 target_sources(otd PRIVATE ${SOURCES})
 target_link_libraries(otd
     PCL::PCL
+    OpenMP::OpenMP_CXX
 )
 openlmm_set_global_target_properties(otd)
 

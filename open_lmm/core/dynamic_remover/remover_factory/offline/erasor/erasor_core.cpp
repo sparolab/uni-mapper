@@ -386,8 +386,8 @@ bool ErasorCore::is_dynamic_obj_close(R_POD& r_pod_selected, int r_target,
 }
 
 void ErasorCore::estimate_plane_(const pcl::PointCloud<PointT>& ground) {
-  Eigen::Matrix3f cov;
-  Eigen::Vector4f pc_mean;
+  Eigen::Matrix3f cov = Eigen::Matrix3f::Zero();
+  Eigen::Vector4f pc_mean = Eigen::Vector4f::Zero();
   pcl::computeMeanAndCovarianceMatrix(ground, cov, pc_mean);
   // Singular Value Decomposition: SVD
   Eigen::JacobiSVD<Eigen::MatrixXf> svd(
