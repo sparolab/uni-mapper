@@ -98,6 +98,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
 
   //! 2. odometry
   for (size_t i = 0; i < raw_data.odom_poses.size(); i++) {
+    ThrowIfCancellationRequested(cancellation_, "optimizer odometry");
     gtsam::Symbol node_current(ctx.id, i);
     working_values.insert(node_current,
                                gtsam::Pose3(raw_data.odom_poses[i].matrix()));
@@ -116,6 +117,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
   auto T1 = tq::tqdm(intra_loops);
   T1.set_prefix("Intra Backend Optimizer");
   for (auto loop : T1) {
+    ThrowIfCancellationRequested(cancellation_, "optimizer intra loop");
     if (loop.from.second - loop.to.second <
         static_cast<size_t>(param_.min_loop_frame_gap)) continue;
     gtsam::Symbol node_from(loop.from.first, loop.from.second);
@@ -136,6 +138,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     auto T2 = tq::tqdm(inter_loops);
     T2.set_prefix("Inter Backend Optimizer");
     for (auto loop : T2) {
+      ThrowIfCancellationRequested(cancellation_, "optimizer inter loop");
       gtsam::Symbol node_from(loop.from.first, loop.from.second);
       gtsam::Symbol node_to(loop.to.first,   loop.to.second);
       const auto& raw_to = all_raw_data.at(loop.to.first);
@@ -160,6 +163,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
   gtsam::ISAM2 isam_(isam_param);
   isam_.update(working_graph, working_values);
   for (int i = 0; i < param_.isam_extra_updates; ++i) {
+    ThrowIfCancellationRequested(cancellation_, "optimizer update");
     isam_.update();
   }
   working_values = isam_.calculateBestEstimate();
@@ -196,6 +200,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     }
     all_results[chr] = std::move(opt);
   }
+  ThrowIfCancellationRequested(cancellation_, "optimizer commit");
   accumulated_graph_ = std::move(working_graph);
   accumulated_values_ = std::move(working_values);
   processed_agents_.insert(ctx.id);

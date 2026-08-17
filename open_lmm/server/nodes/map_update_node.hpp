@@ -20,11 +20,13 @@ class MapUpdateNode : public PipelineNodeBase {
   MapUpdateNode(std::unique_ptr<DataLoaderBase> loader,
                 RemoverFactory                  remover_factory,
                 const std::string&              save_dir,
-                double                          save_voxel_size)
+                double                          save_voxel_size,
+                bool                            defer_commit = false)
       : loader_(std::move(loader)),
         remover_factory_(std::move(remover_factory)),
         save_dir_(save_dir),
-        save_voxel_size_(save_voxel_size) {}
+        save_voxel_size_(save_voxel_size),
+        defer_commit_(defer_commit) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
@@ -37,6 +39,9 @@ class MapUpdateNode : public PipelineNodeBase {
 
     auto raw_result = loader_->loadRawScanData(ctx.data_dir);
     if (!raw_result) return Result<ControlFlow>::Failure(raw_result.GetError());
+    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+      return Result<ControlFlow>::Failure(Error::Cancelled("after raw scan load"));
+    }
     auto raw_scans = std::move(raw_result).Value();
     auto count_result = ValidateScanPoseCount(
         raw_scans.size(), it->second.optimized_poses.size(), ctx.data_dir.string());
@@ -47,6 +52,9 @@ class MapUpdateNode : public PipelineNodeBase {
     }
     auto dynamic_remover = std::move(remover_result).Value();
     auto static_map = dynamic_remover->process(raw_scans, it->second.optimized_poses);
+    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+      return Result<ControlFlow>::Failure(Error::Cancelled("after dynamic remover"));
+    }
     if (!static_map || static_map->empty()) {
       return Result<ControlFlow>::Failure(Error::InvalidArgument(
           "Dynamic remover produced an empty map for agent " +
@@ -63,9 +71,28 @@ class MapUpdateNode : public PipelineNodeBase {
 
     fs::path map_file = fs::path(save_dir_) /
                         ("global_map_" + std::string{ctx.agent.id} + ".pcd");
-    if (pcl::io::savePCDFileBinaryCompressed(map_file, *ds_map) != 0) {
+    fs::path temp_file = map_file;
+    temp_file += ".tmp";
+    std::error_code cleanup_error;
+    fs::remove(temp_file, cleanup_error);
+    if (pcl::io::savePCDFileBinaryCompressed(temp_file, *ds_map) != 0) {
+      fs::remove(temp_file, cleanup_error);
       return Result<ControlFlow>::Failure(Error::IoError(
-          "failed to save map file: " + map_file.string()));
+          "failed to save temporary map file: " + temp_file.string()));
+    }
+    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+      fs::remove(temp_file, cleanup_error);
+      return Result<ControlFlow>::Failure(Error::Cancelled("before PCD commit"));
+    }
+    if (defer_commit_) {
+      return Result<ControlFlow>::Ok(ControlFlow::kContinue);
+    }
+    std::error_code rename_error;
+    fs::rename(temp_file, map_file, rename_error);
+    if (rename_error) {
+      fs::remove(temp_file, cleanup_error);
+      return Result<ControlFlow>::Failure(Error::IoError(
+          "failed to commit map file: " + rename_error.message()));
     }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
@@ -78,6 +105,7 @@ class MapUpdateNode : public PipelineNodeBase {
   RemoverFactory                       remover_factory_;
   std::string                          save_dir_;
   double                               save_voxel_size_;
+  bool                                 defer_commit_;
 };
 
 }  // namespace open_lmm

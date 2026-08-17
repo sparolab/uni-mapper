@@ -10,6 +10,7 @@
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/agent_data.hpp>
 #include <open_lmm/common/result.hpp>
+#include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/shared_data.hpp>
 #include <open_lmm/core/loop_detector/loop_detector_base.hpp>
 
@@ -26,6 +27,7 @@ enum class ControlFlow : uint8_t {
 struct AgentPipelineCtx {
   AgentContext agent;
   fs::path     data_dir;
+  std::shared_ptr<CancellationToken> cancellation;
   ControlFlow  flow = ControlFlow::kContinue;
 
   // 각 노드가 채우는 중간 결과
@@ -52,7 +54,13 @@ class Pipeline {
 
   Result<void> Run(std::vector<AgentPipelineCtx>& contexts, SharedDatabase& db) {
     for (auto& ctx : contexts) {
+      if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+        return Result<void>::Failure(Error::Cancelled("before agent execution"));
+      }
       for (auto& node : nodes_) {
+        if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+          return Result<void>::Failure(Error::Cancelled("before node execution"));
+        }
         if (ctx.flow == ControlFlow::kSkip) break;
 
         const auto started_at = std::chrono::steady_clock::now();

@@ -17,6 +17,10 @@ class DataLoadNode : public PipelineNodeBase {
       return Result<ControlFlow>::Failure(raw_result.GetError());
     }
     AgentRawData raw = std::move(raw_result).Value();
+    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+      return Result<ControlFlow>::Failure(
+          Error::Cancelled("before DataLoad commit"));
+    }
     ctx.raw_data = raw;
     db.raw_data[ctx.agent.id] = std::move(raw);
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);

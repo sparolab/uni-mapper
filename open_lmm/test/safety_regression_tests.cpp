@@ -211,6 +211,17 @@ void TestOptimizerLifecycle() {
   Expect(optimizer.ProcessedAgentCount() == 0 &&
              !optimizer.HasProcessedAgent("A"[0]),
          "Reset must clear graph lifecycle metadata");
+
+  auto cancellation = std::make_shared<open_lmm::CancellationToken>();
+  cancellation->Request();
+  optimizer.SetCancellationToken(cancellation);
+  try {
+    (void)optimizer.Process(anchor, raw_a, {}, {}, {});
+    Expect(false, "cancelled optimizer must not return a result");
+  } catch (const open_lmm::CancellationException&) {
+  }
+  Expect(optimizer.ProcessedAgentCount() == 0,
+         "cancelled optimizer must not commit lifecycle state");
   std::remove(config_path.c_str());
 }
 

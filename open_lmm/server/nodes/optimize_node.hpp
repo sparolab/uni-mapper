@@ -23,9 +23,12 @@ class OptimizeNode : public PipelineNodeBase {
 
     std::map<char, AgentOptimizedData> all_opt;
     try {
+      optimizer_->SetCancellationToken(ctx.cancellation);
       all_opt = optimizer_->Process(
           ctx.agent, *ctx.raw_data, ctx.loop_output->intra_loops,
           ctx.loop_output->inter_loops, db.raw_data);
+    } catch (const CancellationException& e) {
+      return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
     } catch (const std::exception& e) {
       return Result<ControlFlow>::Failure(Error::OptimizationFailed(
           "agent " + std::string{ctx.agent.id} + ": " + e.what()));

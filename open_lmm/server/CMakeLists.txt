@@ -1,6 +1,9 @@
 add_library(open_lmm_map_server STATIC)
 target_sources(open_lmm_map_server PRIVATE
   map_server.cpp
+  stage_runner.cpp
+  artifact_repository.cpp
+  pipeline_controller.cpp
 )
 target_link_libraries(open_lmm_map_server PUBLIC
   Eigen3::Eigen

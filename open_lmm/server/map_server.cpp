@@ -145,6 +145,7 @@ std::vector<AgentPipelineCtx> MapServer::buildContexts() const {
         .order = i,
     };
     ctx.data_dir = data_dir_list_[i];
+    ctx.cancellation = cancellation_;
     ctxs.push_back(std::move(ctx));
   }
   // anchor를 앞으로 (stable_sort로 follower 순서 유지)
@@ -157,9 +158,17 @@ std::vector<AgentPipelineCtx> MapServer::buildContexts() const {
 }
 
 Result<void> MapServer::process() {
-  if (initialization_error_) {
-    return Result<void>::Failure(*initialization_error_);
+  for (StageId stage : {StageId::kDataLoad, StageId::kAlignment,
+                        StageId::kMapUpdate, StageId::kSave}) {
+    auto result = RunStage(stage);
+    if (!result) return result;
   }
+  std::cout << "ALL PROCESSES DONE" << std::endl;
+  return Result<void>::Ok();
+}
+
+Result<void> MapServer::ensureReady() {
+  if (initialization_error_) return Result<void>::Failure(*initialization_error_);
   if (agent_num_ <= 0) {
     return Result<void>::Failure(Error::InvalidArgument("No agents configured"));
   }
@@ -172,82 +181,279 @@ Result<void> MapServer::process() {
         "anchor_agent_index " + std::to_string(anchor_agent_index_) +
         " is out of range for " + std::to_string(agent_num_) + " agents"));
   }
-  auto contexts = buildContexts();
+  if (contexts_.empty()) contexts_ = buildContexts();
+  return Result<void>::Ok();
+}
 
-  auto align_loader_result =
-      DataLoaderBase::createInstance(config_data_loader_.value());
-  if (!align_loader_result) {
-    return Result<void>::Failure(align_loader_result.GetError());
+std::vector<char> MapServer::AgentIds() const {
+  std::vector<char> ids;
+  for (const auto& ctx : contexts_.empty() ? buildContexts() : contexts_) {
+    ids.push_back(ctx.agent.id);
   }
+  return ids;
+}
 
-  //! Phase 1: Alignment Pipeline (DataLoad → LoopDetect → Optimize)
-  Pipeline align_pipeline;
-  align_pipeline
-    .AddNode(std::make_unique<DataLoadNode>(
-        std::move(align_loader_result).Value()))
-    .AddNode(std::make_unique<LoopDetectNode>(
-        [cfg = config_loop_detector_.value()]() {
-          return LoopDetectorBase::createInstance(cfg);
-        }))
-    .AddNode(std::make_unique<OptimizeNode>(backend_optimizer_));
+void MapServer::SetCancellationToken(std::shared_ptr<CancellationToken> token) {
+  cancellation_ = std::move(token);
+  for (auto& ctx : contexts_) ctx.cancellation = cancellation_;
+}
 
-  auto align_result = align_pipeline.Run(contexts, *shared_data_);
-  if (!align_result) {
-    return Result<void>::Failure(align_result.GetError());
+Result<void> MapServer::RunStage(StageId stage) {
+  auto ready = ensureReady();
+  if (!ready) return ready;
+  switch (stage) {
+    case StageId::kDataLoad: return runDataLoadStage();
+    case StageId::kAlignment: return runAlignmentStage();
+    case StageId::kMapUpdate: return runMapUpdateStage();
+    case StageId::kSave: return runSaveStage();
   }
+  return Result<void>::Failure(Error::InvalidArgument("unknown stage"));
+}
 
-  //! Phase 2: Map Update Pipeline (optional, 모든 에이전트 Optimize 완료 후)
-  if (enable_map_updater_) {
-    auto update_loader_result =
-        DataLoaderBase::createInstance(config_data_loader_.value());
-    if (!update_loader_result) {
-      return Result<void>::Failure(update_loader_result.GetError());
+Result<void> MapServer::RunNode(NodeId node, std::optional<char> agent) {
+  auto ready = ensureReady();
+  if (!ready) return ready;
+  if (!agent) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("node execution requires an agent"));
+  }
+  auto it = std::find_if(contexts_.begin(), contexts_.end(),
+                         [agent](const AgentPipelineCtx& ctx) {
+                           return ctx.agent.id == *agent;
+                         });
+  if (it == contexts_.end()) {
+    return Result<void>::Failure(Error::InvalidArgument("unknown agent"));
+  }
+  it->flow = ControlFlow::kContinue;
+
+  if (node == NodeId::kDataLoad) {
+    auto loader = DataLoaderBase::createInstance(config_data_loader_.value());
+    if (!loader) return Result<void>::Failure(loader.GetError());
+    DataLoadNode load_node(std::move(loader).Value());
+    auto result = load_node.Process(*it, *shared_data_);
+    if (!result) return Result<void>::Failure(result.GetError());
+    const auto changed = std::distance(contexts_.begin(), it);
+    shared_data_->descriptor_store.total_db.clear();
+    shared_data_->optimized_data.clear();
+    backend_optimizer_->Reset();
+    for (std::size_t i = static_cast<std::size_t>(changed);
+         i < contexts_.size(); ++i) {
+      contexts_[i].loop_output.reset();
     }
-    Pipeline update_pipeline;
-    update_pipeline.AddNode(std::make_unique<MapUpdateNode>(
-        std::move(update_loader_result).Value(),
+    return Result<void>::Ok();
+  }
+  if (node == NodeId::kLoopDetect) {
+    if (!it->raw_data) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("RawData is required for LoopDetect"));
+    }
+    LoopDetectNode loop_node([cfg = config_loop_detector_.value()]() {
+      return LoopDetectorBase::createInstance(cfg);
+    });
+    auto result = loop_node.Process(*it, *shared_data_);
+    if (!result) return Result<void>::Failure(result.GetError());
+    return Result<void>::Ok();
+  }
+  if (node == NodeId::kOptimize) return RunOptimizeThrough(*agent);
+  if (node == NodeId::kMapUpdate) {
+    if (shared_data_->optimized_data.find(*agent) ==
+        shared_data_->optimized_data.end()) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("OptimizedPoses is required for MapUpdate"));
+    }
+    auto loader = DataLoaderBase::createInstance(config_data_loader_.value());
+    if (!loader) return Result<void>::Failure(loader.GetError());
+    MapUpdateNode update_node(
+        std::move(loader).Value(),
         [cfg = config_dynamic_remover_.value()]() {
           return DynamicRemoverBase::createInstance(cfg);
         },
-        output_save_dir_,
-        save_voxel_size_));
-
-    auto update_result = update_pipeline.Run(contexts, *shared_data_);
-    if (!update_result) {
-      return Result<void>::Failure(update_result.GetError());
-    }
+        output_save_dir_, save_voxel_size_);
+    auto result = update_node.Process(*it, *shared_data_);
+    if (!result) return Result<void>::Failure(result.GetError());
+    return Result<void>::Ok();
   }
+  if (node == NodeId::kPoseSave) {
+    // Pose files are deterministic and cheap; the current writer commits all
+    // ready agents so a partial retry cannot leave a mixed output set.
+    return saveOptimizedPoses(output_save_dir_);
+  }
+  return Result<void>::Failure(Error::InvalidArgument("unknown node"));
+}
 
-  std::cout << "SAVING OPTIMIZED POSES & MAPS" << std::endl;
-  auto pose_save_result = saveOptimizedPoses(output_save_dir_);
-  if (!pose_save_result) return pose_save_result;
-  if (!enable_map_updater_) {
-    auto save_result = saveOptimizedMap(output_save_dir_);
-    if (!save_result) return save_result;
+Result<void> MapServer::ResetSession() {
+  auto ready = ensureReady();
+  if (!ready) return ready;
+  shared_data_ = std::make_shared<SharedDatabase>();
+  backend_optimizer_->Reset();
+  contexts_ = buildContexts();
+  return Result<void>::Ok();
+}
+
+Result<void> MapServer::runDataLoadStage() {
+  shared_data_ = std::make_shared<SharedDatabase>();
+  backend_optimizer_->Reset();
+  contexts_ = buildContexts();
+  auto loader = DataLoaderBase::createInstance(config_data_loader_.value());
+  if (!loader) return Result<void>::Failure(loader.GetError());
+  Pipeline pipeline;
+  pipeline.AddNode(std::make_unique<DataLoadNode>(std::move(loader).Value()));
+  return pipeline.Run(contexts_, *shared_data_);
+}
+
+Result<void> MapServer::runAlignmentStage() {
+  if (shared_data_->raw_data.size() != contexts_.size()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "DataLoad stage must complete before Alignment"));
   }
   shared_data_->descriptor_store.total_db.clear();
-  shared_data_.reset();
-  std::cout << "ALL PROCESSES DONE" << std::endl;
+  shared_data_->optimized_data.clear();
+  backend_optimizer_->Reset();
+  for (auto& ctx : contexts_) {
+    ctx.flow = ControlFlow::kContinue;
+    ctx.loop_output.reset();
+  }
+  Pipeline pipeline;
+  pipeline
+      .AddNode(std::make_unique<LoopDetectNode>(
+          [cfg = config_loop_detector_.value()]() {
+            return LoopDetectorBase::createInstance(cfg);
+          }))
+      .AddNode(std::make_unique<OptimizeNode>(backend_optimizer_));
+  return pipeline.Run(contexts_, *shared_data_);
+}
+
+Result<void> MapServer::RunOptimizeThrough(char target_agent) {
+  auto ready = ensureReady();
+  if (!ready) return ready;
+  if (shared_data_->raw_data.size() != contexts_.size()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "DataLoad and loop detection must complete before optimizer replay"));
+  }
+  backend_optimizer_->Reset();
+  shared_data_->optimized_data.clear();
+  OptimizeNode optimize_node(backend_optimizer_);
+  bool found = false;
+  for (auto& ctx : contexts_) {
+    if (!ctx.loop_output) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "Alignment loop artifacts are missing for agent " +
+          std::string{ctx.agent.id}));
+    }
+    ctx.flow = ControlFlow::kContinue;
+    auto result = optimize_node.Process(ctx, *shared_data_);
+    if (!result) return Result<void>::Failure(result.GetError());
+    if (ctx.agent.id == target_agent) {
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "unknown optimizer replay target agent"));
+  }
+  return Result<void>::Ok();
+}
+
+Result<void> MapServer::runMapUpdateStage() {
+  if (!enable_map_updater_) return Result<void>::Ok();
+  if (shared_data_->optimized_data.empty()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "Alignment stage must complete before MapUpdate"));
+  }
+  auto loader = DataLoaderBase::createInstance(config_data_loader_.value());
+  if (!loader) return Result<void>::Failure(loader.GetError());
+  for (auto& ctx : contexts_) ctx.flow = ControlFlow::kContinue;
+  Pipeline pipeline;
+  pipeline.AddNode(std::make_unique<MapUpdateNode>(
+      std::move(loader).Value(),
+      [cfg = config_dynamic_remover_.value()]() {
+        return DynamicRemoverBase::createInstance(cfg);
+      },
+      output_save_dir_, save_voxel_size_, true));
+
+  const auto cleanup = [this]() {
+    for (const auto& ctx : contexts_) {
+      fs::path temporary = fs::path(output_save_dir_) /
+          ("global_map_" + std::string{ctx.agent.id} + ".pcd.tmp");
+      std::error_code ignored;
+      fs::remove(temporary, ignored);
+    }
+  };
+  auto result = pipeline.Run(contexts_, *shared_data_);
+  if (!result) {
+    cleanup();
+    return result;
+  }
+  if (cancellation_ && cancellation_->IsCancellationRequested()) {
+    cleanup();
+    return Result<void>::Failure(Error::Cancelled("before MapUpdate commit"));
+  }
+  // Commit begins only after every agent succeeded. Cancellation is no longer
+  // observed during this short deterministic rename barrier.
+  for (const auto& ctx : contexts_) {
+    fs::path final_path = fs::path(output_save_dir_) /
+        ("global_map_" + std::string{ctx.agent.id} + ".pcd");
+    fs::path temporary = final_path;
+    temporary += ".tmp";
+    std::error_code rename_error;
+    fs::rename(temporary, final_path, rename_error);
+    if (rename_error) {
+      cleanup();
+      return Result<void>::Failure(Error::IoError(
+          "failed to commit MapUpdate stage: " + rename_error.message()));
+    }
+  }
+  return Result<void>::Ok();
+}
+
+Result<void> MapServer::runSaveStage() {
+  if (shared_data_->optimized_data.empty()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "Alignment stage must complete before Save"));
+  }
+  std::cout << "SAVING OPTIMIZED POSES & MAPS" << std::endl;
+  auto pose_result = saveOptimizedPoses(output_save_dir_);
+  if (!pose_result) return pose_result;
+  if (!enable_map_updater_) return saveOptimizedMap(output_save_dir_);
   return Result<void>::Ok();
 }
 
 Result<void> MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
+  std::vector<std::pair<fs::path, fs::path>> pending_files;
+  const auto cleanup = [&pending_files]() {
+    for (const auto& [temporary, final_path] : pending_files) {
+      std::error_code ignored;
+      fs::remove(temporary, ignored);
+    }
+  };
+
   for (const auto& [agent_id, opt_data] : shared_data_->optimized_data) {
-    fs::path output_save_dir_path(output_save_dir);
-    fs::path output_pose_file =
-        output_save_dir_path /
-        ("optimized_poses_" + std::string{agent_id} + ".txt");
     if (opt_data.optimized_poses.empty()) {
+      cleanup();
       return Result<void>::Failure(Error::InvalidArgument(
           "No optimized poses to save for agent " + std::string{agent_id}));
     }
-    std::ofstream file(output_pose_file);
-    if (!file) {
-      return Result<void>::Failure(Error::IoError(
-          "failed to open pose output: " + output_pose_file.string()));
-    }
+    fs::path final_path = fs::path(output_save_dir) /
+        ("optimized_poses_" + std::string{agent_id} + ".txt");
+    fs::path temporary = final_path;
+    temporary += ".tmp";
+    std::error_code ignored;
+    fs::remove(temporary, ignored);
+    pending_files.emplace_back(temporary, final_path);
 
+    std::ofstream file(temporary);
+    if (!file) {
+      cleanup();
+      return Result<void>::Failure(Error::IoError(
+          "failed to open temporary pose output: " + temporary.string()));
+    }
     for (const auto& pose : opt_data.optimized_poses) {
+      if (cancellation_ && cancellation_->IsCancellationRequested()) {
+        file.close();
+        cleanup();
+        return Result<void>::Failure(Error::Cancelled("during pose write"));
+      }
       int scan_idx = pose.first;
       Eigen::Matrix4d pose_matrix = pose.second.matrix();
       Eigen::Vector3d translation = pose_matrix.block<3, 1>(0, 3);
@@ -259,8 +465,26 @@ Result<void> MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
     }
     file.flush();
     if (!file) {
+      file.close();
+      cleanup();
       return Result<void>::Failure(Error::IoError(
-          "failed to write pose output: " + output_pose_file.string()));
+          "failed to write pose output: " + temporary.string()));
+    }
+  }
+
+  if (cancellation_ && cancellation_->IsCancellationRequested()) {
+    cleanup();
+    return Result<void>::Failure(Error::Cancelled("before pose file commit"));
+  }
+  // Cancellation is intentionally not observed inside this short commit loop:
+  // once commit starts, the complete deterministic file set is installed.
+  for (const auto& [temporary, final_path] : pending_files) {
+    std::error_code rename_error;
+    fs::rename(temporary, final_path, rename_error);
+    if (rename_error) {
+      cleanup();
+      return Result<void>::Failure(Error::IoError(
+          "failed to commit pose output: " + rename_error.message()));
     }
   }
   return Result<void>::Ok();
@@ -278,6 +502,9 @@ Result<void> MapServer::saveOptimizedMap(const std::string& output_save_dir) {
     pcl::PointCloud<pcl::PointXYZI>::Ptr optimized_map(
         new pcl::PointCloud<pcl::PointXYZI>);
     for (const auto& pose : opt_data.optimized_poses) {
+      if (cancellation_ && cancellation_->IsCancellationRequested()) {
+        return Result<void>::Failure(Error::Cancelled("during map assembly"));
+      }
       pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan(
           new pcl::PointCloud<pcl::PointXYZI>);
       int scan_idx = pose.first;
@@ -300,9 +527,25 @@ Result<void> MapServer::saveOptimizedMap(const std::string& output_save_dir) {
     fs::path output_map_file =
         fs::path(output_save_dir_) /
         ("global_map_" + std::string{agent_id} + ".pcd");
-    if (pcl::io::savePCDFileBinaryCompressed(output_map_file, *optimized_map) != 0) {
+    fs::path temporary = output_map_file;
+    temporary += ".tmp";
+    std::error_code ignored;
+    fs::remove(temporary, ignored);
+    if (pcl::io::savePCDFileBinaryCompressed(temporary, *optimized_map) != 0) {
+      fs::remove(temporary, ignored);
       return Result<void>::Failure(Error::IoError(
-          "failed to save map output: " + output_map_file.string()));
+          "failed to save temporary map output: " + temporary.string()));
+    }
+    if (cancellation_ && cancellation_->IsCancellationRequested()) {
+      fs::remove(temporary, ignored);
+      return Result<void>::Failure(Error::Cancelled("before map file commit"));
+    }
+    std::error_code rename_error;
+    fs::rename(temporary, output_map_file, rename_error);
+    if (rename_error) {
+      fs::remove(temporary, ignored);
+      return Result<void>::Failure(Error::IoError(
+          "failed to commit map output: " + rename_error.message()));
     }
   }
   return Result<void>::Ok();

@@ -37,6 +37,11 @@ class LoopDetectNode : public PipelineNodeBase {
         .all_optimized    = db.optimized_data,
     };
     ctx.loop_output = detector->Process(input);
+    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+      ctx.loop_output.reset();
+      return Result<ControlFlow>::Failure(
+          Error::Cancelled("before LoopDetect commit"));
+    }
 
     // DescriptorStore 업데이트 (server 레이어 책임)
     if (ctx.agent.is_anchor()) {
