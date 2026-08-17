@@ -58,19 +58,14 @@ std::optional<Eigen::Isometry3d> calculateFinalTransform(
   return (T_to_rot * init_rel_pose).inverse();
 }
 
-std::optional<Eigen::Isometry3d> registerPointCloud(const SharedDatabase& db,
-                                                    const LoopPair& loop_pair,
-                                                    const int& search_num) {
-  //! load scans and poses(to)
-  const auto& scans_vec_to = db.db_scans.at(loop_pair.to.first);
-  const auto& poses_vec_to = db.db_odom_poses.at(loop_pair.to.first);
-  //! submap merging(to)
+std::optional<Eigen::Isometry3d> registerPointCloud(
+    const ScanVec& scans_to,
+    const PoseVec& poses_to,
+    const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan_from,
+    const LoopPair& loop_pair,
+    int search_num) {
   auto submap_to =
-      createSubmap(scans_vec_to, poses_vec_to, loop_pair.to.second, search_num);
-
-  //! load scan(from)
-  const auto& scan_from =
-      db.db_scans.at(loop_pair.from.first)[loop_pair.from.second];
+      createSubmap(scans_to, poses_to, loop_pair.to.second, search_num);
   //! transform scan(from) based on init_rel_pose
   pcl::PointCloud<pcl::PointXYZI>::Ptr scan_init_from(
       new pcl::PointCloud<pcl::PointXYZI>);

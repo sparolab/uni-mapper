@@ -30,12 +30,11 @@ class DataLoaderFile : public DataLoaderBase {
   explicit DataLoaderFile(Config config);
   ~DataLoaderFile() override = default;
   void parseConfig(Config config) override;
-  std::tuple<PoseVec, ScanVec, ScanVec> process(
-      std::shared_ptr<SharedDatabase>& shared_data, const char agent_id,
-      fs::path data_dir_path) override;
-  PoseVec loadPoseData(fs::path data_dir_path) override;
+  AgentRawData Process(const AgentContext& ctx,
+                       const fs::path& data_dir) override;
+  PoseVec loadPoseData(fs::path data_dir_path);
   ScanVec loadRawScanData(fs::path data_dir_path) override;
-  ScanVec loadFilteredScanData(fs::path data_dir_path) override;
+  ScanVec loadFilteredScanData(fs::path data_dir_path);
   std::function<Eigen::Isometry3d(std::vector<double>&)> transformFunctor;
   std::function<pcl::PointCloud<pcl::PointXYZI>::Ptr(std::string)>
       convertScanFunctor;

@@ -3,6 +3,10 @@
     "backend_optimizer_type": "incremental",
     // isam params
     "relinearizeThreshold": 0.1,
-    "relinearizeSkip": 1
+    "relinearizeSkip": 1,
+    "isam_extra_updates": 5,
+    // loop filtering
+    "min_loop_frame_gap": 30,
+    "icp_search_num": 3
   }
 }

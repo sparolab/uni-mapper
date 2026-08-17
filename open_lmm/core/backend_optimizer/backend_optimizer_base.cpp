@@ -1,6 +1,7 @@
 #include "backend_optimizer_base.hpp"
 
 #include "backend_optimizer_incremental.hpp"
+#include <spdlog/spdlog.h>
 
 namespace open_lmm {
 
@@ -10,11 +11,9 @@ std::unique_ptr<BackendOptimizerBase> BackendOptimizerBase::createInstance(
       "backend_optimizer", "backend_optimizer_type", "");
   if (backend_optimizer_type == "incremental") {
     return std::make_unique<BackendOptimizerIncremental>(config);
-  } else {
-    throw std::invalid_argument(
-        "[backend_optimizer_base.cpp] Invalid backend optimizer type: " +
-        backend_optimizer_type);
   }
-  // return nullptr;
+  spdlog::error("[BackendOptimizerBase] Unknown backend_optimizer_type: '{}'. "
+                "Supported: incremental", backend_optimizer_type);
+  std::exit(1);
 };
 }  // namespace open_lmm

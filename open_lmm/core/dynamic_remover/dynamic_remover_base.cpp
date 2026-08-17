@@ -2,6 +2,7 @@
 
 #include "dynamic_remover_online.hpp"
 #include "dynamic_remover_offline.hpp"
+#include <spdlog/spdlog.h>
 
 namespace open_lmm {
 
@@ -19,11 +20,10 @@ std::shared_ptr<DynamicRemoverBase> DynamicRemoverBase::createInstance(
     auto dynamic_remover =
         std::make_shared<DynamicRemoverOnline>(OnlineParams());
     return dynamic_remover;
-  } else {
-    throw std::invalid_argument(
-        "[dynamic_remover_base.cpp] Invalid dynamic remover type: " +
-        dynamic_remover_type);
   }
+  spdlog::error("[DynamicRemoverBase] Unknown dynamic_remover_type: '{}'. "
+                "Supported: offline, online", dynamic_remover_type);
+  std::exit(1);
 };
 
 }  // namespace open_lmm

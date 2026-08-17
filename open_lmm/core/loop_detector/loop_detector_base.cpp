@@ -2,6 +2,7 @@
 // #include "loop_detector_sc.hpp"
 
 #include "loop_detector_kdtree.hpp"
+#include <spdlog/spdlog.h>
 
 namespace open_lmm {
 
@@ -12,13 +13,12 @@ std::unique_ptr<LoopDetectorBase> LoopDetectorBase::createInstance(
   if (loop_detector_type == "kdtree") {
     return std::make_unique<LoopDetectorKdtree>(KdtreeParams());
   } else if (loop_detector_type == "hashmap") {
-    throw std::runtime_error(
-        "[loop_detector_base.cpp] Hashmap loop detector is not implemented ");
-  } else {
-    throw std::invalid_argument(
-        "[loop_detector_base.cpp] Invalid loop detector type: " +
-        loop_detector_type);
+    spdlog::error("[LoopDetectorBase] Hashmap loop detector is not implemented");
+    std::exit(1);
   }
+  spdlog::error("[LoopDetectorBase] Unknown loop_detector_type: '{}'. "
+                "Supported: kdtree", loop_detector_type);
+  std::exit(1);
 };
 
 bool LoopDetectorBase::TryKissMatcher(

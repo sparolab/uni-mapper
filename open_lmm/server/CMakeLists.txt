@@ -1,15 +1,12 @@
-
-add_subdirectory(map_aligner)
-add_subdirectory(map_updater)
-
-
 add_library(open_lmm_map_server STATIC)
 target_sources(open_lmm_map_server PRIVATE
   map_server.cpp
 )
-target_link_libraries(open_lmm_map_server PUBLIC 
+target_link_libraries(open_lmm_map_server PUBLIC
   Eigen3::Eigen
-  open_lmm_map_aligner
-  open_lmm_map_updater
+  open_lmm_backend_optimizer
+  open_lmm_loop_detector
+  open_lmm_data_loader
+  open_lmm_dynamic_remover
 )
 openlmm_set_global_target_properties(open_lmm_map_server)

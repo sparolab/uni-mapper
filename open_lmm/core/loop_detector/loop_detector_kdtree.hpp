@@ -38,28 +38,29 @@ class LoopDetectorKdtree : public LoopDetectorBase {
   explicit LoopDetectorKdtree(Config config);
   ~LoopDetectorKdtree() override = default;
 
-  std::tuple<LoopPairVec, LoopPairVec> process(
-      std::shared_ptr<SharedDatabase>& shared_data, const char agent_id,
-      ScanVec scans) override;
+  LoopDetectorOutput Process(const LoopDetectorInput& input) override;
 
  private:
-  // Helper methods for loop detection and map manipulation
-
   LoopPair createLoopPair(char agent_id, size_t current_idx,
                           const LoopCandidateInfo& candidate_info);
 
-  std::vector<LoopPair> detectIntraLoops(const ScanVec& scans, char agent_id);
+  std::vector<LoopPair> detectIntraLoops(const ScanVec& scans,
+                                         const AgentContext& agent_ctx);
 
-  std::vector<LoopPair> detectInterLoops(
-      const ScanVec& scans, std::shared_ptr<SharedDatabase>& shared_data,
-      char agent_id);
+  std::vector<LoopPair> detectInterLoops(const ScanVec& scans,
+                                         const DescriptorStore& descriptor_store,
+                                         const AgentContext& agent_ctx);
 
+  // transformed_map_points를 out 파라미터로 반환
   std::vector<LoopPair> detectKissMatcherLoops(
-      std::shared_ptr<SharedDatabase>& shared_data, char agent_id);
+      const LoopDetectorInput& input,
+      std::vector<Eigen::Vector3f>& out_transformed_map_points);
 
   std::vector<LoopPair> findLoopPairsFromKdTree(
-      std::shared_ptr<SharedDatabase>& shared_data,
-      const std::vector<Eigen::Isometry3f>& transformed_poses, char agent_id,
+      const std::map<char, AgentOptimizedData>& all_optimized,
+      const std::map<char, AgentRawData>& all_raw_data,
+      const std::vector<Eigen::Isometry3f>& transformed_poses,
+      const AgentContext& agent_ctx,
       float distance_threshold);
 
   KdtreeParams params_;

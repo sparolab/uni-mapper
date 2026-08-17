@@ -4,8 +4,10 @@
 
 #include <Eigen/Geometry>
 #include <filesystem>
+#include <map>
+#include <open_lmm/common/agent_context.hpp>
+#include <open_lmm/common/agent_data.hpp>
 #include <open_lmm/common/data_types.hpp>
-#include <open_lmm/common/shared_data.hpp>
 #include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
 
 #include <kiss_matcher/FasterPFH.hpp>
@@ -16,14 +18,27 @@
 
 namespace open_lmm {
 
+struct LoopDetectorInput {
+  const AgentContext&                        agent_ctx;
+  const AgentRawData&                        current;           // 현 에이전트 raw 데이터
+  const DescriptorStore&                     descriptor_store;  // read-only
+  const std::map<char, AgentRawData>&        all_raw_data;      // 이전 에이전트 raw 데이터
+  const std::map<char, AgentOptimizedData>&  all_optimized;     // 이전 에이전트 최적화 포즈
+};
+
+struct LoopDetectorOutput {
+  LoopPairVec    intra_loops;
+  LoopPairVec    inter_loops;
+  DatabaseKdtree agent_db;               // 이 에이전트의 descriptor DB (caller가 병합)
+  std::vector<Eigen::Vector3f> transformed_map_points;  // KISSMatcher 결과 (caller가 merge_map)
+};
+
 class LoopDetectorBase {
  public:
   LoopDetectorBase() = default;
   explicit LoopDetectorBase(Config config);
   virtual ~LoopDetectorBase() = default;
-  virtual std::tuple<LoopPairVec, LoopPairVec> process(
-      std::shared_ptr<SharedDatabase>& shared_data, const char agent_id,
-      ScanVec scans) = 0;
+  virtual LoopDetectorOutput Process(const LoopDetectorInput& input) = 0;
   static std::unique_ptr<LoopDetectorBase> createInstance(Config config);
   bool TryKissMatcher(const std::vector<Eigen::Vector3f> tgt_map_vec,
                       const std::vector<Eigen::Vector3f> src_map_vec,

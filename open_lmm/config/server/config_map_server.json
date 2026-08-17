@@ -1,5 +1,6 @@
 {
   "map_server": {
-    "enable_map_updater": true
+    "enable_map_updater": true,
+    "anchor_agent_index": 0
   }
 }
