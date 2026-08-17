@@ -6,6 +6,10 @@ FetchContent_Declare(
     ufomap
     GIT_REPOSITORY https://github.com/UnknownFreeOccupied/ufomap.git
     GIT_TAG        fcb20f445d257280c039c07ab756c9d5b37ebd78
+    PATCH_COMMAND
+      ${CMAKE_COMMAND}
+        -DUFOMAP_SOURCE_DIR=<SOURCE_DIR>
+        -P ${CMAKE_CURRENT_LIST_DIR}/patch_ufomap.cmake
 )
 FetchContent_MakeAvailable(ufomap)
 

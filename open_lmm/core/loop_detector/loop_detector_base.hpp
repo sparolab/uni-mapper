@@ -26,13 +26,6 @@ struct LoopDetectorInput {
   const std::map<char, AgentOptimizedData>&  all_optimized;     // 이전 에이전트 최적화 포즈
 };
 
-struct LoopDetectorOutput {
-  LoopPairVec    intra_loops;
-  LoopPairVec    inter_loops;
-  DatabaseKdtree agent_db;               // 이 에이전트의 descriptor DB (caller가 병합)
-  std::vector<Eigen::Vector3f> transformed_map_points;  // KISSMatcher 결과 (caller가 merge_map)
-};
-
 class LoopDetectorBase {
  public:
   LoopDetectorBase() = default;

@@ -1,10 +1,13 @@
 #pragma once
 
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/scan_context/scan_context.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include <cstdint>
 #include <Eigen/Geometry>
+#include <limits>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace open_lmm {

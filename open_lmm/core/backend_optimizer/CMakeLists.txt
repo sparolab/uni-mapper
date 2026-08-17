@@ -7,6 +7,7 @@ target_sources(open_lmm_backend_optimizer PRIVATE
 target_link_libraries(open_lmm_backend_optimizer
   open_lmm_profiling
   Eigen3::Eigen
+  gtsam
   open_lmm_common
   tqdmcpp::tqdmcpp
 )

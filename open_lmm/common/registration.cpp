@@ -1,44 +1,22 @@
 #include "registration.hpp"
 
-#include <pcl/common/transforms.h>
-#include <pcl/io/pcd_io.h>
-#include <spdlog/spdlog.h>
 #include <open_lmm/common/profiling.hpp>
+#include <open_lmm/common/registration_log.hpp>
+#include <open_lmm/common/registration_pointcloud.hpp>
+#include <open_lmm/common/rigid_transform.hpp>
 
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/pcl/pcl_registration.hpp>
 
 namespace open_lmm {
-pcl::PointCloud<pcl::PointXYZI>::Ptr createSubmap(
-    const std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr>& scans_vec,
-    const std::vector<Eigen::Isometry3d>& poses_vec, const int key,
-    const int search_num) {
-  OPEN_LMM_ZONE_N("Registration.CreateSubmap");
-  pcl::PointCloud<pcl::PointXYZI>::Ptr submap(
-      new pcl::PointCloud<pcl::PointXYZI>);
-  const int size = scans_vec.size();
-
-  for (int i = -search_num; i <= search_num; ++i) {
-    int key_near = key + i;
-    if (key_near < 0 || key_near >= size) continue;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr key_near_scan(
-        new pcl::PointCloud<pcl::PointXYZI>);
-    pcl::transformPointCloud(*scans_vec[key_near], *key_near_scan,
-                             poses_vec[key_near].matrix());
-    *submap += *key_near_scan;
-  }
-
-  pcl::transformPointCloud(*submap, *submap, poses_vec[key].inverse().matrix());
-  return submap;
-}
-
 small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> setupRegistration(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& source,
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& target) {
   OPEN_LMM_ZONE_N("Registration.SetupGICP");
   small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> reg;
-  reg.setRegistrationType("GICP");  // "GICP" or "VGICP" (default = "GICP")
+  // The pinned small_gicp RegistrationPCL default is GICP. Avoid repeating
+  // its string-based setter in this template-heavy translation unit.
   // reg.setVoxelResolution(1.0);
   reg.setNumThreads(16);
   reg.setMaxCorrespondenceDistance(150.0);
@@ -56,17 +34,18 @@ std::optional<Eigen::Isometry3d> calculateFinalTransform(
     const Eigen::Isometry3d& init_rel_pose) {
   OPEN_LMM_ZONE_N("Registration.FitnessCheck");
   if (!reg.hasConverged()) {
-    spdlog::debug("registration rejected: solver did not converge");
+    LogRegistrationDidNotConverge();
     return std::nullopt;
   }
-  if (reg.getFitnessScore() > 0.5) {
-    spdlog::debug("registration rejected: fitness score {} exceeds 0.5",
-                 reg.getFitnessScore());
+  const double fitness_score = reg.getFitnessScore();
+  if (fitness_score > 0.5) {
+    LogRegistrationFitnessRejected(fitness_score);
     return std::nullopt;
   }
   Eigen::Isometry3d T_to_rot;
   T_to_rot = reg.getFinalTransformation().cast<double>();
-  return (T_to_rot * init_rel_pose).inverse();
+  const Eigen::Isometry3d final_pose = T_to_rot * init_rel_pose;
+  return InvertRigidTransform(final_pose);
 }
 
 std::optional<Eigen::Isometry3d> registerPointCloud(
@@ -76,20 +55,18 @@ std::optional<Eigen::Isometry3d> registerPointCloud(
     const LoopPair& loop_pair,
     int search_num) {
   OPEN_LMM_ZONE_N("Registration.Align");
-  auto submap_to =
-      createSubmap(scans_to, poses_to, loop_pair.to.second, search_num);
+  auto submap_to = CreateRegistrationSubmap(
+      scans_to, poses_to, loop_pair.to.second, search_num);
   //! transform scan(from) based on init_rel_pose
-  pcl::PointCloud<pcl::PointXYZI>::Ptr scan_init_from(
-      new pcl::PointCloud<pcl::PointXYZI>);
-  pcl::transformPointCloud(*scan_from, *scan_init_from,
-                           loop_pair.init_rel_pose.matrix());
+  auto scan_init_from =
+      TransformRegistrationScan(scan_from, loop_pair.init_rel_pose);
 
   auto reg = setupRegistration(scan_init_from, submap_to);
   pcl::PointCloud<pcl::PointXYZI>::Ptr aligned(
       new pcl::PointCloud<pcl::PointXYZI>);
   {
     OPEN_LMM_ZONE_N("Registration.GICPAlign");
-  reg.align(*aligned);
+    reg.align(*aligned);
   }
 
   return calculateFinalTransform(reg, loop_pair.init_rel_pose);

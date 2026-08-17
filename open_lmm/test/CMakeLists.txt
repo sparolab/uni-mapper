@@ -39,3 +39,10 @@ target_link_libraries(open_lmm_profiling_macro_tests PRIVATE
 openlmm_set_global_target_properties(open_lmm_profiling_macro_tests)
 add_test(NAME open_lmm_profiling_macro_tests
          COMMAND open_lmm_profiling_macro_tests)
+
+add_test(
+  NAME open_lmm_architecture_boundary_tests
+  COMMAND ${CMAKE_COMMAND}
+          -DOPEN_LMM_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/architecture_boundary_tests.cmake
+)

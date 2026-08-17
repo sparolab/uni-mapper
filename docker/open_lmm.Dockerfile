@@ -33,6 +33,16 @@ RUN apt-get update && apt-get install -y \
     x11-apps \
     && rm -rf /var/lib/apt/lists/*
 
+#! compiler verification matrix for CI and upgrade testing
+RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      gcc-13 \
+      g++-13 \
+      clang-15 \
+      libomp-15-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 #! official Iridescence PPA and prebuilt development package
 RUN add-apt-repository -y ppa:koide3/iridescence && \
     apt-get update && \

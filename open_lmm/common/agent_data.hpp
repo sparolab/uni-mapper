@@ -25,6 +25,15 @@ struct AgentOptimizedData {
   pcl::PointCloud<pcl::PointXYZ>                 kdtree_poses;  // 포즈 KD-tree 검색용
 };
 
+// LoopDetector의 출력 계약. 구체 detector 구현과 분리해 pipeline 사용자가
+// KISS-Matcher 구현 헤더를 포함하지 않도록 한다.
+struct LoopDetectorOutput {
+  LoopPairVec intra_loops;
+  LoopPairVec inter_loops;
+  DatabaseKdtree agent_db;
+  std::vector<Eigen::Vector3f> transformed_map_points;
+};
+
 // LoopDetector 전용 공유 상태 (에이전트 간 순차 누적)
 struct DescriptorStore {
   DatabaseKdtree               total_db;    // anchor + follower descriptor DB 누적

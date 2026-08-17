@@ -1,0 +1,44 @@
+name: Compiler matrix
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/refactor
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compiler-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-builds:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build reproducible ROS 2 toolchain image
+        run: |
+          docker build \
+            --file docker/open_lmm.Dockerfile \
+            --tag open-lmm-compiler-matrix:ci \
+            .
+
+      - name: Run clean compiler matrix
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            open-lmm-compiler-matrix:ci \
+            bash -lc '
+              scripts/ci/build_and_test.sh gcc12-gui-off /usr/bin/gcc-12 /usr/bin/g++-12 OFF
+              scripts/ci/build_and_test.sh gcc12-gui-on  /usr/bin/gcc-12 /usr/bin/g++-12 ON
+              scripts/ci/build_and_test.sh gcc13-gui-off /usr/bin/gcc-13 /usr/bin/g++-13 OFF
+              scripts/ci/build_and_test.sh clang15-gui-off /usr/bin/clang-15 /usr/bin/clang++-15 OFF
+            '

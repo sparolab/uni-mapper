@@ -2,12 +2,14 @@
 #include <iostream>
 #include <fstream>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/pipeline.hpp>
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/common/rigid_transform.hpp>
 #include <open_lmm/core/data_loader/data_loader_file.hpp>
 #include <open_lmm/core/backend_optimizer/backend_optimizer_incremental.hpp>
 #include <open_lmm/common/validation.hpp>
@@ -73,6 +75,37 @@ void TestAgentContext() {
       .id = 'B', .role = open_lmm::AgentRole::kFollower, .order = 1};
   Expect(anchor.is_anchor(), "anchor role must be recognized");
   Expect(!follower.is_anchor(), "follower must not be recognized as anchor");
+}
+
+void TestRigidTransformInverse() {
+  std::mt19937 generator(0x4c4d4dU);
+  std::uniform_real_distribution<double> component(-1.0, 1.0);
+  std::uniform_real_distribution<double> angle(-3.141592653589793,
+                                                3.141592653589793);
+  std::uniform_real_distribution<double> translation(-100.0, 100.0);
+
+  for (int sample = 0; sample < 128; ++sample) {
+    Eigen::Vector3d axis(component(generator), component(generator),
+                         component(generator));
+    if (axis.squaredNorm() < 1e-12) axis = Eigen::Vector3d::UnitX();
+    axis.normalize();
+
+    Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
+    transform.linear() =
+        Eigen::AngleAxisd(angle(generator), axis).toRotationMatrix();
+    transform.translation() =
+        Eigen::Vector3d(translation(generator), translation(generator),
+                        translation(generator));
+
+    const Eigen::Isometry3d actual =
+        open_lmm::InvertRigidTransform(transform);
+    const Eigen::Isometry3d expected = transform.inverse();
+    Expect(actual.matrix().isApprox(expected.matrix(), 1e-12),
+           "rigid inverse must match Eigen's isometry inverse");
+    Expect((actual * transform).matrix().isApprox(
+               Eigen::Matrix4d::Identity(), 1e-12),
+           "rigid inverse must compose to identity");
+  }
 }
 
 void TestInputValidation() {
@@ -305,6 +338,7 @@ void TestPointCloudInputValidation() {
 
 int main() {
   TestAgentContext();
+  TestRigidTransformInverse();
   TestInputValidation();
   TestPipelineControlFlow();
   TestPluginFailurePropagation();

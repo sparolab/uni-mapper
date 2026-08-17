@@ -5,6 +5,7 @@ install/
 log/
 data/
 output/
+.ci-build/
 
 # Documentation is maintained locally and excluded from Git.
 docs/

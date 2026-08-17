@@ -1,9 +1,11 @@
 add_library(open_lmm_map_server STATIC)
 target_sources(open_lmm_map_server PRIVATE
+  ../common/pipeline.cpp
   map_server.cpp
   stage_runner.cpp
   artifact_repository.cpp
   pipeline_controller.cpp
+  nodes/map_update_node.cpp
 )
 target_link_libraries(open_lmm_map_server PUBLIC
   open_lmm_profiling

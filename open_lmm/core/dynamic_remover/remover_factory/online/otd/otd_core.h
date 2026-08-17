@@ -222,7 +222,7 @@ class Otd3D {
   void PruningVoxel(long long map_capacity);
 
   void SaveMap(std::string savepath);
-  pcl::PointCloud<PointT>::Ptr GetMap(bool replace_intensity);
+  typename pcl::PointCloud<PointT>::Ptr GetMap(bool replace_intensity);
   void Downsamplemap(typename pcl::PointCloud<PointT>::Ptr ptr_todown,
                      double voxel_size);
 

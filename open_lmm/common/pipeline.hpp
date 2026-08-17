@@ -1,19 +1,14 @@
 #pragma once
-#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
 
-#include <spdlog/spdlog.h>
-
 #include <open_lmm/common/agent_context.hpp>
-#include <open_lmm/common/profiling.hpp>
 #include <open_lmm/common/agent_data.hpp>
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/shared_data.hpp>
-#include <open_lmm/core/loop_detector/loop_detector_base.hpp>
 
 namespace open_lmm {
 namespace fs = std::filesystem;
@@ -53,59 +48,8 @@ class Pipeline {
     return *this;
   }
 
-  Result<void> Run(std::vector<AgentPipelineCtx>& contexts, SharedDatabase& db) {
-    for (auto& ctx : contexts) {
-      if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-        return Result<void>::Failure(Error::Cancelled("before agent execution"));
-      }
-      for (auto& node : nodes_) {
-        if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-          return Result<void>::Failure(Error::Cancelled("before node execution"));
-        }
-        if (ctx.flow == ControlFlow::kSkip) break;
-
-        OPEN_LMM_ZONE_N("Pipeline.Node");
-#if OPEN_LMM_ENABLE_TRACY
-        const std::string zone_context = std::string{ctx.agent.id} + " " + node->Name();
-        OPEN_LMM_ZONE_TEXT(zone_context);
-#endif
-#if OPEN_LMM_ENABLE_TIMING_LOG
-        const auto started_at = std::chrono::steady_clock::now();
-#endif
-        auto r = [&]() -> Result<ControlFlow> {
-          try {
-            return node->Process(ctx, db);
-          } catch (const std::exception& e) {
-            return Result<ControlFlow>::Failure(Error::InvalidArgument(
-                "agent " + std::string{ctx.agent.id} + ", module " +
-                node->Name() + ": " + e.what()));
-          }
-        }();
-#if OPEN_LMM_ENABLE_TIMING_LOG
-        const auto elapsed = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - started_at);
-        spdlog::info("[PROFILE] agent={} module={} elapsed_ms={:.3f}",
-                     ctx.agent.id, node->Name(), elapsed.count());
-#endif
-        if (!r) {
-          ctx.flow = ControlFlow::kKill;
-          return Result<void>::Failure(r.GetError());
-        }
-        if (r.Value() == ControlFlow::kKill) {
-          ctx.flow = ControlFlow::kKill;
-          return Result<void>::Failure(Error::InvalidArgument(
-              std::string("Pipeline node '") + node->Name() +
-              "' requested termination"));
-        }
-        if (r.Value() == ControlFlow::kSkip) {
-          ctx.flow = ControlFlow::kSkip;
-          break;
-        }
-      }
-      OPEN_LMM_FRAME_MARK();
-    }
-    return Result<void>::Ok();
-  }
+  Result<void> Run(std::vector<AgentPipelineCtx>& contexts,
+                   SharedDatabase& db);
 
  private:
   std::vector<std::unique_ptr<PipelineNodeBase>> nodes_;

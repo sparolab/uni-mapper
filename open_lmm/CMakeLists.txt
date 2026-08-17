@@ -3,7 +3,6 @@ project(open_lmm VERSION 1.0.0 LANGUAGES C CXX)
 
 # 빌드 설정
 set(CMAKE_CXX_STANDARD 20)
-add_compile_options($<$<CONFIG:Release>:-O3>)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
