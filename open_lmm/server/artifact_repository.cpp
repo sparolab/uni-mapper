@@ -143,12 +143,6 @@ void ArtifactRepository::CompleteOptimizeThrough(
            "optimizer_replay");
 }
 
-ArtifactMetadata ArtifactRepository::Get(const ArtifactKey& key) const {
-  std::lock_guard lock(mutex_);
-  auto it = artifacts_.find(key);
-  return it == artifacts_.end() ? ArtifactMetadata{key} : it->second;
-}
-
 std::vector<ArtifactMetadata> ArtifactRepository::Snapshot() const {
   std::lock_guard lock(mutex_);
   std::vector<ArtifactMetadata> result;

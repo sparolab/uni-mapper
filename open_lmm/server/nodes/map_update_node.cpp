@@ -4,13 +4,13 @@
 #include <utility>
 
 #include <pcl/io/pcd_io.h>
-#include <spdlog/spdlog.h>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
+#include <open_lmm/utils/logging.hpp>
 
 namespace open_lmm {
 
@@ -31,8 +31,8 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   OPEN_LMM_ZONE_N("MapUpdate.Process");
   auto it = db.optimized_data.find(ctx.agent.id);
   if (it == db.optimized_data.end()) {
-    spdlog::warn("[MapUpdateNode] No optimized data for agent {}. Skipping.",
-                 ctx.agent.id);
+    LogWarning("[MapUpdateNode] No optimized data for agent " +
+               std::string(1, ctx.agent.id) + ". Skipping.");
     return Result<ControlFlow>::Ok(ControlFlow::kSkip);
   }
 

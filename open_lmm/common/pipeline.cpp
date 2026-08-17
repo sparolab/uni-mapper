@@ -2,11 +2,11 @@
 
 #include <chrono>
 #include <exception>
+#include <sstream>
 #include <string>
 
-#include <spdlog/spdlog.h>
-
 #include <open_lmm/common/profiling.hpp>
+#include <open_lmm/utils/logging.hpp>
 
 namespace open_lmm {
 
@@ -43,8 +43,11 @@ Result<void> Pipeline::Run(std::vector<AgentPipelineCtx>& contexts,
 #if OPEN_LMM_ENABLE_TIMING_LOG
       const auto elapsed = std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - started_at);
-      spdlog::info("[PROFILE] agent={} module={} elapsed_ms={:.3f}",
-                   ctx.agent.id, node->Name(), elapsed.count());
+      std::ostringstream message;
+      message << "[PROFILE] agent=" << ctx.agent.id
+              << " module=" << node->Name()
+              << " elapsed_ms=" << elapsed.count();
+      LogInfo(message.str());
 #endif
       if (!result) {
         ctx.flow = ControlFlow::kKill;

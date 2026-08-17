@@ -1,7 +1,6 @@
 #include "data_loader_file.hpp"
 
 #include <pcl/common/transforms.h>
-#include <spdlog/spdlog.h>
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/common/profiling.hpp>
 

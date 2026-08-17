@@ -4,6 +4,7 @@
 #include <pcl/io/pcd_io.h>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/utils/logging.hpp>
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/util/downsampling_tbb.hpp>
@@ -37,7 +38,8 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
   }
   T.finish();
 
-  std::cout << "Saving static map" << std::endl;
+  LogInfo("[dynamic_remover] building static map from " +
+          std::to_string(scans.size()) + " scans");
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map =
       online_model_->getStaticMap();
 

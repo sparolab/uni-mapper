@@ -7,6 +7,7 @@
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <open_lmm/utils/logging.hpp>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -67,6 +68,7 @@ std::optional<Eigen::Isometry3d> MatrixFromJson(const nlohmann::json& value) {
 }  // namespace
 
 MapServer::MapServer() {
+  InitializeLogging();
   try {
     parseConfig();
   } catch (const std::exception& e) {
@@ -336,7 +338,7 @@ Result<void> MapServer::process() {
     auto result = RunStage(stage);
     if (!result) return result;
   }
-  std::cout << "ALL PROCESSES DONE" << std::endl;
+  LogInfo("[pipeline] all stages completed");
   return Result<void>::Ok();
 }
 
@@ -514,18 +516,6 @@ Result<void> MapServer::RunNode(NodeId node, std::optional<char> agent) {
     return saveOptimizedPoses(output_save_dir_);
   }
   return Result<void>::Failure(Error::InvalidArgument("unknown node"));
-}
-
-Result<void> MapServer::ResetSession() {
-  std::lock_guard lock(state_mutex_);
-  auto ready = ensureReady();
-  if (!ready) return ready;
-  shared_data_ = std::make_shared<SharedDatabase>();
-  shared_data_->alignment_feedback = alignment_feedback_;
-  installStoredAlignments();
-  backend_optimizer_->Reset();
-  contexts_ = buildContexts();
-  return Result<void>::Ok();
 }
 
 Result<void> MapServer::runDataLoadStage() {
@@ -868,7 +858,7 @@ Result<void> MapServer::runSaveStage() {
     return Result<void>::Failure(Error::InvalidArgument(
         "Alignment stage must complete before Save"));
   }
-  std::cout << "SAVING OPTIMIZED POSES & MAPS" << std::endl;
+  LogInfo("[save] saving optimized poses and maps to " + output_save_dir_);
   auto pose_result = saveOptimizedPoses(output_save_dir_);
   if (!pose_result) return pose_result;
   if (!enable_map_updater_) return saveOptimizedMap(output_save_dir_);

@@ -177,13 +177,14 @@ void TestBoundaryCancellation() {
   auto runner = std::make_shared<FakeRunner>();
   PipelineController controller(runner);
   uint64_t id = 0;
-  controller.SetEventCallback([&](const ExecutionEvent& event) {
-    if (event.type == EventType::kStageCompleted &&
-        event.stage == StageId::kDataLoad) {
-      auto result = controller.Cancel(event.job_id);
-      Check(result.IsOk(), "cancel request accepted");
-    }
-  });
+  auto subscription =
+      controller.SubscribeEvents([&](const ExecutionEvent& event) {
+        if (event.type == EventType::kStageCompleted &&
+            event.stage == StageId::kDataLoad) {
+          auto result = controller.Cancel(event.job_id);
+          Check(result.IsOk(), "cancel request accepted");
+        }
+      });
   auto job = controller.SubmitRunAll();
   Check(job.IsOk(), "cancel job submission");
   id = job.Value();
@@ -219,9 +220,10 @@ void TestNodeCommandsAndMetadata() {
         "missing RawData rejects node before job creation");
 
   std::vector<uint64_t> sequences;
-  controller.SetEventCallback([&](const ExecutionEvent& event) {
-    sequences.push_back(event.sequence);
-  });
+  auto subscription =
+      controller.SubscribeEvents([&](const ExecutionEvent& event) {
+        sequences.push_back(event.sequence);
+      });
   auto load = controller.SubmitNode(NodeId::kDataLoad, 'A');
   Check(load && controller.Wait(load.Value()), "agent DataLoad node");
   auto loop = controller.SubmitNode(NodeId::kLoopDetect, 'A');

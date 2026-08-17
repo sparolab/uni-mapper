@@ -2,7 +2,6 @@
 
 #include "dynamic_remover_online.hpp"
 #include "dynamic_remover_offline.hpp"
-#include <spdlog/spdlog.h>
 
 namespace open_lmm {
 

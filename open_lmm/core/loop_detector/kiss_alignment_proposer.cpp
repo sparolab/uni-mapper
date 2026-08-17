@@ -3,7 +3,8 @@
 
 #include <kiss_matcher/KISSMatcher.hpp>
 
-#include <iostream>
+#include <open_lmm/utils/logging.hpp>
+#include <sstream>
 
 namespace open_lmm {
 
@@ -21,10 +22,18 @@ std::optional<MapAlignmentProposal> KissAlignmentProposer::Propose(
   const std::size_t final_inliers = matcher.getNumFinalInliers();
   constexpr std::size_t kMinimumFinalInliers = 5;
   if (final_inliers < kMinimumFinalInliers) {
-    std::cout << "\033[1;33m=> KISS-MATCHER might have failed :(\033[0m\n";
+    std::ostringstream message;
+    message << "[alignment] KISS-Matcher rejected agents " << source_agent
+            << "->" << target_agent << ": final_inliers=" << final_inliers
+            << " minimum=" << kMinimumFinalInliers;
+    LogWarning(message.str());
     return std::nullopt;
   }
-  std::cout << "\033[1;32m=> KISS-MATCHER likely succeeded XD\033[0m\n";
+  std::ostringstream message;
+  message << "[alignment] KISS-Matcher accepted agents " << source_agent
+          << "->" << target_agent << ": rotation_inliers="
+          << rotation_inliers << " final_inliers=" << final_inliers;
+  LogInfo(message.str());
 
   MapAlignmentProposal proposal;
   proposal.target_agent = target_agent;

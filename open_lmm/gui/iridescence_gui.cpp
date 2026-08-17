@@ -1,5 +1,6 @@
 #include <open_lmm/gui/iridescence_gui.hpp>
 #include <open_lmm/gui/config_editor.hpp>
+#include <open_lmm/utils/logging.hpp>
 #include <glk/pointcloud_buffer.hpp>
 #include <glk/primitives/primitives.hpp>
 #include <glk/thin_lines.hpp>
@@ -9,7 +10,6 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
-#include <iostream>
 #include <map>
 #include <cstdio>
 #include <sstream>
@@ -154,11 +154,13 @@ void IridescenceGui::ViewerLoop() {
       (void)services_.cancel_job(model_.Job()->id);
     }
     const auto final_queue_stats = event_queue_->Stats();
-    std::cout << "[GUI_PROFILE] max_gui_work_ms=" << max_gui_work_ms_
-              << " event_backlog=" << final_queue_stats.queued
-              << " evicted_events=" << final_queue_stats.evicted_events
-              << " visualization_cache_bytes="
-              << visualization_.ApproximateBytes() << std::endl;
+    std::ostringstream profile;
+    profile << "[GUI_PROFILE] max_gui_work_ms=" << max_gui_work_ms_
+            << " event_backlog=" << final_queue_stats.queued
+            << " evicted_events=" << final_queue_stats.evicted_events
+            << " visualization_cache_bytes="
+            << visualization_.ApproximateBytes();
+    LogInfo(profile.str());
     open_ = false;
     guik::LightViewer::destroy();
   } catch (const std::exception& e) {
@@ -409,6 +411,24 @@ void IridescenceGui::DrawPipelineUi() {
                 static_cast<unsigned long long>(event.job_id),
                 event.message.c_str());
   }
+  ImGui::EndChild();
+  ImGui::End();
+
+  DrawRuntimeLogsUi();
+}
+
+void IridescenceGui::DrawRuntimeLogsUi() {
+  ImGui::Begin("OpenLMM Runtime Logs");
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= next_runtime_log_refresh_) {
+    runtime_logs_ = RecentRuntimeLogs();
+    next_runtime_log_refresh_ = now + std::chrono::milliseconds(250);
+  }
+  ImGui::Text("Buffered lines: %zu", runtime_logs_.size());
+  ImGui::Separator();
+  ImGui::BeginChild("runtime_logs", ImVec2(0, 0), false,
+                    ImGuiWindowFlags_HorizontalScrollbar);
+  for (const auto& line : runtime_logs_) ImGui::TextUnformatted(line.c_str());
   ImGui::EndChild();
   ImGui::End();
 }

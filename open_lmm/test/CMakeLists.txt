@@ -50,6 +50,11 @@ openlmm_set_global_target_properties(open_lmm_profiling_macro_tests)
 add_test(NAME open_lmm_profiling_macro_tests
          COMMAND open_lmm_profiling_macro_tests)
 
+add_executable(open_lmm_logging_tests logging_tests.cpp)
+target_link_libraries(open_lmm_logging_tests PRIVATE open_lmm_utils)
+openlmm_set_global_target_properties(open_lmm_logging_tests)
+add_test(NAME open_lmm_logging_tests COMMAND open_lmm_logging_tests)
+
 add_test(
   NAME open_lmm_architecture_boundary_tests
   COMMAND ${CMAKE_COMMAND}

@@ -8,6 +8,7 @@
 #include <atomic>
 #include <array>
 #include <condition_variable>
+#include <chrono>
 #include <future>
 #include <mutex>
 #include <string>
@@ -26,6 +27,7 @@ class IridescenceGui final : public GuiPlugin {
   void DrawPipelineUi();
   void DrawConfigEditorUi();
   void DrawAlignmentUi();
+  void DrawRuntimeLogsUi();
   void SynchronizeAlignmentFeedback();
   void SetManualAlignmentTransform(const Eigen::Isometry3d& transform);
   void SynchronizeManualAlignmentTransform();
@@ -61,6 +63,8 @@ class IridescenceGui final : public GuiPlugin {
   uint64_t config_revision_draft_ = 0;
   double last_gui_work_ms_ = 0.0;
   double max_gui_work_ms_ = 0.0;
+  std::vector<std::string> runtime_logs_;
+  std::chrono::steady_clock::time_point next_runtime_log_refresh_{};
   std::optional<Eigen::Vector3f> picked_point_;
   std::optional<AlignmentFeedbackSnapshot> alignment_feedback_;
   std::unique_ptr<guik::ModelControl> alignment_model_control_;

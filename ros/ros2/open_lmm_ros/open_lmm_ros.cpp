@@ -14,6 +14,7 @@
 #include <open_lmm/gui/gui_controller_bridge.hpp>
 #include <open_lmm/gui/config_editor.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <open_lmm/utils/logging.hpp>
 // open_lmm_ros
 #include "open_lmm_ros.hpp"
 
@@ -21,6 +22,7 @@ namespace open_lmm {
 
 OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
     : Node("open_lmm_ros", options) {
+  InitializeLogging();
   std::string config_path;
   this->declare_parameter<std::string>("config_path", "config");
   this->get_parameter<std::string>("config_path", config_path);

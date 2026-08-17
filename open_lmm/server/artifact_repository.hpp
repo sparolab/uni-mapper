@@ -41,7 +41,6 @@ class ArtifactRepository {
   void CompleteNode(NodeId node, std::optional<char> agent);
   void FailNode(NodeId node, std::optional<char> agent, std::string detail);
   void ApplyConfig(ConfigDomain domain, uint64_t config_revision);
-  [[nodiscard]] ArtifactMetadata Get(const ArtifactKey& key) const;
   [[nodiscard]] std::vector<ArtifactMetadata> Snapshot() const;
   void Restore(const std::vector<ArtifactMetadata>& snapshot);
 

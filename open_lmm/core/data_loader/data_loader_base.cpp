@@ -1,6 +1,5 @@
 // #include "data_loader_base.hpp"
 #include "data_loader_file.hpp"
-#include <spdlog/spdlog.h>
 
 namespace open_lmm {
 

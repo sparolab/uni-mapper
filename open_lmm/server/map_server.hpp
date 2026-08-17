@@ -32,7 +32,6 @@ class MapServer : public StageRunner {
   [[nodiscard]] std::vector<char> AgentIds() const override;
   [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
       char agent, std::size_t max_points) const override;
-  Result<void> ResetSession();
   Result<void> ValidateReady();
 
   Result<void> saveOptimizedPoses(const std::string& save_dir);

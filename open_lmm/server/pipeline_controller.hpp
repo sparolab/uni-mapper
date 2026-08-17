@@ -98,7 +98,6 @@ class PipelineController {
   void SetAlignmentFeedbackEnabled(bool enabled);
   [[nodiscard]] ExecutionEventSubscription SubscribeEvents(
       std::function<void(const ExecutionEvent&)> callback);
-  void SetEventCallback(std::function<void(const ExecutionEvent&)> callback);
 
  private:
   using Work = std::function<Result<void>(uint64_t)>;
@@ -113,7 +112,6 @@ class PipelineController {
   mutable std::mutex mutex_;
   std::condition_variable completed_;
   std::optional<JobSnapshot> job_;
-  std::function<void(const ExecutionEvent&)> callback_;
   std::shared_ptr<ExecutionEventSubscriberRegistry> event_subscribers_;
   std::vector<ExecutionEvent> recent_events_;
   std::thread worker_;

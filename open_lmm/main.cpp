@@ -3,8 +3,10 @@
 #include <tqdmcpp/tqdmcpp.hpp>
 
 #include "utils/config.hpp"
+#include "utils/logging.hpp"
 
 int main(int argc, char** argv) {
+  open_lmm::InitializeLogging();
   if (argc != 2) {
     std::cerr << "Usage: " << argv[0] << " <config_dir_path>" << std::endl;
     return 1;
@@ -14,7 +16,7 @@ int main(int argc, char** argv) {
   open_lmm::MapServer map_server;
   auto result = map_server.process();
   if (!result) {
-    std::cerr << result.GetError().Message() << std::endl;
+    open_lmm::LogError(result.GetError().Message());
     return 1;
   }
 

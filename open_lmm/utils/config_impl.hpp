@@ -5,7 +5,7 @@
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
-#include <spdlog/spdlog.h>
+#include <open_lmm/utils/logging.hpp>
 #include <nlohmann/json.hpp>
 
 #include <Eigen/Core>
@@ -158,12 +158,13 @@ template <typename T>
 T Config::param(const std::string& module_name, const std::string& param_name, const T& default_value) const {
   auto found = param<T>(module_name, param_name);
   if (!found) {
-    spdlog::warn("param {}/{} not found", module_name, param_name);
-    spdlog::warn("use default_value={}", convert_to_string(default_value));
+    LogWarning("param " + module_name + "/" + param_name + " not found");
+    LogWarning("use default_value=" + convert_to_string(default_value));
     return default_value;
   }
 
-  spdlog::debug("param {}/{}={}", module_name, param_name, convert_to_string(found.value()));
+  LogDebug("param " + module_name + "/" + param_name + "=" +
+           convert_to_string(found.value()));
   return found.value();
 }
 
@@ -175,7 +176,8 @@ T Config::param_cast(const std::string& module_name, const std::string& param_na
                              "/" + param_name + " not found");
   }
 
-  spdlog::debug("param {}/{}={}", module_name, param_name, convert_to_string(found.value()));
+  LogDebug("param " + module_name + "/" + param_name + "=" +
+           convert_to_string(found.value()));
   return *found;
 }
 
@@ -233,8 +235,8 @@ T Config::param_nested(const std::vector<std::string>& nested_module_names, cons
     for (const auto& module_name : nested_module_names) {
       param_name << module_name << "/";
     }
-    spdlog::warn("param {} not found", param_name.str());
-    spdlog::warn("use default_value={}", convert_to_string(default_value));
+    LogWarning("param " + param_name.str() + " not found");
+    LogWarning("use default_value=" + convert_to_string(default_value));
     return default_value;
   }
 

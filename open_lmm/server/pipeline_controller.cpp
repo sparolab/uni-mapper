@@ -450,12 +450,6 @@ void PipelineController::SetAlignmentFeedbackEnabled(bool enabled) {
   if (alignment_feedback_) alignment_feedback_->SetEnabled(enabled);
 }
 
-void PipelineController::SetEventCallback(
-    std::function<void(const ExecutionEvent&)> callback) {
-  std::lock_guard lock(mutex_);
-  callback_ = std::move(callback);
-}
-
 ExecutionEventSubscription PipelineController::SubscribeEvents(
     std::function<void(const ExecutionEvent&)> callback) {
   if (!callback) return {};
@@ -480,14 +474,12 @@ ExecutionEventSubscription PipelineController::SubscribeEvents(
 }
 
 void PipelineController::emit(ExecutionEvent event) {
-  std::function<void(const ExecutionEvent&)> callback;
   std::vector<std::shared_ptr<ExecutionEventSubscriberSlot>> subscribers;
   {
     std::lock_guard lock(mutex_);
     event.sequence = next_event_sequence_++;
     recent_events_.push_back(event);
     if (recent_events_.size() > 256) recent_events_.erase(recent_events_.begin());
-    callback = callback_;
   }
   {
     std::lock_guard lock(event_subscribers_->mutex);
@@ -497,7 +489,6 @@ void PipelineController::emit(ExecutionEvent event) {
       subscribers.push_back(subscriber);
     }
   }
-  if (callback) callback(event);
   for (const auto& subscriber : subscribers) {
     std::lock_guard lock(subscriber->mutex);
     if (subscriber->active) subscriber->callback(event);

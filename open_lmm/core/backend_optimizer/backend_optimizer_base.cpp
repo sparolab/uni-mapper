@@ -1,7 +1,6 @@
 #include "backend_optimizer_base.hpp"
 
 #include "backend_optimizer_incremental.hpp"
-#include <spdlog/spdlog.h>
 
 namespace open_lmm {
 

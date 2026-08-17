@@ -3,11 +3,17 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <fmt/format.h>
+#include <iomanip>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
 namespace open_lmm {
+
+inline std::string format_config_number(double value) {
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(6) << value;
+  return stream.str();
+}
 
 // Convertion to string
 
@@ -40,7 +46,7 @@ std::string convert_to_string(const Eigen::Matrix<double, D, 1>& value) {
     if (i) {
       sst << ",";
     }
-    sst << fmt::format("{:.6f}", value[i]);
+    sst << format_config_number(value[i]);
   }
   sst << ")";
   return sst.str();
@@ -48,13 +54,22 @@ std::string convert_to_string(const Eigen::Matrix<double, D, 1>& value) {
 
 template <>
 inline std::string convert_to_string(const Eigen::Quaterniond& quat) {
-  return fmt::format("quat({:.6f},{:.6f},{:.6f},{:.6f})", quat.x(), quat.y(), quat.z(), quat.w());
+  return "quat(" + format_config_number(quat.x()) + "," +
+         format_config_number(quat.y()) + "," +
+         format_config_number(quat.z()) + "," +
+         format_config_number(quat.w()) + ")";
 }
 
 template <>
 inline std::string convert_to_string(const Eigen::Isometry3d& pose) {
   const Eigen::Vector3d trans(pose.translation());
   const Eigen::Quaterniond quat(pose.linear());
-  return fmt::format("se3({:.6f},{:.6f},{:.6f},{:.6f},{:.6f},{:.6f},{:.6f})", trans.x(), trans.y(), trans.z(), quat.x(), quat.y(), quat.z(), quat.w());
+  return "se3(" + format_config_number(trans.x()) + "," +
+         format_config_number(trans.y()) + "," +
+         format_config_number(trans.z()) + "," +
+         format_config_number(quat.x()) + "," +
+         format_config_number(quat.y()) + "," +
+         format_config_number(quat.z()) + "," +
+         format_config_number(quat.w()) + ")";
 }
 }  // namespace open_lmm
