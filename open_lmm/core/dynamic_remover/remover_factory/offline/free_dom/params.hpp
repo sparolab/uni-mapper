@@ -1,4 +1,5 @@
 #include <open_lmm/utils/config.hpp>
+#include <cstdint>
 #include <string>
 
 struct FreeDomParams {
@@ -18,6 +19,7 @@ struct FreeDomParams {
   // double min_range;
 
   bool replace_intensity;
+  uint8_t dynamic_removal_threshold;
   double sensor_min_range;
   double sensor_max_range;
   double sensor_min_z;

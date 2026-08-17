@@ -411,6 +411,76 @@ Result<void> MapServer::ValidateReady() {
   return ensureReady();
 }
 
+Result<void> MapServer::Reconfigure(ConfigDomain domain) {
+  std::lock_guard lock(state_mutex_);
+  const auto config_directory = GlobalConfig::config_directory();
+  if (config_directory.empty()) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("global config directory is unavailable"));
+  }
+  auto reloaded = GlobalConfig::reload(config_directory);
+  if (!reloaded) return reloaded;
+
+  if (domain == ConfigDomain::kLoopDetector ||
+      domain == ConfigDomain::kOptimizer) {
+    Config loop_config(
+        GlobalConfig::get_global_config_path("config_loop_detector"));
+    if (!loop_config.is_valid()) {
+      return Result<void>::Failure(
+          Error::ParseError(loop_config.error_message()));
+    }
+    Config optimizer_config(
+        GlobalConfig::get_global_config_path("config_backend_optimizer"));
+    if (!optimizer_config.is_valid()) {
+      return Result<void>::Failure(
+          Error::ParseError(optimizer_config.error_message()));
+    }
+    auto optimizer = BackendOptimizerBase::createInstance(optimizer_config);
+    if (!optimizer) return Result<void>::Failure(optimizer.GetError());
+
+    config_loop_detector_ = std::move(loop_config);
+    backend_optimizer_ = std::shared_ptr<BackendOptimizerBase>(
+        std::move(optimizer).Value());
+    shared_data_->descriptor_store.clear();
+    shared_data_->optimized_data.clear();
+    for (auto& context : contexts_) context.loop_output.reset();
+    computeAlignmentFingerprints();
+    cached_alignments_.clear();
+    loadAlignmentCache();
+    installStoredAlignments();
+    return Result<void>::Ok();
+  }
+
+  if (domain == ConfigDomain::kDynamicRemover ||
+      domain == ConfigDomain::kMapSave) {
+    Config remover_config(
+        GlobalConfig::get_global_config_path("config_dynamic_remover"));
+    if (!remover_config.is_valid()) {
+      return Result<void>::Failure(
+          Error::ParseError(remover_config.error_message()));
+    }
+    config_dynamic_remover_ = std::move(remover_config);
+    Config map_config(
+        GlobalConfig::get_global_config_path("config_map_server"));
+    if (!map_config.is_valid()) {
+      return Result<void>::Failure(
+          Error::ParseError(map_config.error_message()));
+    }
+    const double save_voxel_size =
+        map_config.param<double>("map_server", "save_voxel_size", 0.2);
+    if (save_voxel_size <= 0.0) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "map_server/save_voxel_size must be greater than zero"));
+    }
+    config_map_server_ = std::move(map_config);
+    save_voxel_size_ = save_voxel_size;
+    return Result<void>::Ok();
+  }
+
+  return Result<void>::Failure(Error::InvalidArgument(
+      "data/global config requires a new pipeline session"));
+}
+
 std::vector<char> MapServer::AgentIds() const {
   std::lock_guard lock(state_mutex_);
   std::vector<char> ids;

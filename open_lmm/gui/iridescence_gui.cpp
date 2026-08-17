@@ -79,9 +79,6 @@ IridescenceGui::~IridescenceGui() { RequestStop(); Join(); }
 Result<void> IridescenceGui::Start(GuiServices services) {
   if (thread_.joinable()) return Result<void>::Failure(Error::InvalidArgument("Iridescence GUI is already started"));
   services_ = std::move(services);
-  SetBuffer(session_config_path_, services_.config_file_path);
-  if (!services_.config_file_path.empty())
-    recent_config_paths_.push_back(services_.config_file_path);
   LoadConfigEditor();
   if (services_.node_descriptors) {
     node_descriptors_ = services_.node_descriptors();
@@ -388,6 +385,14 @@ void IridescenceGui::DrawPipelineUi() {
     ImGui::Text("%s", StageName(stage));
     ImGui::SameLine();
     if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+    if (stage != StageId::kSave) {
+      const std::string configure = std::string("Configure##") + StageName(stage);
+      if (ImGui::Button(configure.c_str())) {
+        config_stage_ = stage;
+        ImGui::OpenPopup("Stage Configuration");
+      }
+      ImGui::SameLine();
+    }
     const std::string button = std::string("Run##") + StageName(stage);
     if (ImGui::Button(button.c_str()) && services_.submit_stage) {
       auto result = services_.submit_stage(stage);
@@ -401,6 +406,11 @@ void IridescenceGui::DrawPipelineUi() {
     }
     if (!view.message.empty()) ImGui::TextWrapped("%s", view.message.c_str());
   }
+
+  DrawStageConfigModal();
+
+  ImGui::Separator();
+  DrawRuntimeLogsSection();
 
   if (!command_error_.empty()) {
     ImGui::Separator();
@@ -466,8 +476,6 @@ void IridescenceGui::DrawPipelineUi() {
   }
   ImGui::End();
 
-  DrawConfigEditorUi();
-
   ImGui::Begin("OpenLMM Job and Event Log");
   if (model_.Job()) {
     ImGui::Text("Job: %llu",
@@ -487,23 +495,27 @@ void IridescenceGui::DrawPipelineUi() {
   ImGui::EndChild();
   ImGui::End();
 
-  DrawRuntimeLogsUi();
 }
 
-void IridescenceGui::DrawRuntimeLogsUi() {
-  ImGui::Begin("OpenLMM Runtime Logs");
+void IridescenceGui::DrawRuntimeLogsSection() {
+  if (!ImGui::CollapsingHeader("Runtime Logs",
+                               ImGuiTreeNodeFlags_DefaultOpen)) return;
   const auto now = std::chrono::steady_clock::now();
+  bool refreshed = false;
   if (now >= next_runtime_log_refresh_) {
     runtime_logs_ = RecentRuntimeLogs();
     next_runtime_log_refresh_ = now + std::chrono::milliseconds(250);
+    refreshed = true;
   }
   ImGui::Text("Buffered lines: %zu", runtime_logs_.size());
+  ImGui::SameLine();
+  ImGui::Checkbox("Auto-scroll", &runtime_logs_auto_scroll_);
   ImGui::Separator();
-  ImGui::BeginChild("runtime_logs", ImVec2(0, 0), false,
+  ImGui::BeginChild("runtime_logs", ImVec2(0, 180.0F), true,
                     ImGuiWindowFlags_HorizontalScrollbar);
   for (const auto& line : runtime_logs_) ImGui::TextUnformatted(line.c_str());
+  if (refreshed && runtime_logs_auto_scroll_) ImGui::SetScrollHereY(1.0F);
   ImGui::EndChild();
-  ImGui::End();
 }
 
 void IridescenceGui::SynchronizeAlignmentFeedback() {
@@ -836,69 +848,96 @@ void IridescenceGui::LoadConfigEditor() {
     agents << value.sub_dir_list[i];
   }
   SetBuffer(sub_dir_list_, agents.str());
+  selected_datasets_ = value.sub_dir_list;
+  RefreshDatasetCatalog();
+  LoadAlignmentEditor();
   config_editor_status_ = "Loaded " + services_.config_file_path;
 }
 
-void IridescenceGui::DrawConfigEditorUi() {
-  ImGui::Begin("OpenLMM Config");
-  if (services_.config_file_path.empty()) {
-    ImGui::TextWrapped("No editable config path was provided by the host.");
-    ImGui::End();
+void IridescenceGui::RefreshDatasetCatalog() {
+  auto discovered = DiscoverDatasetDirectories(root_dir_path_.data());
+  if (!discovered) {
+    dataset_catalog_.clear();
+    config_editor_status_ = discovered.GetError().Message();
     return;
   }
-  ImGui::TextWrapped("%s", services_.config_file_path.c_str());
-  ImGui::InputText("Session config", session_config_path_.data(),
-                   session_config_path_.size());
-  ImGui::SameLine();
-  if (ImGui::Button("Browse") && !file_dialog_future_.valid()) {
-    const std::string initial = session_config_path_.data();
-    file_dialog_future_ = std::async(std::launch::async, [initial] {
-      return pfd::open_file("Select OpenLMM config.json", initial,
-                            {"JSON configuration", "*.json"},
-                            false).result();
-    });
+  dataset_catalog_ = std::move(discovered).Value();
+}
+
+void IridescenceGui::LoadAlignmentEditor() {
+  const auto config_file = std::filesystem::path(services_.config_file_path);
+  auto alignment = LoadAlignmentConfig(
+      config_file.parent_path() / config_loop_detector_.data());
+  if (!alignment) {
+    config_editor_status_ = alignment.GetError().Message();
+    return;
   }
-  if (file_dialog_future_.valid() &&
-      file_dialog_future_.wait_for(std::chrono::milliseconds(0)) ==
-          std::future_status::ready) {
-    auto selected = file_dialog_future_.get();
-    if (!selected.empty()) {
-      SetBuffer(session_config_path_, selected.front());
-      if (std::find(recent_config_paths_.begin(), recent_config_paths_.end(),
-                    selected.front()) == recent_config_paths_.end())
-        recent_config_paths_.push_back(selected.front());
+  kiss_voxel_size_ = static_cast<float>(alignment.Value().kiss_voxel_size);
+  kiss_use_quatro_ = alignment.Value().kiss_use_quatro;
+  pose_nn_distance_threshold_ =
+      static_cast<float>(alignment.Value().pose_nn_distance_threshold);
+}
+
+Result<void> IridescenceGui::SaveAndApplyConfig() {
+  if (!config_stage_) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("configuration stage is not selected"));
+  }
+  auto loaded = ConfigEditorDocument::Load(services_.config_file_path);
+  if (!loaded) return Result<void>::Failure(loaded.GetError());
+  auto document = std::move(loaded).Value();
+  ConfigEditorValues value{
+      config_map_server_.data(), config_data_loader_.data(),
+      config_loop_detector_.data(), config_backend_optimizer_.data(),
+      config_dynamic_remover_.data(), root_dir_path_.data(),
+      selected_datasets_, root_save_dir_.data()};
+  auto result = document.SetValues(value);
+  if (result) result = document.Save();
+  if (result && *config_stage_ == StageId::kAlignment) {
+    result = SaveAlignmentConfig(
+        std::filesystem::path(services_.config_file_path).parent_path() /
+            config_loop_detector_.data(),
+        AlignmentConfigValues{kiss_voxel_size_, kiss_use_quatro_,
+                              pose_nn_distance_threshold_});
+  }
+  if (result && *config_stage_ == StageId::kDataLoad) {
+    if (!services_.create_session) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("session creation is unavailable"));
     }
-  }
-  if (ImGui::BeginCombo("Recent configs", session_config_path_.data())) {
-    for (const auto& path : recent_config_paths_) {
-      if (ImGui::Selectable(path.c_str(), path == session_config_path_.data()))
-        SetBuffer(session_config_path_, path);
+    result = services_.create_session(services_.config_file_path);
+  } else if (result) {
+    if (!services_.apply_config) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("stage reconfiguration is unavailable"));
     }
-    ImGui::EndCombo();
+    const auto domain = *config_stage_ == StageId::kAlignment
+                            ? ConfigDomain::kLoopDetector
+                            : ConfigDomain::kDynamicRemover;
+    result = services_.apply_config(domain, model_.ConfigRevision() + 1);
   }
-  if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
-  if (ImGui::Button("Create Session") && services_.create_session) {
-    auto result = services_.create_session(session_config_path_.data());
-    if (result) {
-      services_.config_file_path = session_config_path_.data();
-      LoadConfigEditor();
-      SynchronizeModel();
-      config_editor_status_ = "New session created from selected config.";
-    } else {
-      config_editor_status_ = result.GetError().Message();
-    }
+  if (result) SynchronizeModel();
+  return result;
+}
+
+void IridescenceGui::DrawStageConfigModal() {
+  if (!config_stage_) return;
+  ImGui::SetNextWindowSize(ImVec2(620.0F, 520.0F), ImGuiCond_FirstUseEver);
+  bool open = true;
+  if (!ImGui::BeginPopupModal("Stage Configuration", &open,
+                              ImGuiWindowFlags_NoCollapse)) {
+    if (!open) config_stage_.reset();
+    return;
   }
-  if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+  ImGui::Text("%s Configuration", StageName(*config_stage_));
+  ImGui::TextDisabled("Active config: %s", services_.config_file_path.c_str());
   ImGui::Separator();
-  ImGui::InputText("Map server", config_map_server_.data(), config_map_server_.size());
-  ImGui::InputText("Data loader", config_data_loader_.data(), config_data_loader_.size());
-  ImGui::InputText("Loop detector", config_loop_detector_.data(), config_loop_detector_.size());
-  ImGui::InputText("Optimizer", config_backend_optimizer_.data(), config_backend_optimizer_.size());
-  ImGui::InputText("Dynamic remover", config_dynamic_remover_.data(), config_dynamic_remover_.size());
-  ImGui::Separator();
-  ImGui::InputText("Dataset root", root_dir_path_.data(), root_dir_path_.size());
-  ImGui::SameLine();
-  if (ImGui::Button("Browse dataset") && !dataset_dialog_future_.valid()) {
+
+  if (*config_stage_ == StageId::kDataLoad) {
+  ImGui::TextUnformatted("Module: File based");
+  ImGui::TextUnformatted("Dataset root");
+  if (ImGui::Button("Select Dataset Root...") &&
+      !dataset_dialog_future_.valid()) {
     const std::string initial = root_dir_path_.data();
     dataset_dialog_future_ = std::async(std::launch::async, [initial] {
       return pfd::select_folder("Select dataset root", initial).result();
@@ -908,39 +947,124 @@ void IridescenceGui::DrawConfigEditorUi() {
       dataset_dialog_future_.wait_for(std::chrono::milliseconds(0)) ==
           std::future_status::ready) {
     auto selected = dataset_dialog_future_.get();
-    if (!selected.empty()) SetBuffer(root_dir_path_, selected);
+    if (!selected.empty()) {
+      SetBuffer(root_dir_path_, selected);
+      selected_datasets_.clear();
+      RefreshDatasetCatalog();
+    }
   }
-  ImGui::InputTextMultiline("Agent directories", sub_dir_list_.data(),
-                            sub_dir_list_.size(), ImVec2(-1.0f, 100.0f));
-  ImGui::InputText("Output root", root_save_dir_.data(), root_save_dir_.size());
-  if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
-  if (ImGui::Button("Validate and Save")) {
-    auto loaded = ConfigEditorDocument::Load(services_.config_file_path);
-    if (!loaded) {
-      config_editor_status_ = loaded.GetError().Message();
-    } else {
-      auto document = std::move(loaded).Value();
-      ConfigEditorValues value{config_map_server_.data(), config_data_loader_.data(),
-          config_loop_detector_.data(), config_backend_optimizer_.data(),
-          config_dynamic_remover_.data(), root_dir_path_.data(), {},
-          root_save_dir_.data()};
-      std::istringstream agents(sub_dir_list_.data());
-      for (std::string line; std::getline(agents, line);) {
-        if (!line.empty()) value.sub_dir_list.push_back(std::move(line));
+  ImGui::SameLine();
+  if (ImGui::Button("Refresh datasets")) RefreshDatasetCatalog();
+  ImGui::SameLine();
+  ImGui::Text("Selected dataset root: %s", root_dir_path_.data());
+  ImGui::TextUnformatted("Datasets / agents (execution order follows this list)");
+  if (ImGui::BeginTable("dataset_catalog", 2,
+                        ImGuiTableFlags_SizingStretchSame |
+                            ImGuiTableFlags_BordersInnerV)) {
+    for (const auto& dataset : dataset_catalog_) {
+      ImGui::TableNextColumn();
+      bool selected = std::find(selected_datasets_.begin(),
+                                selected_datasets_.end(), dataset) !=
+                      selected_datasets_.end();
+      if (ImGui::Checkbox((dataset + "##dataset").c_str(), &selected)) {
+        if (selected) {
+          selected_datasets_.push_back(dataset);
+        } else {
+          selected_datasets_.erase(
+              std::remove(selected_datasets_.begin(), selected_datasets_.end(),
+                          dataset), selected_datasets_.end());
+        }
       }
-      auto updated = document.SetValues(value);
-      auto saved = updated ? document.Save() : updated;
-      config_editor_status_ = saved
-          ? "Validated and saved. Create a new session to apply."
-          : saved.GetError().Message();
+    }
+    ImGui::EndTable();
+  }
+  if (dataset_catalog_.empty())
+    ImGui::TextDisabled("No child dataset directories found.");
+  ImGui::Separator();
+  ImGui::TextUnformatted("Output root");
+  if (ImGui::Button("Select Output Root...") &&
+      !output_dialog_future_.valid()) {
+    const std::string initial = root_save_dir_.data();
+    output_dialog_future_ = std::async(std::launch::async, [initial] {
+      return pfd::select_folder("Select output root", initial).result();
+    });
+  }
+  if (output_dialog_future_.valid() &&
+      output_dialog_future_.wait_for(std::chrono::milliseconds(0)) ==
+          std::future_status::ready) {
+    auto selected = output_dialog_future_.get();
+    if (!selected.empty()) SetBuffer(root_save_dir_, selected);
+  }
+  ImGui::SameLine();
+  ImGui::Text("Selected output root: %s", root_save_dir_.data());
+  } else if (*config_stage_ == StageId::kAlignment) {
+    static constexpr const char* kDescriptors[] = {
+        "Scan Context", "SOLiD", "STD"};
+    static constexpr const char* kDescriptorPaths[] = {
+        "core/loop_detector/scan_context.json",
+        "core/loop_detector/solid.json", "core/loop_detector/std.json"};
+    int selected_descriptor = 0;
+    for (int i = 0; i < 3; ++i) {
+      if (std::string(config_loop_detector_.data()) == kDescriptorPaths[i])
+        selected_descriptor = i;
+    }
+    if (ImGui::Combo("Descriptor module", &selected_descriptor,
+                     kDescriptors, 3)) {
+      SetBuffer(config_loop_detector_, kDescriptorPaths[selected_descriptor]);
+      LoadAlignmentEditor();
+    }
+    ImGui::DragFloat("KISS voxel size (m)", &kiss_voxel_size_, 0.05F,
+                     0.05F, 10.0F, "%.2f");
+    ImGui::Checkbox("KISS use Quatro", &kiss_use_quatro_);
+    ImGui::DragFloat("Pose NN max distance (m)",
+                     &pose_nn_distance_threshold_, 0.1F, 0.1F, 100.0F,
+                     "%.1f");
+    ImGui::Separator();
+    ImGui::TextUnformatted("Module: Incremental backend optimizer");
+  } else if (*config_stage_ == StageId::kMapUpdate) {
+    static constexpr const char* kRemovers[] = {
+        "ERASOR", "DUFOMap", "FreeDOM", "HMM-MOS", "OTD"};
+    static constexpr const char* kRemoverPaths[] = {
+        "core/dynamic_remover/erasor.json",
+        "core/dynamic_remover/dufomap.json",
+        "core/dynamic_remover/free_dom.json",
+        "core/dynamic_remover/hmm_mos.json",
+        "core/dynamic_remover/otd.json"};
+    int selected_remover = 0;
+    for (int i = 0; i < 5; ++i) {
+      if (std::string(config_dynamic_remover_.data()) == kRemoverPaths[i])
+        selected_remover = i;
+    }
+    if (ImGui::Combo("Dynamic remover module", &selected_remover,
+                     kRemovers, 5))
+      SetBuffer(config_dynamic_remover_, kRemoverPaths[selected_remover]);
+  }
+
+  ImGui::Separator();
+  if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+  if (ImGui::Button("Apply")) {
+    auto result = SaveAndApplyConfig();
+    if (result) {
+      config_editor_status_ = *config_stage_ == StageId::kDataLoad
+          ? "DataLoad configuration applied to a new session."
+          : "Stage configuration applied; upstream results were preserved.";
+      ImGui::CloseCurrentPopup();
+      config_stage_.reset();
+    } else {
+      config_editor_status_ = result.GetError().Message();
     }
   }
   if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
   ImGui::SameLine();
-  if (ImGui::Button("Reload")) LoadConfigEditor();
+  if (ImGui::Button("Cancel")) {
+    LoadConfigEditor();
+    ImGui::CloseCurrentPopup();
+    config_stage_.reset();
+  }
   if (!config_editor_status_.empty())
     ImGui::TextWrapped("%s", config_editor_status_.c_str());
-  ImGui::End();
+  ImGui::EndPopup();
+  if (!open) config_stage_.reset();
 }
 }  // namespace open_lmm
 

@@ -1,10 +1,30 @@
 #include "params.hpp"
 
+#include "common_types.h"
+
+#include <stdexcept>
+
 FreeDomParams::FreeDomParams() {
   open_lmm::Config config = open_lmm::Config(
       open_lmm::GlobalConfig::get_global_config_path("config_dynamic_remover"));
 
   replace_intensity = config.param<bool>("dynamic_remover", "replace_intensity", true);
+  const auto removal_level = config.param<std::string>(
+      "dynamic_remover", "dynamic_removal_level", "aggressive");
+  if (removal_level == "aggressive") {
+    dynamic_removal_threshold =
+        static_cast<uint8_t>(DynamicLevel::AGGRESSIVE_DYNAMIC);
+  } else if (removal_level == "moderate") {
+    dynamic_removal_threshold =
+        static_cast<uint8_t>(DynamicLevel::MODERATE_DYNAMIC);
+  } else if (removal_level == "conservative") {
+    dynamic_removal_threshold =
+        static_cast<uint8_t>(DynamicLevel::CONSERVATIVE_DYNAMIC);
+  } else {
+    throw std::invalid_argument(
+        "dynamic_remover.dynamic_removal_level must be aggressive, "
+        "moderate, or conservative");
+  }
   sensor_min_range = config.param<double>("dynamic_remover", "min_range", 2.7);
   sensor_max_range = config.param<double>("dynamic_remover", "max_range", 80.0);
   sensor_min_z = config.param<double>("dynamic_remover", "min_z", -20.0);
@@ -51,4 +71,3 @@ FreeDomParams::FreeDomParams() {
 
   num_threads = config.param<int>("dynamic_remover", "num_threads", 8);
 }
-

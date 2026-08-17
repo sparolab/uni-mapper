@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 
 namespace open_lmm {
 namespace {
@@ -20,6 +21,87 @@ Result<std::string> RequiredString(const nlohmann::json& json,
   return Result<std::string>::Ok(std::move(value));
 }
 }  // namespace
+
+Result<std::vector<std::string>> DiscoverDatasetDirectories(
+    const std::filesystem::path& root) {
+  std::error_code error;
+  if (!std::filesystem::is_directory(root, error)) {
+    return Result<std::vector<std::string>>::Failure(
+        Error::InvalidArgument("dataset root is not a directory: " +
+                               root.string()));
+  }
+  std::vector<std::string> directories;
+  for (std::filesystem::directory_iterator iterator(root, error), end;
+       !error && iterator != end; iterator.increment(error)) {
+    if (iterator->is_directory(error) && !error)
+      directories.push_back(iterator->path().filename().string());
+  }
+  if (error) {
+    return Result<std::vector<std::string>>::Failure(
+        Error::IoError(error.message()));
+  }
+  std::sort(directories.begin(), directories.end());
+  return Result<std::vector<std::string>>::Ok(std::move(directories));
+}
+
+Result<AlignmentConfigValues> LoadAlignmentConfig(
+    const std::filesystem::path& path) {
+  std::ifstream input(path);
+  if (!input) return Result<AlignmentConfigValues>::Failure(
+      Error::FileNotFound(path.string()));
+  try {
+    auto json = nlohmann::json::parse(input, nullptr, true, true);
+    const auto alignment = json.value("alignment", nlohmann::json::object());
+    AlignmentConfigValues values;
+    values.kiss_voxel_size = alignment.value("kiss_voxel_size", 2.0);
+    values.kiss_use_quatro = alignment.value("kiss_use_quatro", false);
+    values.pose_nn_distance_threshold =
+        alignment.value("pose_nn_distance_threshold", 10.0);
+    if (values.kiss_voxel_size <= 0.0 ||
+        values.pose_nn_distance_threshold <= 0.0) {
+      return Result<AlignmentConfigValues>::Failure(Error::InvalidArgument(
+          "alignment voxel size and pose-NN distance must be positive"));
+    }
+    return Result<AlignmentConfigValues>::Ok(values);
+  } catch (const nlohmann::json::exception& error) {
+    return Result<AlignmentConfigValues>::Failure(
+        Error::ParseError(error.what()));
+  }
+}
+
+Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
+                                 const AlignmentConfigValues& values) {
+  if (values.kiss_voxel_size <= 0.0 ||
+      values.pose_nn_distance_threshold <= 0.0) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "alignment voxel size and pose-NN distance must be positive"));
+  }
+  std::ifstream input(path);
+  if (!input) return Result<void>::Failure(Error::FileNotFound(path.string()));
+  try {
+    auto json = nlohmann::json::parse(input, nullptr, true, true);
+    json["alignment"]["kiss_voxel_size"] = values.kiss_voxel_size;
+    json["alignment"]["kiss_use_quatro"] = values.kiss_use_quatro;
+    json["alignment"]["pose_nn_distance_threshold"] =
+        values.pose_nn_distance_threshold;
+    const auto temporary = path.string() + ".tmp";
+    {
+      std::ofstream output(temporary, std::ios::trunc);
+      if (!output) return Result<void>::Failure(Error::IoError(temporary));
+      output << json.dump(2) << '\n';
+      if (!output) return Result<void>::Failure(Error::IoError(temporary));
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+      std::filesystem::remove(temporary);
+      return Result<void>::Failure(Error::IoError(error.message()));
+    }
+    return Result<void>::Ok();
+  } catch (const nlohmann::json::exception& error) {
+    return Result<void>::Failure(Error::ParseError(error.what()));
+  }
+}
 
 Result<ConfigEditorDocument> ConfigEditorDocument::Load(
     const std::filesystem::path& path) {

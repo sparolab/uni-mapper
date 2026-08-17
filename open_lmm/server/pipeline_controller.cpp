@@ -199,6 +199,11 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
       return Result<void>::Failure(
           Error::InvalidArgument("config revision must increase"));
     }
+  }
+  auto reconfigured = runner_->Reconfigure(domain);
+  if (!reconfigured) return reconfigured;
+  {
+    std::lock_guard lock(mutex_);
     config_revision_ = revision;
   }
   artifacts_.ApplyConfig(domain, revision);

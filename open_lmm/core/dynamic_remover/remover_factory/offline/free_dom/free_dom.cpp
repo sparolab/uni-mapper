@@ -147,15 +147,11 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr FreeDom::getStaticMap() {
       new pcl::PointCloud<pcl::PointXYZI>);
 
   unsigned int block_idx_size = map_.getVoxel2blockMultiples();
-  unsigned int voxel_idx_size = map_.getSubvoxel2voxelMultiples();
   unsigned int voxel_num = map_.getVoxel2blockMultiplesCubed();
   unsigned int sub_voxel_num = map_.getSubvoxel2voxelMultiplesCubed();
 
   double block_size = map_.getBlockSize();
   double voxel_size = map_.getVoxelSize();
-  double sub_voxel_size = map_.getSubVoxelSize();
-  PointBias half_sub_voxel_bias =
-      PointBias(sub_voxel_size, sub_voxel_size, sub_voxel_size) / 2.0;
 
   for (const auto& block_pair : map_.get_static_blocks()) {
     PointBias block_bias = block_size * block_pair.first.cast<double>();
@@ -172,24 +168,25 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr FreeDom::getStaticMap() {
 
       PointBias voxel_bias = voxel_size * local_voxel_idx.cast<double>();
 
-      Index local_subvoxel_idx(0, 0, 0);
       for (unsigned int j = 0; j < sub_voxel_num; ++j) {
-        if (static_voxel.scan_in_subvoxel[j] == StaticVoxel::NOT_A_SCAN ||
-            static_voxel.dynamic_level[j] > DynamicLevel::STATIC) {
-          incrementIdx(local_subvoxel_idx, voxel_idx_size);
+        if (static_voxel.scan_in_subvoxel[j] == StaticVoxel::NOT_A_SCAN) {
           continue;
         }
-
-        PointBias subvoxel_bias =
-            sub_voxel_size * local_subvoxel_idx.cast<double>();
-        Point point_voxel =
-            block_bias + voxel_bias + subvoxel_bias + half_sub_voxel_bias;
+        const bool is_dynamic =
+            static_cast<uint8_t>(static_voxel.dynamic_level[j]) >=
+            params_.dynamic_removal_threshold;
         Point point =
             block_bias + voxel_bias + static_voxel.points[j].cast<double>();
 
-        pointcloud_point->emplace_back(
-            pcl::PointXYZI(point.x(), point.y(), point.z()));
-        incrementIdx(local_subvoxel_idx, voxel_idx_size);
+        pcl::PointXYZI output;
+        output.x = static_cast<float>(point.x());
+        output.y = static_cast<float>(point.y());
+        output.z = static_cast<float>(point.z());
+        output.intensity = is_dynamic ? 1.0F : 0.0F;
+        if (is_dynamic && !params_.replace_intensity) {
+          continue;
+        }
+        pointcloud_point->push_back(output);
       }
       incrementIdx(local_voxel_idx, block_idx_size);
     }

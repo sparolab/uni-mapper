@@ -29,6 +29,7 @@ class MapServer : public StageRunner {
   Result<void> RunStage(StageId stage) override;
   Result<void> RunNode(NodeId node, std::optional<char> agent) override;
   Result<void> RunOptimizeThrough(char target_agent) override;
+  Result<void> Reconfigure(ConfigDomain domain) override;
   [[nodiscard]] std::vector<char> AgentIds() const override;
   [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
       char agent) const override;

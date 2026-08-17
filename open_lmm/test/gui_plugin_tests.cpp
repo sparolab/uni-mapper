@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -74,6 +76,32 @@ int main() {
           "schema rejects an empty agent list");
   Require(!open_lmm::ConfigEditorDocument::Parse("{}").IsOk(),
           "schema rejects missing required fields");
+  const auto dataset_root = std::filesystem::temp_directory_path() /
+                            "open_lmm_gui_dataset_catalog_test";
+  std::filesystem::remove_all(dataset_root);
+  std::filesystem::create_directories(dataset_root / "agent_b");
+  std::filesystem::create_directories(dataset_root / "agent_a");
+  std::ofstream(dataset_root / "not_a_dataset.txt") << "ignored";
+  auto datasets = open_lmm::DiscoverDatasetDirectories(dataset_root);
+  Require(datasets.IsOk() && datasets.Value() ==
+              std::vector<std::string>({"agent_a", "agent_b"}),
+          "dataset catalog contains sorted child directories only");
+  const auto alignment_path = dataset_root / "loop.json";
+  std::ofstream(alignment_path) << R"({"loop_detector":{"model":"scan_context"}})";
+  auto alignment = open_lmm::LoadAlignmentConfig(alignment_path);
+  Require(alignment.IsOk() && alignment.Value().kiss_voxel_size == 2.0,
+          "alignment editor provides backward-compatible defaults");
+  auto alignment_values = alignment.Value();
+  alignment_values.kiss_voxel_size = 1.25;
+  alignment_values.kiss_use_quatro = true;
+  alignment_values.pose_nn_distance_threshold = 7.5;
+  Require(open_lmm::SaveAlignmentConfig(alignment_path, alignment_values).IsOk(),
+          "alignment editor saves validated values");
+  auto saved_alignment = open_lmm::LoadAlignmentConfig(alignment_path);
+  Require(saved_alignment.IsOk() && saved_alignment.Value().kiss_use_quatro &&
+              saved_alignment.Value().pose_nn_distance_threshold == 7.5,
+          "alignment editor reloads saved values");
+  std::filesystem::remove_all(dataset_root);
   auto plugin = std::make_shared<FakeGui>();
   {
     open_lmm::GuiPluginHost host(plugin);

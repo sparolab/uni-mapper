@@ -91,6 +91,13 @@ class FakeRunner final : public StageRunner {
         ? Result<void>::Failure(Error::OptimizationFailed("induced replay"))
         : Result<void>::Ok();
   }
+  Result<void> Reconfigure(ConfigDomain domain) override {
+    reconfigured_domain = domain;
+    return fail_reconfigure
+        ? Result<void>::Failure(
+              Error::InvalidArgument("fake reconfigure failure"))
+        : Result<void>::Ok();
+  }
   std::vector<char> AgentIds() const override { return agent_ids; }
 
   mutable std::mutex mutex;
@@ -98,6 +105,8 @@ class FakeRunner final : public StageRunner {
   std::optional<StageId> fail_stage;
   std::optional<char> replay_target;
   bool replay_fails = false;
+  bool fail_reconfigure = false;
+  std::optional<ConfigDomain> reconfigured_domain;
   bool block_node_until_cancel = false;
   std::atomic<bool> node_entered{false};
   std::shared_ptr<CancellationToken> cancellation;
@@ -247,6 +256,8 @@ void TestConfigApplyInvalidation() {
   Check(load && controller.Wait(load.Value()), "load before config apply");
   Check(controller.ApplyConfig(ConfigDomain::kDataLoader, 2).IsOk(),
         "increasing config revision applied");
+  Check(runner->reconfigured_domain == ConfigDomain::kDataLoader,
+        "config is applied to the active runner");
   const auto snapshot = controller.Snapshot();
   Check(snapshot.config_revision == 2, "snapshot config revision");
   Check(StateOf(snapshot, ArtifactType::kRawData, 'A') == ArtifactState::kStale,
@@ -255,6 +266,12 @@ void TestConfigApplyInvalidation() {
         "stale artifact rejected as node input");
   Check(!controller.ApplyConfig(ConfigDomain::kOptimizer, 2),
         "non-increasing config revision rejected");
+
+  runner->fail_reconfigure = true;
+  Check(!controller.ApplyConfig(ConfigDomain::kOptimizer, 3),
+        "runner reconfigure failure is propagated");
+  Check(controller.Snapshot().config_revision == 2,
+        "failed runner reconfigure does not commit revision");
 }
 
 

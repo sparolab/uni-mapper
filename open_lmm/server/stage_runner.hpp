@@ -48,6 +48,7 @@ class StageRunner {
   virtual Result<void> RunStage(StageId stage) = 0;
   virtual Result<void> RunNode(NodeId node, std::optional<char> agent) = 0;
   virtual Result<void> RunOptimizeThrough(char target_agent) = 0;
+  virtual Result<void> Reconfigure(ConfigDomain) { return Result<void>::Ok(); }
   [[nodiscard]] virtual std::vector<char> AgentIds() const = 0;
   [[nodiscard]] virtual Result<VisualizationSnapshot>
   CreateVisualizationSnapshot(char) const {
