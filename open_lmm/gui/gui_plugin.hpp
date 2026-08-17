@@ -16,8 +16,7 @@ struct GuiServices {
   std::function<Result<void>(const std::string&)> create_session;
   std::function<std::vector<NodeDescriptor>()> node_descriptors;
   std::function<PipelineSnapshot()> snapshot;
-  std::function<Result<VisualizationSnapshot>(char, std::size_t)>
-      visualization_snapshot;
+  std::function<Result<VisualizationSnapshot>(char)> visualization_snapshot;
   std::function<std::optional<AlignmentFeedbackSnapshot>()>
       alignment_feedback_snapshot;
   std::function<Result<void>(uint64_t, AlignmentResponse)>

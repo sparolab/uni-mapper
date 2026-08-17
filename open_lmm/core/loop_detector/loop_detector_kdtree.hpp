@@ -26,6 +26,12 @@ struct KdtreeParams {
   std::string model;
   double pcm_translation_threshold{10.0};
   double pcm_rotation_threshold_deg{20.0};
+  std::string pcm_solver{"heuristic"};
+  int pcm_threads{1};
+  size_t pcm_max_candidates{0};
+  float kiss_voxel_size{2.0F};
+  bool kiss_use_quatro{false};
+  float pose_nn_distance_threshold{10.0F};
   // adaptive is the backward-compatible implicit default: interactive when a
   // GUI broker is enabled, automatic otherwise. Explicit interactive/manual
   // modes must never silently fall back to headless execution.

@@ -383,7 +383,7 @@ PipelineSnapshot PipelineController::Snapshot() const {
 }
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
-    char agent, std::size_t max_points) const {
+    char agent) const {
   std::shared_ptr<StageRunner> runner;
   {
     std::lock_guard lock(mutex_);
@@ -393,7 +393,7 @@ Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     return Result<VisualizationSnapshot>::Failure(
         Error::InvalidArgument("stage runner is not available"));
   }
-  auto result = runner->CreateVisualizationSnapshot(agent, max_points);
+  auto result = runner->CreateVisualizationSnapshot(agent);
   if (!result) return result;
   auto snapshot = std::move(result).Value();
   for (const auto& artifact : artifacts_.Snapshot()) {

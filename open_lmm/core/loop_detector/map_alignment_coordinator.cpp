@@ -13,6 +13,7 @@ Result<AlignmentResponse> MapAlignmentCoordinator::Request(
   snapshot.proposal = std::move(proposal);
   snapshot.target_points = input.target_points;
   snapshot.source_points = input.source_points;
+  if (input.visualization) snapshot.diagnostics = *input.visualization;
   return input.feedback->Request(std::move(snapshot), input.cancellation,
                                  input.feedback_timeout);
 }
@@ -28,10 +29,23 @@ MapAlignmentProposal MapAlignmentCoordinator::ManualProposal(
   return proposal;
 }
 
+MapAlignmentProposal MapAlignmentCoordinator::PendingProposal(
+    const MapAlignmentCoordinatorInput& input) {
+  MapAlignmentProposal proposal;
+  proposal.target_agent = input.target_agent;
+  proposal.source_agent = input.source_agent;
+  proposal.method = AlignmentMethod::kPending;
+  return proposal;
+}
+
 Result<MapAlignmentProposal> MapAlignmentCoordinator::ResolveResponse(
     const MapAlignmentProposal& proposal,
     const AlignmentResponse& response) {
   if (response.decision == AlignmentDecision::kAccept) {
+    if (proposal.method == AlignmentMethod::kPending) {
+      return Result<MapAlignmentProposal>::Failure(Error::InvalidArgument(
+          "an alignment method must be attempted before acceptance"));
+    }
     if (proposal.method == AlignmentMethod::kManual) {
       return Result<MapAlignmentProposal>::Failure(Error::InvalidArgument(
           "manual alignment must be applied with an explicit transform"));
@@ -76,46 +90,48 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::ValidateOrRetryManual(
 
 Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
     const MapAlignmentCoordinatorInput& input) const {
-  std::optional<MapAlignmentProposal> kiss;
-  if (input.kiss_proposer) kiss = input.kiss_proposer();
-
   if (input.feedback_mode == "always_manual") {
-    auto response = Request(input, ManualProposal(
-        input, kiss ? kiss->target_T_source : Eigen::Isometry3d::Identity()));
+    auto manual = ManualProposal(input, Eigen::Isometry3d::Identity());
+    auto response = Request(input, manual);
     if (!response) {
       return Result<MapAlignmentProposal>::Failure(response.GetError());
     }
-    return ValidateOrRetryManual(input, ResolveResponse(
-        ManualProposal(input, kiss ? kiss->target_T_source
-                                   : Eigen::Isometry3d::Identity()),
-        response.Value()));
+    return ValidateOrRetryManual(input,
+                                 ResolveResponse(manual, response.Value()));
   }
 
-  if (kiss) {
-    auto response = Request(input, *kiss);
+  MapAlignmentProposal proposal = PendingProposal(input);
+  while (true) {
+    auto response = Request(input, proposal);
     if (!response) {
       return Result<MapAlignmentProposal>::Failure(response.GetError());
     }
-    if (response.Value().decision != AlignmentDecision::kTryDescriptor) {
-      return ValidateOrRetryManual(
-          input, ResolveResponse(*kiss, response.Value()));
+    if (response.Value().decision == AlignmentDecision::kTryKissMatcher) {
+      const auto kiss = input.kiss_proposer ? input.kiss_proposer()
+                                            : std::nullopt;
+      if (!kiss) {
+        return Result<MapAlignmentProposal>::Failure(
+            Error::RegistrationFailed(
+                "KISS Matcher did not produce an alignment"));
+      }
+      proposal = *kiss;
+      continue;
     }
+    if (response.Value().decision == AlignmentDecision::kTryDescriptor) {
+      const auto descriptor = input.descriptor_proposer
+                                  ? input.descriptor_proposer()
+                                  : std::nullopt;
+      if (!descriptor) {
+        return Result<MapAlignmentProposal>::Failure(
+            Error::RegistrationFailed(
+                "Descriptor did not produce an alignment"));
+      }
+      proposal = *descriptor;
+      continue;
+    }
+    return ValidateOrRetryManual(
+        input, ResolveResponse(proposal, response.Value()));
   }
-
-  std::optional<MapAlignmentProposal> descriptor;
-  if (input.descriptor_proposer) descriptor = input.descriptor_proposer();
-  MapAlignmentProposal fallback = descriptor.value_or(ManualProposal(
-      input, kiss ? kiss->target_T_source : Eigen::Isometry3d::Identity()));
-  auto response = Request(input, fallback);
-  if (!response) {
-    return Result<MapAlignmentProposal>::Failure(response.GetError());
-  }
-  if (response.Value().decision == AlignmentDecision::kTryDescriptor) {
-    return Result<MapAlignmentProposal>::Failure(Error::InvalidArgument(
-        "descriptor fallback was already attempted"));
-  }
-  return ValidateOrRetryManual(
-      input, ResolveResponse(fallback, response.Value()));
 }
 
 }  // namespace open_lmm

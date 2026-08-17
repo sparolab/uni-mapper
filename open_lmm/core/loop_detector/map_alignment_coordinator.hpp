@@ -17,6 +17,7 @@ struct MapAlignmentCoordinatorInput {
   std::shared_ptr<CancellationToken> cancellation;
   std::vector<AlignmentVisualizationPoint> target_points;
   std::vector<AlignmentVisualizationPoint> source_points;
+  std::shared_ptr<AlignmentVisualizationData> visualization;
   std::function<std::optional<MapAlignmentProposal>()> kiss_proposer;
   std::function<std::optional<MapAlignmentProposal>()> descriptor_proposer;
   std::function<Result<void>(const MapAlignmentProposal&)> proposal_validator;
@@ -39,6 +40,8 @@ class MapAlignmentCoordinator {
   static MapAlignmentProposal ManualProposal(
       const MapAlignmentCoordinatorInput& input,
       const Eigen::Isometry3d& initial_transform);
+  static MapAlignmentProposal PendingProposal(
+      const MapAlignmentCoordinatorInput& input);
   static Result<MapAlignmentProposal> ResolveResponse(
       const MapAlignmentProposal& proposal,
       const AlignmentResponse& response);

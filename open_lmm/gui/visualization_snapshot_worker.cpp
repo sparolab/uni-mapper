@@ -5,9 +5,8 @@
 namespace open_lmm {
 
 VisualizationSnapshotWorker::VisualizationSnapshotWorker(
-    Provider provider, std::size_t max_points)
+    Provider provider)
     : provider_(std::move(provider)),
-      max_points_(max_points),
       thread_([this] { Run(); }) {}
 
 VisualizationSnapshotWorker::~VisualizationSnapshotWorker() {
@@ -59,7 +58,7 @@ void VisualizationSnapshotWorker::Run() {
       pending_.erase(request);
     }
     auto result = provider_
-                      ? provider_(agent, max_points_)
+                      ? provider_(agent)
                       : Result<VisualizationSnapshot>::Failure(
                             Error::InvalidArgument(
                                 "visualization snapshot provider is missing"));

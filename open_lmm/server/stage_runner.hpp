@@ -50,7 +50,7 @@ class StageRunner {
   virtual Result<void> RunOptimizeThrough(char target_agent) = 0;
   [[nodiscard]] virtual std::vector<char> AgentIds() const = 0;
   [[nodiscard]] virtual Result<VisualizationSnapshot>
-  CreateVisualizationSnapshot(char, std::size_t) const {
+  CreateVisualizationSnapshot(char) const {
     return Result<VisualizationSnapshot>::Failure(
         Error::InvalidArgument("visualization snapshots are not supported"));
   }

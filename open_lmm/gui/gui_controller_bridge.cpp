@@ -47,9 +47,9 @@ GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controlle
     auto locked = weak.lock();
     return locked ? locked->Snapshot() : PipelineSnapshot{};
   };
-  services.visualization_snapshot = [weak](char agent, std::size_t max_points) {
+  services.visualization_snapshot = [weak](char agent) {
     auto locked = weak.lock();
-    return locked ? locked->GetVisualizationSnapshot(agent, max_points)
+    return locked ? locked->GetVisualizationSnapshot(agent)
                   : ControllerExpired<VisualizationSnapshot>();
   };
   services.alignment_feedback_snapshot = [weak] {

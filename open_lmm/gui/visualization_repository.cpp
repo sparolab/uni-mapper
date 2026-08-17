@@ -7,6 +7,19 @@ namespace {
 std::string RevisionName(const std::string& prefix, uint64_t revision) {
   return prefix + "/" + std::to_string(revision);
 }
+std::shared_ptr<const VisualizationSnapshot> MetadataOnly(
+    const VisualizationSnapshot& source) {
+  auto snapshot = std::make_shared<VisualizationSnapshot>();
+  snapshot->agent = source.agent;
+  snapshot->revision = source.revision;
+  snapshot->poses = source.poses;
+  snapshot->edges = source.edges;
+  snapshot->min_bound = source.min_bound;
+  snapshot->max_bound = source.max_bound;
+  snapshot->has_bounds = source.has_bounds;
+  snapshot->map_available = source.map_available;
+  return snapshot;
+}
 }  // namespace
 
 VisualizationUpdate VisualizationRepository::Commit(
@@ -28,7 +41,7 @@ VisualizationUpdate VisualizationRepository::Commit(
     }
   }
   const char agent = snapshot->agent;
-  snapshots_[agent] = std::move(snapshot);
+  snapshots_[agent] = MetadataOnly(*snapshot);
   const auto& current = snapshots_.at(agent);
   update.add_drawables = {
       MapName(current->agent, current->revision),

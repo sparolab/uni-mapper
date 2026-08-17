@@ -90,7 +90,7 @@ class PipelineController {
   Result<void> Wait(uint64_t job_id);
   [[nodiscard]] PipelineSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
-      char agent, std::size_t max_points) const;
+      char agent) const;
   [[nodiscard]] std::optional<AlignmentFeedbackSnapshot>
   GetAlignmentFeedbackSnapshot() const;
   Result<void> RespondToAlignment(uint64_t job_id,

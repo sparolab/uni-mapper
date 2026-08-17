@@ -11,6 +11,7 @@
 namespace open_lmm {
 
 enum class AlignmentMethod : uint8_t {
+  kPending,
   kKissMatcher,
   kDescriptor,
   kManual,
@@ -18,6 +19,7 @@ enum class AlignmentMethod : uint8_t {
 
 enum class AlignmentDecision : uint8_t {
   kAccept,
+  kTryKissMatcher,
   kTryDescriptor,
   kManual,
   kCancel,
@@ -60,10 +62,23 @@ struct AlignmentVisualizationPoint {
   float z = 0.0F;
 };
 
+struct AlignmentLoopVisualization {
+  AlignmentVisualizationPoint target;
+  AlignmentVisualizationPoint source;
+  bool inlier = false;
+};
+
+struct AlignmentVisualizationData {
+  std::vector<AlignmentVisualizationPoint> target_trajectory;
+  std::vector<AlignmentVisualizationPoint> source_trajectory;
+  std::vector<AlignmentLoopVisualization> descriptor_loops;
+};
+
 struct AlignmentFeedbackSnapshot {
   MapAlignmentProposal proposal;
   std::vector<AlignmentVisualizationPoint> target_points;
   std::vector<AlignmentVisualizationPoint> source_points;
+  AlignmentVisualizationData diagnostics;
 };
 
 struct StoredAlignment {

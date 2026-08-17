@@ -38,6 +38,7 @@ class IridescenceGui final : public GuiPlugin {
   void UpdateDrawables(
       const std::shared_ptr<const VisualizationSnapshot>& snapshot,
       const VisualizationUpdate& update);
+  void ApplyVisualizationColorMode();
   GuiServices services_;
   std::shared_ptr<GuiEventQueue> event_queue_;
   ExecutionEventSubscription event_subscription_;
@@ -63,6 +64,7 @@ class IridescenceGui final : public GuiPlugin {
   uint64_t config_revision_draft_ = 0;
   double last_gui_work_ms_ = 0.0;
   double max_gui_work_ms_ = 0.0;
+  int visualization_color_mode_ = 0;
   std::vector<std::string> runtime_logs_;
   std::chrono::steady_clock::time_point next_runtime_log_refresh_{};
   std::optional<Eigen::Vector3f> picked_point_;

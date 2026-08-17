@@ -573,6 +573,7 @@ Result<void> MapServer::saveAlignmentArtifacts() const {
   root["alignments"] = nlohmann::json::array();
   const auto method_name = [](AlignmentMethod method) {
     switch (method) {
+      case AlignmentMethod::kPending: return "pending";
       case AlignmentMethod::kKissMatcher: return "kiss_matcher";
       case AlignmentMethod::kDescriptor: return "descriptor";
       case AlignmentMethod::kManual: return "manual";
@@ -723,13 +724,8 @@ Result<void> MapServer::RunOptimizeThrough(char target_agent) {
 }
 
 Result<VisualizationSnapshot> MapServer::CreateVisualizationSnapshot(
-    char agent, std::size_t max_points) const {
+    char agent) const {
   std::lock_guard lock(state_mutex_);
-  if (max_points == 0) {
-    return Result<VisualizationSnapshot>::Failure(
-        Error::InvalidArgument("visualization point budget must be non-zero"));
-  }
-
   const auto optimized = shared_data_->optimized_data.find(agent);
   if (optimized == shared_data_->optimized_data.end()) {
     return Result<VisualizationSnapshot>::Failure(
@@ -778,12 +774,8 @@ Result<VisualizationSnapshot> MapServer::CreateVisualizationSnapshot(
         Error::IoError("failed to read visualization map " +
                        map_path.string()));
   }
-  const std::size_t stride = std::max<std::size_t>(
-      1, (cloud.size() + max_points - 1) / max_points);
-  snapshot.points.reserve(std::min(max_points, cloud.size()));
-  for (std::size_t i = 0; i < cloud.size() &&
-                          snapshot.points.size() < max_points; i += stride) {
-    const auto& point = cloud[i];
+  snapshot.points.reserve(cloud.size());
+  for (const auto& point : cloud) {
     if (!pcl::isFinite(point)) continue;
     snapshot.points.push_back({point.x, point.y, point.z, point.intensity});
     const Eigen::Vector3f position(point.x, point.y, point.z);

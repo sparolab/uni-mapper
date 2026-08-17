@@ -52,8 +52,12 @@ void TestKissAcceptDoesNotComputeDescriptor() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
+  std::atomic<int> kiss_calls{0};
   std::atomic<int> descriptor_calls{0};
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [&] {
+    ++kiss_calls;
+    return std::optional(Proposal(AlignmentMethod::kKissMatcher, 1));
+  };
   input.descriptor_proposer = [&] {
     ++descriptor_calls;
     return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
@@ -61,7 +65,22 @@ void TestKissAcceptDoesNotComputeDescriptor() {
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
   std::thread worker([&] { result = MapAlignmentCoordinator().Align(input); });
-  const auto snapshot = WaitForSnapshot(broker);
+  auto snapshot = WaitForSnapshot(broker);
+  Check(snapshot.proposal.method == AlignmentMethod::kPending &&
+            kiss_calls == 0 && descriptor_calls == 0,
+        "alignment methods remain lazy before user selection");
+  const auto pending_request = snapshot.proposal.request_id;
+  Check(static_cast<bool>(broker->Respond(
+            {pending_request, AlignmentDecision::kTryKissMatcher,
+             std::nullopt})),
+        "request KISS response");
+  do {
+    snapshot = WaitForSnapshot(broker);
+    std::this_thread::yield();
+  } while (snapshot.proposal.request_id == pending_request);
+  Check(snapshot.proposal.method == AlignmentMethod::kKissMatcher &&
+            kiss_calls == 1,
+        "KISS runs only after explicit request");
   Check(static_cast<bool>(broker->Respond({snapshot.proposal.request_id,
                          AlignmentDecision::kAccept, std::nullopt})),
         "accept KISS response");
@@ -83,6 +102,8 @@ void TestDescriptorFallback() {
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
   std::thread worker([&] { result = MapAlignmentCoordinator().Align(input); });
   auto snapshot = WaitForSnapshot(broker);
+  Check(snapshot.proposal.method == AlignmentMethod::kPending,
+        "Descriptor flow starts pending");
   Check(static_cast<bool>(broker->Respond({snapshot.proposal.request_id,
                          AlignmentDecision::kTryDescriptor, std::nullopt})),
         "request Descriptor response");
@@ -112,6 +133,15 @@ void TestFullFallbackToManual() {
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
   std::thread worker([&] { result = MapAlignmentCoordinator().Align(input); });
   auto snapshot = WaitForSnapshot(broker);
+  const auto pending_request = snapshot.proposal.request_id;
+  Check(static_cast<bool>(broker->Respond(
+            {pending_request, AlignmentDecision::kTryKissMatcher,
+             std::nullopt})),
+        "full fallback requests KISS");
+  do {
+    snapshot = WaitForSnapshot(broker);
+    std::this_thread::yield();
+  } while (snapshot.proposal.request_id == pending_request);
   Check(static_cast<bool>(broker->Respond(
             {snapshot.proposal.request_id,
              AlignmentDecision::kTryDescriptor, std::nullopt})),
@@ -142,7 +172,11 @@ void TestAlwaysManualAndRigidTransformValidation() {
   broker->SetEnabled(true);
   auto input = Input(broker);
   input.feedback_mode = "always_manual";
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 3); };
+  std::atomic<int> kiss_calls{0};
+  input.kiss_proposer = [&] {
+    ++kiss_calls;
+    return std::optional(Proposal(AlignmentMethod::kKissMatcher, 3));
+  };
   input.descriptor_proposer = []() -> std::optional<MapAlignmentProposal> {
     std::abort();
   };
@@ -152,8 +186,9 @@ void TestAlwaysManualAndRigidTransformValidation() {
   const auto snapshot = WaitForSnapshot(broker);
   Check(snapshot.proposal.method == AlignmentMethod::kManual,
         "always_manual opens manual proposal");
-  Check(snapshot.proposal.target_T_source.translation().x() == 3,
-        "manual starts from KISS transform");
+  Check(snapshot.proposal.target_T_source.isApprox(Eigen::Isometry3d::Identity()) &&
+            kiss_calls == 0,
+        "always manual starts at identity without running KISS");
   Eigen::Isometry3d invalid = Eigen::Isometry3d::Identity();
   invalid.linear()(0, 0) = 2;
   Check(!static_cast<bool>(broker->Respond({snapshot.proposal.request_id,
@@ -245,13 +280,31 @@ void TestDescriptorConsensusRejectsOutlier() {
     loop.init_rel_pose.translation().x() = translations[i];
     loops.push_back(loop);
   }
+  DescriptorAlignmentDiagnostics diagnostics;
   const auto proposal = DescriptorAlignmentProposer(10.0, 20.0 * M_PI / 180.0).Propose(
-      'A', 'B', odometry, optimized, loops, {}, {});
+      'A', 'B', odometry, optimized, loops, &diagnostics);
   Check(proposal.has_value(), "Descriptor consensus proposal exists");
   Check(proposal->metrics.consensus_size == 3,
         "Descriptor outlier excluded from consensus");
   Check(std::abs(proposal->target_T_source.translation().x() - 1.0) < 1e-9,
         "Descriptor consensus transform averages inliers");
+  Check(diagnostics.inlier_loop_indices == std::vector<std::size_t>({0, 1, 2}),
+        "Descriptor diagnostics preserve original inlier loop indices");
+
+  DescriptorAlignmentOptions exact_options;
+  exact_options.pcm_translation_threshold = 10.0;
+  exact_options.pcm_rotation_threshold_rad = 20.0 * M_PI / 180.0;
+  exact_options.solver = "exact";
+  exact_options.threads = 2;
+  exact_options.max_candidates = 0;
+  const auto exact_proposal = DescriptorAlignmentProposer(exact_options).Propose(
+      'A', 'B', odometry, optimized, loops);
+  Check(exact_proposal.has_value(), "Exact Descriptor solver remains available");
+  Check(exact_proposal->metrics.consensus_size == 3,
+        "Exact Descriptor solver rejects the same outlier");
+  Check(exact_proposal->target_T_source.matrix().isApprox(
+            proposal->target_T_source.matrix(), 1e-12),
+        "Heuristic and exact Descriptor poses agree on the reference set");
 }
 
 void TestMapRefinementAndQualityMetrics() {

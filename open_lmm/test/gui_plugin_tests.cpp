@@ -39,11 +39,7 @@ class NoopRunner final : public open_lmm::StageRunner {
   }
   std::vector<char> AgentIds() const override { return {'A'}; }
   open_lmm::Result<open_lmm::VisualizationSnapshot>
-  CreateVisualizationSnapshot(char agent, std::size_t max_points) const override {
-    if (max_points == 0) {
-      return open_lmm::Result<open_lmm::VisualizationSnapshot>::Failure(
-          open_lmm::Error::InvalidArgument("empty point budget"));
-    }
+  CreateVisualizationSnapshot(char agent) const override {
     open_lmm::VisualizationSnapshot snapshot;
     snapshot.agent = agent;
     snapshot.poses.push_back({});
@@ -128,7 +124,7 @@ int main() {
           "applied config revision is visible in snapshot");
   Require(services.node_descriptors().size() == 5,
           "node descriptors are exposed to GUI controls");
-  auto visualization = services.visualization_snapshot('A', 100);
+  auto visualization = services.visualization_snapshot('A');
   Require(visualization.IsOk() && visualization.Value().agent == 'A',
           "visualization snapshot is bridged without exposing runner state");
   int subscriber_one = 0;
@@ -200,9 +196,8 @@ int main() {
   auto first_update = repository.Commit(revision_one);
   Require(first_update.changed && first_update.remove_drawables.empty(),
           "first visualization revision creates drawables");
-  Require(repository.ApproximateBytes() >=
-              10 * sizeof(open_lmm::VisualizationPoint),
-          "visualization cache memory is measurable");
+  Require(repository.Latest('A')->points.empty(),
+          "visualization repository retains metadata without point cache");
   Require(!repository.Commit(revision_one).changed,
           "same visualization revision is idempotent");
   auto stale = std::make_shared<open_lmm::VisualizationSnapshot>();
@@ -222,7 +217,7 @@ int main() {
 
   std::atomic<int> snapshot_calls = 0;
   open_lmm::VisualizationSnapshotWorker snapshot_worker(
-      [&](char agent, std::size_t) {
+      [&](char agent) {
         const int call = ++snapshot_calls;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if (agent == 'B') {
@@ -234,8 +229,7 @@ int main() {
         value.revision = static_cast<uint64_t>(call);
         return open_lmm::Result<open_lmm::VisualizationSnapshot>::Ok(
             std::move(value));
-      },
-      100);
+      });
   snapshot_worker.Request('A');
   while (snapshot_calls.load() < 1) std::this_thread::yield();
   snapshot_worker.Request('A');

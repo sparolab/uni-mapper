@@ -26,10 +26,9 @@ struct VisualizationSnapshotResult {
 // during an active copy is retained as the next generation.
 class VisualizationSnapshotWorker {
  public:
-  using Provider =
-      std::function<Result<VisualizationSnapshot>(char, std::size_t)>;
+  using Provider = std::function<Result<VisualizationSnapshot>(char)>;
 
-  VisualizationSnapshotWorker(Provider provider, std::size_t max_points);
+  explicit VisualizationSnapshotWorker(Provider provider);
   ~VisualizationSnapshotWorker();
   VisualizationSnapshotWorker(const VisualizationSnapshotWorker&) = delete;
   VisualizationSnapshotWorker& operator=(const VisualizationSnapshotWorker&) =
@@ -44,7 +43,6 @@ class VisualizationSnapshotWorker {
   void Run();
 
   Provider provider_;
-  std::size_t max_points_;
   std::mutex mutex_;
   std::condition_variable ready_;
   std::map<char, uint64_t> pending_;

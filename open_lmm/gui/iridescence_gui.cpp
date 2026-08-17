@@ -2,6 +2,7 @@
 #include <open_lmm/gui/config_editor.hpp>
 #include <open_lmm/utils/logging.hpp>
 #include <glk/pointcloud_buffer.hpp>
+#include <glk/colormap.hpp>
 #include <glk/primitives/primitives.hpp>
 #include <glk/thin_lines.hpp>
 #include <guik/viewer/light_viewer.hpp>
@@ -55,6 +56,19 @@ const char* ArtifactStateName(ArtifactState state) {
   }
   return "Unknown";
 }
+Eigen::Vector4f AgentColor(char agent) {
+  static const std::array<Eigen::Vector4f, 8> colors = {
+      Eigen::Vector4f(0.90F, 0.20F, 0.20F, 1.0F),
+      Eigen::Vector4f(0.20F, 0.65F, 1.00F, 1.0F),
+      Eigen::Vector4f(0.20F, 0.85F, 0.35F, 1.0F),
+      Eigen::Vector4f(1.00F, 0.65F, 0.10F, 1.0F),
+      Eigen::Vector4f(0.65F, 0.35F, 1.00F, 1.0F),
+      Eigen::Vector4f(0.10F, 0.85F, 0.85F, 1.0F),
+      Eigen::Vector4f(1.00F, 0.35F, 0.75F, 1.0F),
+      Eigen::Vector4f(0.75F, 0.75F, 0.20F, 1.0F),
+  };
+  return colors[static_cast<unsigned char>(agent) % colors.size()];
+}
 template <std::size_t N>
 void SetBuffer(std::array<char, N>& buffer, const std::string& value) {
   std::snprintf(buffer.data(), buffer.size(), "%s", value.c_str());
@@ -74,7 +88,7 @@ Result<void> IridescenceGui::Start(GuiServices services) {
   }
   if (services_.visualization_snapshot) {
     visualization_worker_ = std::make_unique<VisualizationSnapshotWorker>(
-        services_.visualization_snapshot, 1'000'000);
+        services_.visualization_snapshot);
   }
   event_queue_ = std::make_shared<GuiEventQueue>();
   if (services_.subscribe_events) {
@@ -115,6 +129,9 @@ void IridescenceGui::ViewerLoop() {
   try {
     auto viewer = guik::LightViewer::instance();
     viewer->enable_vsync();
+    viewer->shader_setting().set_point_scale_metric();
+    viewer->shader_setting().set_point_size(0.025F);
+    viewer->shader_setting().set_point_shape_circle();
     SynchronizeModel();
     viewer->register_ui_callback("open_lmm.pipeline",
                                  [this] { DrawPipelineUi(); });
@@ -204,20 +221,54 @@ void IridescenceGui::UpdateDrawables(
   auto viewer = guik::LightViewer::instance();
   for (const auto& name : update.remove_drawables) viewer->remove_drawable(name);
 
+  bool has_map_bounds = false;
+  float min_z = 0.0F;
+  float max_z = 0.0F;
+  for (const auto& current : visualization_.Snapshots()) {
+    if (!current->has_bounds) continue;
+    if (!has_map_bounds) {
+      min_z = current->min_bound.z();
+      max_z = current->max_bound.z();
+      has_map_bounds = true;
+    } else {
+      min_z = std::min(min_z, current->min_bound.z());
+      max_z = std::max(max_z, current->max_bound.z());
+    }
+  }
+  if (has_map_bounds) {
+    if (max_z - min_z < 0.01F) {
+      min_z -= 0.5F;
+      max_z += 0.5F;
+    }
+    viewer->shader_setting().add<Eigen::Vector2f>(
+        "z_range", Eigen::Vector2f(min_z, max_z));
+  }
+
   if (!snapshot->points.empty()) {
     std::vector<Eigen::Vector3f> points;
-    std::vector<float> intensities;
+    std::vector<Eigen::Vector4f> colors;
     points.reserve(snapshot->points.size());
-    intensities.reserve(snapshot->points.size());
+    colors.reserve(snapshot->points.size());
+    const Eigen::Vector4f static_color(0.10F, 0.55F, 1.00F, 1.0F);
+    const Eigen::Vector4f dynamic_color(1.00F, 0.10F, 0.05F, 1.0F);
     for (const auto& point : snapshot->points) {
       points.emplace_back(point.x, point.y, point.z);
-      intensities.push_back(point.intensity);
+      const float dynamic_weight = std::clamp(point.intensity, 0.0F, 1.0F);
+      colors.push_back(static_color * (1.0F - dynamic_weight) +
+                       dynamic_color * dynamic_weight);
     }
     auto cloud = std::make_shared<glk::PointCloudBuffer>(points);
-    cloud->add_intensity(glk::COLORMAP::TURBO, intensities);
+    cloud->add_color(colors);
+    guik::Rainbow shader_setting;
+    if (visualization_color_mode_ == 1) {
+      shader_setting.set_color_mode(guik::ColorMode::VERTEX_COLOR);
+    } else if (visualization_color_mode_ == 2) {
+      shader_setting.set_color_mode(guik::ColorMode::FLAT_COLOR);
+      shader_setting.set_color(AgentColor(snapshot->agent));
+    }
     viewer->update_drawable(
         VisualizationRepository::MapName(snapshot->agent, snapshot->revision),
-        cloud, guik::VertexColor());
+        cloud, shader_setting);
   }
 
   std::vector<Eigen::Vector3f> trajectory;
@@ -275,6 +326,23 @@ void IridescenceGui::UpdateDrawables(
   }
 }
 
+void IridescenceGui::ApplyVisualizationColorMode() {
+  auto viewer = guik::LightViewer::instance();
+  for (const auto& snapshot : visualization_.Snapshots()) {
+    const auto drawable = viewer->find_drawable(
+        VisualizationRepository::MapName(snapshot->agent, snapshot->revision));
+    if (!drawable.first) continue;
+    if (visualization_color_mode_ == 0) {
+      drawable.first->set_color_mode(guik::ColorMode::RAINBOW);
+    } else if (visualization_color_mode_ == 1) {
+      drawable.first->set_color_mode(guik::ColorMode::VERTEX_COLOR);
+    } else {
+      drawable.first->set_color_mode(guik::ColorMode::FLAT_COLOR);
+      drawable.first->set_color(AgentColor(snapshot->agent));
+    }
+  }
+}
+
 void IridescenceGui::DrawPipelineUi() {
   if (auto point = guik::LightViewer::instance()->pick_point()) {
     picked_point_ = *point;
@@ -292,6 +360,11 @@ void IridescenceGui::DrawPipelineUi() {
   ImGui::Text("Visualization cache: %.2f MiB",
               static_cast<double>(visualization_.ApproximateBytes()) /
                   (1024.0 * 1024.0));
+  const char* color_modes[] = {"RAINBOW (height)", "INTENSITY", "AGENT"};
+  if (ImGui::Combo("Map color", &visualization_color_mode_, color_modes,
+                   IM_ARRAYSIZE(color_modes))) {
+    ApplyVisualizationColorMode();
+  }
 
   if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
   if (ImGui::Button("Run All") && services_.submit_run_all) {
@@ -441,6 +514,10 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
     if (alignment_request_id_ != 0) {
       viewer->remove_drawable("open_lmm.alignment.target");
       viewer->remove_drawable("open_lmm.alignment.source");
+      viewer->remove_drawable("open_lmm.alignment.target_trajectory");
+      viewer->remove_drawable("open_lmm.alignment.source_trajectory");
+      viewer->remove_drawable("open_lmm.alignment.inlier_loops");
+      viewer->remove_drawable("open_lmm.alignment.outlier_loops");
       alignment_feedback_.reset();
       alignment_model_control_.reset();
       alignment_request_id_ = 0;
@@ -497,6 +574,57 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
         std::make_shared<glk::PointCloudBuffer>(source),
         guik::FlatOrange(alignment_model_control_->model_matrix())
             .set_point_scale(kAlignmentReviewPointScale));
+
+    viewer->remove_drawable("open_lmm.alignment.target_trajectory");
+    viewer->remove_drawable("open_lmm.alignment.source_trajectory");
+    viewer->remove_drawable("open_lmm.alignment.inlier_loops");
+    viewer->remove_drawable("open_lmm.alignment.outlier_loops");
+    if (alignment_feedback_->proposal.method == AlignmentMethod::kDescriptor) {
+      const auto to_points = [](const auto& values) {
+        std::vector<Eigen::Vector3f> points;
+        points.reserve(values.size());
+        for (const auto& point : values) {
+          points.emplace_back(point.x, point.y, point.z);
+        }
+        return points;
+      };
+      const auto target_trajectory =
+          to_points(alignment_feedback_->diagnostics.target_trajectory);
+      const auto source_trajectory =
+          to_points(alignment_feedback_->diagnostics.source_trajectory);
+      if (target_trajectory.size() > 1) {
+        viewer->update_drawable(
+            "open_lmm.alignment.target_trajectory",
+            std::make_shared<glk::ThinLines>(target_trajectory, true),
+            guik::FlatBlue());
+      }
+      if (source_trajectory.size() > 1) {
+        viewer->update_drawable(
+            "open_lmm.alignment.source_trajectory",
+            std::make_shared<glk::ThinLines>(source_trajectory, true),
+            guik::FlatOrange());
+      }
+      std::vector<Eigen::Vector3f> inlier_lines;
+      std::vector<Eigen::Vector3f> outlier_lines;
+      for (const auto& loop :
+           alignment_feedback_->diagnostics.descriptor_loops) {
+        auto& lines = loop.inlier ? inlier_lines : outlier_lines;
+        lines.emplace_back(loop.target.x, loop.target.y, loop.target.z);
+        lines.emplace_back(loop.source.x, loop.source.y, loop.source.z);
+      }
+      if (!inlier_lines.empty()) {
+        viewer->update_drawable(
+            "open_lmm.alignment.inlier_loops",
+            std::make_shared<glk::ThinLines>(inlier_lines, false),
+            guik::FlatGreen());
+      }
+      if (!outlier_lines.empty()) {
+        viewer->update_drawable(
+            "open_lmm.alignment.outlier_loops",
+            std::make_shared<glk::ThinLines>(outlier_lines, false),
+            guik::FlatRed());
+      }
+    }
   }
   if (alignment_model_control_) {
     viewer->update_drawable(
@@ -539,7 +667,9 @@ void IridescenceGui::DrawAlignmentUi() {
   if (!alignment_feedback_ || !alignment_model_control_) return;
   ImGui::Begin("Map Alignment Review");
   const auto& proposal = alignment_feedback_->proposal;
-  const char* method = proposal.method == AlignmentMethod::kKissMatcher
+  const char* method = proposal.method == AlignmentMethod::kPending
+                           ? "Not attempted"
+                           : proposal.method == AlignmentMethod::kKissMatcher
                            ? "KISS Matcher"
                            : proposal.method == AlignmentMethod::kDescriptor
                                  ? "Descriptor"
@@ -547,6 +677,18 @@ void IridescenceGui::DrawAlignmentUi() {
   ImGui::Text("Agent: %c <- %c", proposal.target_agent,
               proposal.source_agent);
   ImGui::Text("Method: %s", method);
+  if (proposal.method == AlignmentMethod::kDescriptor) {
+    const auto& loops = alignment_feedback_->diagnostics.descriptor_loops;
+    std::size_t inliers = 0;
+    for (const auto& loop : loops) {
+      if (loop.inlier) ++inliers;
+    }
+    ImGui::TextColored(ImVec4(0.2F, 0.9F, 0.3F, 1.0F),
+                       "Inlier loops: %zu", inliers);
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.95F, 0.2F, 0.2F, 1.0F),
+                       "Outliers: %zu", loops.size() - inliers);
+  }
   ImGui::Text("Rotation inliers: %zu", proposal.metrics.rotation_inliers);
   ImGui::Text("Final inliers: %zu", proposal.metrics.final_inliers);
   ImGui::Text("Map correspondences: %zu",
@@ -611,14 +753,22 @@ void IridescenceGui::DrawAlignmentUi() {
   };
 
   if (!alignment_manual_mode_) {
-    if (ImGui::Button("Accept")) respond(AlignmentDecision::kAccept);
-    if (proposal.method == AlignmentMethod::kKissMatcher) {
+    if (proposal.method != AlignmentMethod::kPending) {
+      if (ImGui::Button("Accept")) respond(AlignmentDecision::kAccept);
       ImGui::SameLine();
+    }
+    if (proposal.method != AlignmentMethod::kKissMatcher) {
+      if (ImGui::Button("Try KISS Matcher")) {
+        respond(AlignmentDecision::kTryKissMatcher);
+      }
+      ImGui::SameLine();
+    }
+    if (proposal.method != AlignmentMethod::kDescriptor) {
       if (ImGui::Button("Try Descriptor")) {
         respond(AlignmentDecision::kTryDescriptor);
       }
+      ImGui::SameLine();
     }
-    ImGui::SameLine();
     if (ImGui::Button("Manual Align")) {
       alignment_manual_mode_ = true;
       SetManualAlignmentTransform(proposal.target_T_source);
