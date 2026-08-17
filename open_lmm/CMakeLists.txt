@@ -3,8 +3,10 @@ project(open_lmm VERSION 1.0.0 LANGUAGES C CXX)
 
 # 빌드 설정
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
-set(CMAKE_BUILD_TYPE Release)
+add_compile_options($<$<CONFIG:Release>:-O3>)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -24,6 +26,7 @@ add_subdirectory(utils)
 add_subdirectory(common)
 add_subdirectory(core)
 add_subdirectory(server)
+add_subdirectory(gui)
 
 include(CTest)
 if(BUILD_TESTING)

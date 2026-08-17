@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <open_lmm/common/pipeline.hpp>
+#include <open_lmm/common/profiling.hpp>
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
@@ -30,6 +31,7 @@ class MapUpdateNode : public PipelineNodeBase {
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
+    OPEN_LMM_ZONE_N("MapUpdate.Process");
     auto it = db.optimized_data.find(ctx.agent.id);
     if (it == db.optimized_data.end()) {
       spdlog::warn("[MapUpdateNode] No optimized data for agent {}. Skipping.",
@@ -51,7 +53,11 @@ class MapUpdateNode : public PipelineNodeBase {
       return Result<ControlFlow>::Failure(remover_result.GetError());
     }
     auto dynamic_remover = std::move(remover_result).Value();
-    auto static_map = dynamic_remover->process(raw_scans, it->second.optimized_poses);
+    pcl::PointCloud<pcl::PointXYZI>::Ptr static_map;
+    {
+      OPEN_LMM_ZONE_N("MapUpdate.RemoverProcess");
+      static_map = dynamic_remover->process(raw_scans, it->second.optimized_poses);
+    }
     if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
       return Result<ControlFlow>::Failure(Error::Cancelled("after dynamic remover"));
     }
@@ -61,8 +67,13 @@ class MapUpdateNode : public PipelineNodeBase {
           std::string{ctx.agent.id}));
     }
 
-    auto ds_map = downsampleWithRangeFilter(
-        static_map, static_cast<float>(save_voxel_size_), 0.0f, 0.0f, false);
+    pcl::PointCloud<pcl::PointXYZI>::Ptr ds_map;
+    {
+      OPEN_LMM_ZONE_N("MapUpdate.FinalDownsample");
+      ds_map = downsampleWithRangeFilter(
+          static_map, static_cast<float>(save_voxel_size_), 0.0f, 0.0f, false);
+    }
+    OPEN_LMM_PLOT("map_update.point_count", ds_map ? ds_map->size() : 0);
 
     if (!ds_map || ds_map->empty()) {
       return Result<ControlFlow>::Failure(Error::InvalidArgument(
@@ -75,7 +86,12 @@ class MapUpdateNode : public PipelineNodeBase {
     temp_file += ".tmp";
     std::error_code cleanup_error;
     fs::remove(temp_file, cleanup_error);
-    if (pcl::io::savePCDFileBinaryCompressed(temp_file, *ds_map) != 0) {
+    int save_result = 0;
+    {
+      OPEN_LMM_ZONE_N("MapUpdate.PCDWrite");
+      save_result = pcl::io::savePCDFileBinaryCompressed(temp_file, *ds_map);
+    }
+    if (save_result != 0) {
       fs::remove(temp_file, cleanup_error);
       return Result<ControlFlow>::Failure(Error::IoError(
           "failed to save temporary map file: " + temp_file.string()));

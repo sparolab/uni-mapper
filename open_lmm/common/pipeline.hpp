@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include <open_lmm/common/agent_context.hpp>
+#include <open_lmm/common/profiling.hpp>
 #include <open_lmm/common/agent_data.hpp>
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/cancellation.hpp>
@@ -63,7 +64,14 @@ class Pipeline {
         }
         if (ctx.flow == ControlFlow::kSkip) break;
 
+        OPEN_LMM_ZONE_N("Pipeline.Node");
+#if OPEN_LMM_ENABLE_TRACY
+        const std::string zone_context = std::string{ctx.agent.id} + " " + node->Name();
+        OPEN_LMM_ZONE_TEXT(zone_context);
+#endif
+#if OPEN_LMM_ENABLE_TIMING_LOG
         const auto started_at = std::chrono::steady_clock::now();
+#endif
         auto r = [&]() -> Result<ControlFlow> {
           try {
             return node->Process(ctx, db);
@@ -73,10 +81,12 @@ class Pipeline {
                 node->Name() + ": " + e.what()));
           }
         }();
+#if OPEN_LMM_ENABLE_TIMING_LOG
         const auto elapsed = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started_at);
         spdlog::info("[PROFILE] agent={} module={} elapsed_ms={:.3f}",
                      ctx.agent.id, node->Name(), elapsed.count());
+#endif
         if (!r) {
           ctx.flow = ControlFlow::kKill;
           return Result<void>::Failure(r.GetError());
@@ -92,6 +102,7 @@ class Pipeline {
           break;
         }
       }
+      OPEN_LMM_FRAME_MARK();
     }
     return Result<void>::Ok();
   }

@@ -23,3 +23,10 @@ if(USE_CCACHE)
     message(STATUS "Using ccache: ${CCACHE_PATH}")
   endif()
 endif()
+
+# 선택적 로컬 타임라인 프로파일링. 기본 빌드는 Tracy를 fetch/link하지 않는다.
+option(OPEN_LMM_ENABLE_TRACY "Enable Tracy timeline profiling" OFF)
+option(OPEN_LMM_ENABLE_TIMING_LOG "Enable lightweight [PROFILE] timing logs" ON)
+
+# 선택적 데스크톱 GUI. OFF에서는 Iridescence/OpenGL을 찾거나 링크하지 않는다.
+option(OPEN_LMM_BUILD_IRIDESCENCE_GUI "Build the optional Iridescence GUI plugin" OFF)

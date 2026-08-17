@@ -6,6 +6,7 @@ target_sources(open_lmm_map_server PRIVATE
   pipeline_controller.cpp
 )
 target_link_libraries(open_lmm_map_server PUBLIC
+  open_lmm_profiling
   Eigen3::Eigen
   open_lmm_backend_optimizer
   open_lmm_loop_detector

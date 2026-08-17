@@ -5,6 +5,7 @@
 #include <pcl/io/pcd_io.h>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/common/profiling.hpp>
 #include <open_lmm/utils/config.hpp>
 
 // Pipeline nodes
@@ -158,6 +159,8 @@ std::vector<AgentPipelineCtx> MapServer::buildContexts() const {
 }
 
 Result<void> MapServer::process() {
+  OPEN_LMM_ZONE_N("MapServer.Process");
+  OPEN_LMM_PLOT("agent.count", agent_num_);
   for (StageId stage : {StageId::kDataLoad, StageId::kAlignment,
                         StageId::kMapUpdate, StageId::kSave}) {
     auto result = RunStage(stage);
@@ -186,6 +189,7 @@ Result<void> MapServer::ensureReady() {
 }
 
 std::vector<char> MapServer::AgentIds() const {
+  std::lock_guard lock(state_mutex_);
   std::vector<char> ids;
   for (const auto& ctx : contexts_.empty() ? buildContexts() : contexts_) {
     ids.push_back(ctx.agent.id);
@@ -194,11 +198,13 @@ std::vector<char> MapServer::AgentIds() const {
 }
 
 void MapServer::SetCancellationToken(std::shared_ptr<CancellationToken> token) {
+  std::lock_guard lock(state_mutex_);
   cancellation_ = std::move(token);
   for (auto& ctx : contexts_) ctx.cancellation = cancellation_;
 }
 
 Result<void> MapServer::RunStage(StageId stage) {
+  std::lock_guard lock(state_mutex_);
   auto ready = ensureReady();
   if (!ready) return ready;
   switch (stage) {
@@ -211,6 +217,7 @@ Result<void> MapServer::RunStage(StageId stage) {
 }
 
 Result<void> MapServer::RunNode(NodeId node, std::optional<char> agent) {
+  std::lock_guard lock(state_mutex_);
   auto ready = ensureReady();
   if (!ready) return ready;
   if (!agent) {
@@ -282,6 +289,7 @@ Result<void> MapServer::RunNode(NodeId node, std::optional<char> agent) {
 }
 
 Result<void> MapServer::ResetSession() {
+  std::lock_guard lock(state_mutex_);
   auto ready = ensureReady();
   if (!ready) return ready;
   shared_data_ = std::make_shared<SharedDatabase>();
@@ -291,6 +299,7 @@ Result<void> MapServer::ResetSession() {
 }
 
 Result<void> MapServer::runDataLoadStage() {
+  OPEN_LMM_ZONE_N("MapServer.DataLoadStage");
   shared_data_ = std::make_shared<SharedDatabase>();
   backend_optimizer_->Reset();
   contexts_ = buildContexts();
@@ -302,6 +311,7 @@ Result<void> MapServer::runDataLoadStage() {
 }
 
 Result<void> MapServer::runAlignmentStage() {
+  OPEN_LMM_ZONE_N("MapServer.AlignmentStage");
   if (shared_data_->raw_data.size() != contexts_.size()) {
     return Result<void>::Failure(Error::InvalidArgument(
         "DataLoad stage must complete before Alignment"));
@@ -324,6 +334,9 @@ Result<void> MapServer::runAlignmentStage() {
 }
 
 Result<void> MapServer::RunOptimizeThrough(char target_agent) {
+  std::lock_guard lock(state_mutex_);
+  OPEN_LMM_ZONE_N("MapServer.OptimizeReplay");
+  OPEN_LMM_PLOT("optimizer.target_agent", static_cast<int>(target_agent));
   auto ready = ensureReady();
   if (!ready) return ready;
   if (shared_data_->raw_data.size() != contexts_.size()) {
@@ -355,7 +368,85 @@ Result<void> MapServer::RunOptimizeThrough(char target_agent) {
   return Result<void>::Ok();
 }
 
+Result<VisualizationSnapshot> MapServer::CreateVisualizationSnapshot(
+    char agent, std::size_t max_points) const {
+  std::lock_guard lock(state_mutex_);
+  if (max_points == 0) {
+    return Result<VisualizationSnapshot>::Failure(
+        Error::InvalidArgument("visualization point budget must be non-zero"));
+  }
+
+  const auto optimized = shared_data_->optimized_data.find(agent);
+  if (optimized == shared_data_->optimized_data.end()) {
+    return Result<VisualizationSnapshot>::Failure(
+        Error::InvalidArgument("optimized poses are not available for agent"));
+  }
+
+  VisualizationSnapshot snapshot;
+  snapshot.agent = agent;
+  snapshot.poses.reserve(optimized->second.optimized_poses.size());
+  for (const auto& [index, pose] : optimized->second.optimized_poses) {
+    snapshot.poses.push_back({index, pose.cast<float>()});
+  }
+  for (std::size_t i = 1; i < snapshot.poses.size(); ++i) {
+    snapshot.edges.push_back({agent,
+                              static_cast<std::size_t>(snapshot.poses[i - 1].index),
+                              agent,
+                              static_cast<std::size_t>(snapshot.poses[i].index),
+                              VisualizationEdgeType::kTrajectory});
+  }
+
+  const auto context = std::find_if(
+      contexts_.begin(), contexts_.end(),
+      [agent](const AgentPipelineCtx& ctx) { return ctx.agent.id == agent; });
+  if (context != contexts_.end() && context->loop_output) {
+    const auto append_loops = [&snapshot](const LoopPairVec& loops,
+                                          VisualizationEdgeType type) {
+      for (const auto& loop : loops) {
+        snapshot.edges.push_back({loop.from.first, loop.from.second,
+                                  loop.to.first, loop.to.second, type});
+      }
+    };
+    append_loops(context->loop_output->intra_loops,
+                 VisualizationEdgeType::kIntraLoop);
+    append_loops(context->loop_output->inter_loops,
+                 VisualizationEdgeType::kInterLoop);
+  }
+
+  const fs::path map_path = fs::path(output_save_dir_) /
+      ("global_map_" + std::string{agent} + ".pcd");
+  if (!fs::is_regular_file(map_path)) {
+    return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
+  }
+  pcl::PointCloud<pcl::PointXYZI> cloud;
+  if (pcl::io::loadPCDFile(map_path.string(), cloud) < 0) {
+    return Result<VisualizationSnapshot>::Failure(
+        Error::IoError("failed to read visualization map " +
+                       map_path.string()));
+  }
+  const std::size_t stride = std::max<std::size_t>(
+      1, (cloud.size() + max_points - 1) / max_points);
+  snapshot.points.reserve(std::min(max_points, cloud.size()));
+  for (std::size_t i = 0; i < cloud.size() &&
+                          snapshot.points.size() < max_points; i += stride) {
+    const auto& point = cloud[i];
+    if (!pcl::isFinite(point)) continue;
+    snapshot.points.push_back({point.x, point.y, point.z, point.intensity});
+    const Eigen::Vector3f position(point.x, point.y, point.z);
+    if (!snapshot.has_bounds) {
+      snapshot.min_bound = snapshot.max_bound = position;
+      snapshot.has_bounds = true;
+    } else {
+      snapshot.min_bound = snapshot.min_bound.cwiseMin(position);
+      snapshot.max_bound = snapshot.max_bound.cwiseMax(position);
+    }
+  }
+  snapshot.map_available = true;
+  return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
+}
+
 Result<void> MapServer::runMapUpdateStage() {
+  OPEN_LMM_ZONE_N("MapServer.MapUpdateStage");
   if (!enable_map_updater_) return Result<void>::Ok();
   if (shared_data_->optimized_data.empty()) {
     return Result<void>::Failure(Error::InvalidArgument(
@@ -408,6 +499,7 @@ Result<void> MapServer::runMapUpdateStage() {
 }
 
 Result<void> MapServer::runSaveStage() {
+  OPEN_LMM_ZONE_N("MapServer.SaveStage");
   if (shared_data_->optimized_data.empty()) {
     return Result<void>::Failure(Error::InvalidArgument(
         "Alignment stage must complete before Save"));
@@ -420,6 +512,7 @@ Result<void> MapServer::runSaveStage() {
 }
 
 Result<void> MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
+  OPEN_LMM_ZONE_N("Save.Poses");
   std::vector<std::pair<fs::path, fs::path>> pending_files;
   const auto cleanup = [&pending_files]() {
     for (const auto& [temporary, final_path] : pending_files) {
@@ -491,6 +584,7 @@ Result<void> MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
 }
 
 Result<void> MapServer::saveOptimizedMap(const std::string& output_save_dir) {
+  OPEN_LMM_ZONE_N("Save.FallbackMap");
   for (const auto& [agent_id, opt_data] : shared_data_->optimized_data) {
     const auto raw_it = shared_data_->raw_data.find(agent_id);
     if (raw_it == shared_data_->raw_data.end()) {

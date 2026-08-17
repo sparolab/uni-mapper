@@ -33,6 +33,7 @@ add_library(erasor SHARED erasor.cpp
     utils.cpp
 )
 target_link_libraries(erasor 
+    open_lmm_profiling
     Eigen3::Eigen 
     PCL::PCL 
     small_gicp

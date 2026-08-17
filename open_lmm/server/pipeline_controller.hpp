@@ -17,6 +17,8 @@
 
 namespace open_lmm {
 
+struct ExecutionEventSubscriberRegistry;
+
 enum class JobState : uint8_t {
   kQueued, kWaitingForDependency, kRunning, kCancelling,
   kSucceeded, kFailed, kCancelled
@@ -54,6 +56,20 @@ struct PipelineSnapshot {
   std::vector<ExecutionEvent> recent_events;
 };
 
+class ExecutionEventSubscription {
+ public:
+  ExecutionEventSubscription() = default;
+  explicit ExecutionEventSubscription(std::function<void()> unsubscribe);
+  ~ExecutionEventSubscription();
+  ExecutionEventSubscription(ExecutionEventSubscription&& other) noexcept;
+  ExecutionEventSubscription& operator=(ExecutionEventSubscription&& other) noexcept;
+  ExecutionEventSubscription(const ExecutionEventSubscription&) = delete;
+  ExecutionEventSubscription& operator=(const ExecutionEventSubscription&) = delete;
+  void Reset();
+ private:
+  std::function<void()> unsubscribe_;
+};
+
 class PipelineController {
  public:
   explicit PipelineController(std::shared_ptr<StageRunner> runner);
@@ -70,6 +86,10 @@ class PipelineController {
   Result<void> Cancel(uint64_t job_id);
   Result<void> Wait(uint64_t job_id);
   [[nodiscard]] PipelineSnapshot Snapshot() const;
+  [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
+      char agent, std::size_t max_points) const;
+  [[nodiscard]] ExecutionEventSubscription SubscribeEvents(
+      std::function<void(const ExecutionEvent&)> callback);
   void SetEventCallback(std::function<void(const ExecutionEvent&)> callback);
 
  private:
@@ -86,6 +106,7 @@ class PipelineController {
   std::condition_variable completed_;
   std::optional<JobSnapshot> job_;
   std::function<void(const ExecutionEvent&)> callback_;
+  std::shared_ptr<ExecutionEventSubscriberRegistry> event_subscribers_;
   std::vector<ExecutionEvent> recent_events_;
   std::thread worker_;
   std::atomic<bool> cancel_requested_{false};

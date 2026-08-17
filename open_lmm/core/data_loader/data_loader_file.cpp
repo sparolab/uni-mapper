@@ -3,6 +3,7 @@
 #include <pcl/common/transforms.h>
 #include <spdlog/spdlog.h>
 #include <open_lmm/common/validation.hpp>
+#include <open_lmm/common/profiling.hpp>
 
 namespace fs = std::filesystem;
 namespace open_lmm {
@@ -65,6 +66,7 @@ void DataLoaderFile::parseConfig(Config config) {
 
 Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
                                              const fs::path& data_dir) {
+  OPEN_LMM_ZONE_N("DataLoader.Process");
   if (initialization_error_) {
     return Result<AgentRawData>::Failure(*initialization_error_);
   }
@@ -74,10 +76,15 @@ Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
   if (!scans_result) return Result<AgentRawData>::Failure(scans_result.GetError());
   auto poses = std::move(poses_result).Value();
   auto filtered_scans = std::move(scans_result).Value();
+  OPEN_LMM_PLOT("data_loader.pose_count", poses.size());
+  OPEN_LMM_PLOT("data_loader.scan_count", filtered_scans.size());
   auto count_result = ValidateScanPoseCount(filtered_scans.size(), poses.size(),
                                              data_dir.string());
   if (!count_result) return Result<AgentRawData>::Failure(count_result.GetError());
 
+  std::vector<Eigen::Vector3f> map_points;
+  {
+    OPEN_LMM_ZONE_N("DataLoader.BuildMapPoints");
   // KISSMatcher용 2m voxel 다운샘플 맵 포인트 생성
   pcl::PointCloud<pcl::PointXYZI>::Ptr map(new pcl::PointCloud<pcl::PointXYZI>);
   for (size_t i = 0; i < filtered_scans.size(); ++i) {
@@ -93,8 +100,8 @@ Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
       downsampleWithRangeFilter(map, 2.0, 0, 0, false);
   std::vector<int> tmp_indices;
   pcl::removeNaNFromPointCloud(*map_ds, *map_ds, tmp_indices);
-  std::vector<Eigen::Vector3f> map_points;
   pclToEigen(*map_ds, map_points);
+  }
 
   return Result<AgentRawData>::Ok(AgentRawData{
       .agent_id       = ctx.id,
@@ -106,6 +113,7 @@ Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
 
 Result<PoseVec> DataLoaderFile::loadPoseData(
     fs::path data_dir_path) {
+  OPEN_LMM_ZONE_N("DataLoader.LoadPoses");
   const fs::path pose_file_path = data_dir_path / param_.pose_file_name;
   if (!fs::exists(pose_file_path)) {
     return Result<PoseVec>::Failure(Error::FileNotFound(pose_file_path.string()));
@@ -168,6 +176,7 @@ Result<PoseVec> DataLoaderFile::loadPoseData(
 // pcl::io::savePCDFileBinaryCompressed(save_file_path, *p_scan_preprocessed);
 
 Result<ScanVec> DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
+  OPEN_LMM_ZONE_N("DataLoader.DownsampleScans");
   auto raw_result = loadRawScanData(data_dir_path);
   if (!raw_result) return Result<ScanVec>::Failure(raw_result.GetError());
   auto raw_scans = std::move(raw_result).Value();
@@ -184,6 +193,7 @@ Result<ScanVec> DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
 }
 
 Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
+  OPEN_LMM_ZONE_N("DataLoader.ReloadRawScans");
   const fs::path scan_dir_path = data_dir_path / param_.scan_dir_name;
   if (!fs::exists(scan_dir_path) || !fs::is_directory(scan_dir_path)) {
     return Result<ScanVec>::Failure(Error::FileNotFound(scan_dir_path.string()));
@@ -198,6 +208,7 @@ Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
   }
 
   std::sort(scan_files.begin(), scan_files.end());
+  OPEN_LMM_PLOT("data_loader.enumerated_scans", scan_files.size());
 
   ScanVec raw_scans;
 

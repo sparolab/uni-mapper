@@ -1,12 +1,53 @@
 #include "pipeline_controller.hpp"
 
+#include <algorithm>
 #include <array>
+#include <open_lmm/common/profiling.hpp>
 #include <exception>
+#include <map>
 
 namespace open_lmm {
 
+struct ExecutionEventSubscriberSlot {
+  std::recursive_mutex mutex;
+  bool active = true;
+  std::function<void(const ExecutionEvent&)> callback;
+};
+
+struct ExecutionEventSubscriberRegistry {
+  std::mutex mutex;
+  uint64_t next_id = 1;
+  std::map<uint64_t, std::shared_ptr<ExecutionEventSubscriberSlot>> callbacks;
+};
+
+ExecutionEventSubscription::ExecutionEventSubscription(
+    std::function<void()> unsubscribe)
+    : unsubscribe_(std::move(unsubscribe)) {}
+
+ExecutionEventSubscription::~ExecutionEventSubscription() { Reset(); }
+
+ExecutionEventSubscription::ExecutionEventSubscription(
+    ExecutionEventSubscription&& other) noexcept
+    : unsubscribe_(std::move(other.unsubscribe_)) {}
+
+ExecutionEventSubscription& ExecutionEventSubscription::operator=(
+    ExecutionEventSubscription&& other) noexcept {
+  if (this != &other) {
+    Reset();
+    unsubscribe_ = std::move(other.unsubscribe_);
+  }
+  return *this;
+}
+
+void ExecutionEventSubscription::Reset() {
+  if (!unsubscribe_) return;
+  auto unsubscribe = std::move(unsubscribe_);
+  unsubscribe();
+}
+
 PipelineController::PipelineController(std::shared_ptr<StageRunner> runner)
-    : runner_(std::move(runner)) {
+    : runner_(std::move(runner)),
+      event_subscribers_(std::make_shared<ExecutionEventSubscriberRegistry>()) {
   if (runner_) artifacts_.RegisterAgents(runner_->AgentIds());
 }
 
@@ -43,6 +84,9 @@ Result<uint64_t> PipelineController::submit(Work work) {
   runner_->SetCancellationToken(cancellation_);
   emit({id, EventType::kJobQueued, std::nullopt, {}});
   worker_ = std::thread([this, id, work = std::move(work)]() mutable {
+    OPEN_LMM_THREAD_NAME("open_lmm.pipeline");
+    OPEN_LMM_ZONE_N("PipelineController.Job");
+    OPEN_LMM_PLOT("job.id", id);
     {
       std::lock_guard lock(mutex_);
       job_->state = JobState::kRunning;
@@ -179,6 +223,9 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(char target_agent) {
 }
 
 Result<void> PipelineController::runOneStage(uint64_t job_id, StageId stage) {
+  OPEN_LMM_ZONE_N("PipelineController.Stage");
+  OPEN_LMM_PLOT("job.id", job_id);
+  OPEN_LMM_PLOT("stage.id", static_cast<int>(stage));
   const auto artifact_checkpoint = artifacts_.Snapshot();
   artifacts_.BeginStage(stage);
   {
@@ -280,14 +327,57 @@ PipelineSnapshot PipelineController::Snapshot() const {
   return snapshot;
 }
 
+Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
+    char agent, std::size_t max_points) const {
+  if (!runner_) {
+    return Result<VisualizationSnapshot>::Failure(
+        Error::InvalidArgument("stage runner is not available"));
+  }
+  auto result = runner_->CreateVisualizationSnapshot(agent, max_points);
+  if (!result) return result;
+  auto snapshot = std::move(result).Value();
+  for (const auto& artifact : artifacts_.Snapshot()) {
+    if (artifact.key.agent == agent && artifact.state == ArtifactState::kReady &&
+        (artifact.key.type == ArtifactType::kOptimizedPoses ||
+         artifact.key.type == ArtifactType::kGlobalMap)) {
+      snapshot.revision = std::max(snapshot.revision, artifact.revision);
+    }
+  }
+  return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
+}
+
 void PipelineController::SetEventCallback(
     std::function<void(const ExecutionEvent&)> callback) {
   std::lock_guard lock(mutex_);
   callback_ = std::move(callback);
 }
 
+ExecutionEventSubscription PipelineController::SubscribeEvents(
+    std::function<void(const ExecutionEvent&)> callback) {
+  if (!callback) return {};
+  uint64_t id;
+  auto slot = std::make_shared<ExecutionEventSubscriberSlot>();
+  slot->callback = std::move(callback);
+  {
+    std::lock_guard lock(event_subscribers_->mutex);
+    id = event_subscribers_->next_id++;
+    event_subscribers_->callbacks.emplace(id, slot);
+  }
+  std::weak_ptr<ExecutionEventSubscriberRegistry> weak = event_subscribers_;
+  return ExecutionEventSubscription([weak, slot, id] {
+    auto registry = weak.lock();
+    if (registry) {
+      std::lock_guard lock(registry->mutex);
+      registry->callbacks.erase(id);
+    }
+    std::lock_guard slot_lock(slot->mutex);
+    slot->active = false;
+  });
+}
+
 void PipelineController::emit(ExecutionEvent event) {
   std::function<void(const ExecutionEvent&)> callback;
+  std::vector<std::shared_ptr<ExecutionEventSubscriberSlot>> subscribers;
   {
     std::lock_guard lock(mutex_);
     event.sequence = next_event_sequence_++;
@@ -295,7 +385,19 @@ void PipelineController::emit(ExecutionEvent event) {
     if (recent_events_.size() > 256) recent_events_.erase(recent_events_.begin());
     callback = callback_;
   }
+  {
+    std::lock_guard lock(event_subscribers_->mutex);
+    subscribers.reserve(event_subscribers_->callbacks.size());
+    for (const auto& [id, subscriber] : event_subscribers_->callbacks) {
+      (void)id;
+      subscribers.push_back(subscriber);
+    }
+  }
   if (callback) callback(event);
+  for (const auto& subscriber : subscribers) {
+    std::lock_guard lock(subscriber->mutex);
+    if (subscriber->active) subscriber->callback(event);
+  }
 }
 
 }  // namespace open_lmm

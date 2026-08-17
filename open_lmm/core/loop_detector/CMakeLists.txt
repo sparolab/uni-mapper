@@ -7,6 +7,7 @@ target_sources(open_lmm_loop_detector PRIVATE
   loop_detector_kdtree.cpp
 )
 target_link_libraries(open_lmm_loop_detector
+  open_lmm_profiling
   Eigen3::Eigen
   open_lmm_common
   kiss_matcher::kiss_matcher_core

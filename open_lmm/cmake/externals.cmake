@@ -10,3 +10,17 @@ endif()
 # 이 구조를 유지하는 이유: thirdparty/ 안에 의존성별 세부 cmake 파일이 있어
 # 외부 소스는 건드리지 않고 CMake include 경로만 교체.
 include(${CMAKE_CURRENT_LIST_DIR}/../thirdparty/find_dependencies.cmake)
+
+if(OPEN_LMM_ENABLE_TRACY)
+  include(FetchContent)
+  set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy client" FORCE)
+  set(TRACY_ON_DEMAND ON CACHE BOOL "Connect only when profiler is attached" FORCE)
+  set(TRACY_CALLSTACK OFF CACHE BOOL "Disable Tracy callstack collection" FORCE)
+  FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG        v0.11.1
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(tracy)
+endif()

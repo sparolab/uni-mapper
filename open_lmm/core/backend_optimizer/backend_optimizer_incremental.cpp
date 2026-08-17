@@ -10,6 +10,7 @@
 #include <gtsam/slam/PriorFactor.h>
 
 #include <open_lmm/common/registration.hpp>
+#include <open_lmm/common/profiling.hpp>
 
 #include "BetweenFactorWithAnchoring.h"
 
@@ -62,6 +63,9 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     const LoopPairVec&                  intra_loops,
     const LoopPairVec&                  inter_loops,
     const std::map<char, AgentRawData>& all_raw_data) {
+  OPEN_LMM_ZONE_N("Optimizer.Process");
+  OPEN_LMM_PLOT("optimizer.intra_loop_count", intra_loops.size());
+  OPEN_LMM_PLOT("optimizer.inter_loop_count", inter_loops.size());
 
   if (raw_data.agent_id != ctx.id) {
     throw std::invalid_argument("optimizer agent context/raw data ID mismatch");
@@ -157,6 +161,8 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
 
   //! 5. ISAM2 최적화 (누적된 전체 그래프로 배치 최적화)
   // 진짜 증분화는 BackendOptimizer를 MapServer 레벨에서 공유할 때 가능 (Step 05 이후)
+  {
+    OPEN_LMM_ZONE_N("Optimizer.ISAM2.BatchUpdate");
   gtsam::ISAM2Params isam_param;
   isam_param.relinearizeThreshold = param_.relinearize_threshold;
   isam_param.relinearizeSkip      = param_.relinearize_skip;
@@ -167,6 +173,9 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     isam_.update();
   }
   working_values = isam_.calculateBestEstimate();
+  }
+  OPEN_LMM_PLOT("optimizer.factor_count", working_graph.size());
+  OPEN_LMM_PLOT("optimizer.value_count", working_values.size());
 
   //! 6. 모든 에이전트 포즈 추출
   std::map<char, std::vector<std::pair<int, Eigen::Isometry3d>>> all_poses;

@@ -6,6 +6,7 @@ target_sources(open_lmm_common PRIVATE
   pointcloud_utils.cpp
 )
 target_link_libraries(open_lmm_common PUBLIC 
+  open_lmm_profiling
   Eigen3::Eigen
   PCL::PCL
   gtsam

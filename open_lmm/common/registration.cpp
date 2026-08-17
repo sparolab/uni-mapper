@@ -3,6 +3,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 #include <spdlog/spdlog.h>
+#include <open_lmm/common/profiling.hpp>
 
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
@@ -13,6 +14,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr createSubmap(
     const std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr>& scans_vec,
     const std::vector<Eigen::Isometry3d>& poses_vec, const int key,
     const int search_num) {
+  OPEN_LMM_ZONE_N("Registration.CreateSubmap");
   pcl::PointCloud<pcl::PointXYZI>::Ptr submap(
       new pcl::PointCloud<pcl::PointXYZI>);
   const int size = scans_vec.size();
@@ -34,6 +36,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr createSubmap(
 small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> setupRegistration(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& source,
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& target) {
+  OPEN_LMM_ZONE_N("Registration.SetupGICP");
   small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> reg;
   reg.setRegistrationType("GICP");  // "GICP" or "VGICP" (default = "GICP")
   // reg.setVoxelResolution(1.0);
@@ -51,6 +54,7 @@ small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> setupRegistration(
 std::optional<Eigen::Isometry3d> calculateFinalTransform(
     small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI>& reg,
     const Eigen::Isometry3d& init_rel_pose) {
+  OPEN_LMM_ZONE_N("Registration.FitnessCheck");
   if (!reg.hasConverged()) {
     spdlog::debug("registration rejected: solver did not converge");
     return std::nullopt;
@@ -71,6 +75,7 @@ std::optional<Eigen::Isometry3d> registerPointCloud(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan_from,
     const LoopPair& loop_pair,
     int search_num) {
+  OPEN_LMM_ZONE_N("Registration.Align");
   auto submap_to =
       createSubmap(scans_to, poses_to, loop_pair.to.second, search_num);
   //! transform scan(from) based on init_rel_pose
@@ -82,7 +87,10 @@ std::optional<Eigen::Isometry3d> registerPointCloud(
   auto reg = setupRegistration(scan_init_from, submap_to);
   pcl::PointCloud<pcl::PointXYZI>::Ptr aligned(
       new pcl::PointCloud<pcl::PointXYZI>);
+  {
+    OPEN_LMM_ZONE_N("Registration.GICPAlign");
   reg.align(*aligned);
+  }
 
   return calculateFinalTransform(reg, loop_pair.init_rel_pose);
 }

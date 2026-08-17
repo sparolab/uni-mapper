@@ -9,6 +9,7 @@ target_sources(open_lmm_dynamic_remover PRIVATE
   dynamic_remover_offline.cpp
 )
 target_link_libraries(open_lmm_dynamic_remover
+  open_lmm_profiling
   Eigen3::Eigen
   open_lmm_common
   dynamic_removal_factory

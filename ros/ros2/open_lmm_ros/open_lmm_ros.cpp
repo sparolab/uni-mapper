@@ -10,6 +10,7 @@
 
 // open_lmm
 #include <open_lmm/server/map_server.hpp>
+#include <open_lmm/gui/gui_controller_bridge.hpp>
 #include <open_lmm/utils/config.hpp>
 // open_lmm_ros
 #include "open_lmm_ros.hpp"
@@ -33,13 +34,41 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
                              global_config->error_message());
   }
 
-  open_lmm::MapServer map_server;
-  auto result = map_server.process();
-  if (!result) {
-    throw std::runtime_error("MapServer failed: " + result.GetError().Message());
+  this->declare_parameter<std::string>("gui_plugin_path", "");
+  this->declare_parameter<bool>("gui_auto_run", false);
+  const auto gui_plugin_path =
+      this->get_parameter("gui_plugin_path").as_string();
+  const bool gui_auto_run = this->get_parameter("gui_auto_run").as_bool();
+
+  auto map_server = std::make_shared<open_lmm::MapServer>();
+  if (gui_plugin_path.empty()) {
+    auto result = map_server->process();
+    if (!result) {
+      throw std::runtime_error("MapServer failed: " +
+                               result.GetError().Message());
+    }
+    return;
   }
 
-  // TODO(gil) : rviz visualization
+  controller_ = std::make_shared<open_lmm::PipelineController>(map_server);
+  auto loaded = open_lmm::GuiPluginHost::Load(gui_plugin_path);
+  if (!loaded) {
+    throw std::runtime_error("GUI load failed: " +
+                             loaded.GetError().Message());
+  }
+  gui_host_ = std::move(loaded).Value();
+  auto started = gui_host_->Start(open_lmm::MakeGuiServices(controller_));
+  if (!started) {
+    throw std::runtime_error("GUI start failed: " +
+                             started.GetError().Message());
+  }
+  if (gui_auto_run) {
+    auto submitted = controller_->SubmitRunAll();
+    if (!submitted) {
+      throw std::runtime_error("GUI auto-run failed: " +
+                               submitted.GetError().Message());
+    }
+  }
 }
 
 } // namespace open_lmm

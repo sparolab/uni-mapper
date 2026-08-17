@@ -5,6 +5,7 @@ target_sources(open_lmm_data_loader PRIVATE
   data_loader_file.cpp
 )
 target_link_libraries(open_lmm_data_loader
+  open_lmm_profiling
   Eigen3::Eigen
   open_lmm_common
   tqdmcpp::tqdmcpp

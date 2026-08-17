@@ -5,6 +5,7 @@ target_sources(open_lmm_backend_optimizer PRIVATE
   backend_optimizer_incremental.cpp
 )
 target_link_libraries(open_lmm_backend_optimizer
+  open_lmm_profiling
   Eigen3::Eigen
   open_lmm_common
   tqdmcpp::tqdmcpp

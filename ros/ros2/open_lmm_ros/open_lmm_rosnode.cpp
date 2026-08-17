@@ -1,5 +1,4 @@
-// #include <iostream>
-// #include <spdlog/spdlog.h>
+#include <iostream>
 #include <rclcpp/rclcpp.hpp>
 #include "open_lmm_ros.hpp"
 
@@ -8,12 +7,19 @@ int main(int argc, char** argv) {
   rclcpp::executors::SingleThreadedExecutor exec;
   rclcpp::NodeOptions options;
 
-  auto open_lmm = std::make_shared<open_lmm::OpenLMMROS>(options);
+  try {
+    auto open_lmm = std::make_shared<open_lmm::OpenLMMROS>(options);
+    if (open_lmm->GuiEnabled()) {
+      exec.add_node(open_lmm);
+      exec.spin();
+    }
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << std::endl;
+    rclcpp::shutdown();
+    return 1;
+  }
 
   rclcpp::shutdown();
-
-  // uni_mapper->wait();
-  // uni_mapper->save("/home/gil/uni_mapper/output");
 
   return 0;
 }

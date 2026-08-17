@@ -4,6 +4,7 @@
 #include <pcl/kdtree/kdtree_flann.h>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/common/profiling.hpp>
 #include <open_lmm/common/validation.hpp>
 
 namespace open_lmm {
@@ -45,6 +46,7 @@ LoopPair LoopDetectorKdtree::createLoopPair(
 
 std::vector<LoopPair> LoopDetectorKdtree::detectIntraLoops(
     const ScanVec& scans, const AgentContext& agent_ctx) {
+  OPEN_LMM_ZONE_N("LoopDetector.IntraQuery");
   std::vector<LoopPair> intra_loop_pairs;
   int total_scans = scans.size();
   auto T = tq::trange(0, total_scans);
@@ -69,6 +71,7 @@ std::vector<LoopPair> LoopDetectorKdtree::detectIntraLoops(
 std::vector<LoopPair> LoopDetectorKdtree::detectInterLoops(
     const ScanVec& scans, const DescriptorStore& descriptor_store,
     const AgentContext& agent_ctx) {
+  OPEN_LMM_ZONE_N("LoopDetector.InterQuery");
   std::vector<LoopPair> inter_loop_pairs;
 
   if (agent_ctx.is_anchor()) {
@@ -100,6 +103,7 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
     const std::vector<Eigen::Isometry3f>& transformed_poses,
     const AgentContext& agent_ctx,
     float distance_threshold) {
+  OPEN_LMM_ZONE_N("LoopDetector.PoseKdTreeQuery");
   std::vector<LoopPair> loop_pairs;
 
   if (transformed_poses.empty()) return loop_pairs;
@@ -160,6 +164,7 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
 std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
     const LoopDetectorInput& input,
     std::vector<Eigen::Vector3f>& out_transformed_map_points) {
+  OPEN_LMM_ZONE_N("LoopDetector.KissMatcher");
   std::vector<LoopPair> additional_loops;
   constexpr float kMapMatchingThreshold = 2.0f;
   constexpr float kDistanceThreshold = 10.0f;
@@ -191,6 +196,8 @@ std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
 }
 
 LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
+  OPEN_LMM_ZONE_N("LoopDetector.Process");
+  OPEN_LMM_PLOT("loop_detector.scan_count", input.current.filtered_scans.size());
   database_->setAgentId(input.agent_ctx.id);
 
   auto intra_loops = detectIntraLoops(input.current.filtered_scans, input.agent_ctx);
@@ -201,6 +208,8 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   auto additional_loops = detectKissMatcherLoops(input, transformed_map_points);
   inter_loops.insert(inter_loops.end(), additional_loops.begin(),
                      additional_loops.end());
+  OPEN_LMM_PLOT("loop_detector.intra_loops", intra_loops.size());
+  OPEN_LMM_PLOT("loop_detector.inter_loops", inter_loops.size());
 
   return LoopDetectorOutput{
       .intra_loops             = std::move(intra_loops),

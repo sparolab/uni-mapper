@@ -2,6 +2,7 @@
 
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/cancellation.hpp>
+#include <open_lmm/common/visualization_snapshot.hpp>
 #include <memory>
 
 #include <cstdint>
@@ -45,6 +46,11 @@ class StageRunner {
   virtual Result<void> RunNode(NodeId node, std::optional<char> agent) = 0;
   virtual Result<void> RunOptimizeThrough(char target_agent) = 0;
   [[nodiscard]] virtual std::vector<char> AgentIds() const = 0;
+  [[nodiscard]] virtual Result<VisualizationSnapshot>
+  CreateVisualizationSnapshot(char, std::size_t) const {
+    return Result<VisualizationSnapshot>::Failure(
+        Error::InvalidArgument("visualization snapshots are not supported"));
+  }
 };
 
 }  // namespace open_lmm

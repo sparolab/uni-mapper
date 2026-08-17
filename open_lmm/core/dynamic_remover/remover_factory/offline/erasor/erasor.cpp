@@ -6,6 +6,7 @@
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/util/downsampling_tbb.hpp>
+#include <open_lmm/common/profiling.hpp>
 
 // TODO(gil) : remove define
 #define NUM_PTS_LARGE_ENOUGH 200000
@@ -45,6 +46,7 @@ void VoxelPointCloud(const pcl::PointCloud<PointT>::Ptr& cloud,
 }
 
 void ErasorServer::setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr& raw_map) {
+  OPEN_LMM_ZONE_N("ERASOR.MapVoxelization");
   // copy raw map to map_arranged
   map_arranged_.reset(new pcl::PointCloud<pcl::PointXYZI>());
   // TODO(gil) : use small gicp
@@ -60,6 +62,7 @@ void ErasorServer::setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr& raw_map) {
 
 void ErasorServer::run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
                        Eigen::Isometry3d& optimized_pose) {
+  OPEN_LMM_ZONE_N("ERASOR.ScanIteration");
   scan_num_++;
   if (scan_num_ % cfg_.removal_interval_ != 0) {
     return;
@@ -107,6 +110,7 @@ void ErasorServer::run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
 
 void ErasorServer::fetch_VoI(double x_criterion, double y_criterion,
                              pcl::PointCloud<PointT>& query_pcd) {
+  OPEN_LMM_ZONE_N("ERASOR.DynamicClassification");
   query_voi_->clear();
   map_voi_->clear();
   map_outskirts_->clear();
@@ -183,6 +187,7 @@ void ErasorServer::set_submap(
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr ErasorServer::getStaticMap() {
+  OPEN_LMM_ZONE_N("ERASOR.StaticMapMaterialization");
   pcl::PointCloud<PointT>::Ptr ptr_src(new pcl::PointCloud<PointT>);
   ptr_src->reserve(num_pcs_init_);
 

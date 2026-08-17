@@ -45,6 +45,7 @@ ament_auto_add_library(open_lmm_ros SHARED
 target_link_libraries(open_lmm_ros
   open_lmm_utils
   open_lmm_map_server
+  open_lmm_gui_core
 )
 rclcpp_components_register_nodes(open_lmm_ros "open_lmm::OpenLMMROS")
 

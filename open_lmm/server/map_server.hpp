@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/pipeline.hpp>
 #include <open_lmm/common/shared_data.hpp>
@@ -27,6 +28,8 @@ class MapServer : public StageRunner {
   Result<void> RunNode(NodeId node, std::optional<char> agent) override;
   Result<void> RunOptimizeThrough(char target_agent) override;
   [[nodiscard]] std::vector<char> AgentIds() const override;
+  [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
+      char agent, std::size_t max_points) const override;
   Result<void> ResetSession();
 
   Result<void> saveOptimizedPoses(const std::string& save_dir);
@@ -57,6 +60,7 @@ class MapServer : public StageRunner {
   std::optional<Config> config_data_loader_;
   std::optional<Config> config_loop_detector_;
   std::optional<Config> config_dynamic_remover_;
+  mutable std::recursive_mutex state_mutex_;
 };
 
 }  // namespace open_lmm

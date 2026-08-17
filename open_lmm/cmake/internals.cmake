@@ -9,3 +9,20 @@ include(${CMAKE_CURRENT_LIST_DIR}/CompilerOptions.cmake)
 #           (GTSAM — AgentOptimizedData 등)
 # PRIVATE : .cpp 내부에서만 사용
 #           (nanoflann, small_gicp, kiss_matcher, nlohmann_json 등)
+
+add_library(open_lmm_profiling INTERFACE)
+target_compile_definitions(open_lmm_profiling INTERFACE
+  OPEN_LMM_ENABLE_TIMING_LOG=$<BOOL:${OPEN_LMM_ENABLE_TIMING_LOG}>
+)
+if(OPEN_LMM_ENABLE_TRACY)
+  target_compile_definitions(open_lmm_profiling INTERFACE
+    OPEN_LMM_ENABLE_TRACY=1
+    TRACY_ENABLE
+    TRACY_ON_DEMAND
+  )
+  target_link_libraries(open_lmm_profiling INTERFACE Tracy::TracyClient)
+else()
+  target_compile_definitions(open_lmm_profiling INTERFACE
+    OPEN_LMM_ENABLE_TRACY=0
+  )
+endif()

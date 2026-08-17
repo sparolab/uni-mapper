@@ -1,0 +1,56 @@
+#include <open_lmm/gui/gui_controller_bridge.hpp>
+
+namespace open_lmm {
+namespace {
+template <typename T>
+Result<T> ControllerExpired() {
+  return Result<T>::Failure(Error::InvalidArgument("pipeline controller expired"));
+}
+}  // namespace
+
+GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controller) {
+  std::weak_ptr<PipelineController> weak = controller;
+  GuiServices services;
+  services.submit_run_all = [weak] {
+    auto locked = weak.lock();
+    return locked ? locked->SubmitRunAll() : ControllerExpired<uint64_t>();
+  };
+  services.submit_stage = [weak](StageId stage) {
+    auto locked = weak.lock();
+    return locked ? locked->SubmitStage(stage) : ControllerExpired<uint64_t>();
+  };
+  services.submit_node = [weak](NodeId node, char agent) {
+    auto locked = weak.lock();
+    return locked ? locked->SubmitNode(node, agent) : ControllerExpired<uint64_t>();
+  };
+  services.submit_optimize_through = [weak](char agent) {
+    auto locked = weak.lock();
+    return locked ? locked->SubmitOptimizeThrough(agent) : ControllerExpired<uint64_t>();
+  };
+  services.cancel_job = [weak](uint64_t job_id) {
+    auto locked = weak.lock();
+    return locked ? locked->Cancel(job_id) : ControllerExpired<void>();
+  };
+  services.apply_config = [weak](ConfigDomain domain, uint64_t revision) {
+    auto locked = weak.lock();
+    return locked ? locked->ApplyConfig(domain, revision)
+                  : ControllerExpired<void>();
+  };
+  services.snapshot = [weak] {
+    auto locked = weak.lock();
+    return locked ? locked->Snapshot() : PipelineSnapshot{};
+  };
+  services.visualization_snapshot = [weak](char agent, std::size_t max_points) {
+    auto locked = weak.lock();
+    return locked ? locked->GetVisualizationSnapshot(agent, max_points)
+                  : ControllerExpired<VisualizationSnapshot>();
+  };
+  services.subscribe_events = [weak](auto callback) {
+    auto locked = weak.lock();
+    return locked ? locked->SubscribeEvents(std::move(callback))
+                  : ExecutionEventSubscription{};
+  };
+  return services;
+}
+
+}  // namespace open_lmm
