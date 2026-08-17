@@ -78,6 +78,12 @@ class DatabaseKdtree : public DatabaseBase {
 
   size_t getSize() const { return database_.size(); }
 
+  void clear() {
+    database_.clear();
+    tree_descriptor_keys_.data.clear();
+    kd_tree_.reset();
+  }
+
   // TODO(gil) : need this?
   void setAgentId(const char agent_id) { agent_id_ = agent_id; }
 

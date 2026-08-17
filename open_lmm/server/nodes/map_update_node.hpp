@@ -3,9 +3,9 @@
 #include <functional>
 #include <memory>
 #include <open_lmm/common/pipeline.hpp>
+#include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
-#include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
 #include <spdlog/spdlog.h>
 
@@ -37,13 +37,8 @@ class MapUpdateNode : public PipelineNodeBase {
     auto dynamic_remover = remover_factory_();
     auto static_map = dynamic_remover->process(raw_scans, it->second.optimized_poses);
 
-    // voxel downsampling
-    float vs = static_cast<float>(save_voxel_size_);
-    pcl::PointCloud<pcl::PointXYZI>::Ptr ds_map(new pcl::PointCloud<pcl::PointXYZI>);
-    pcl::VoxelGrid<pcl::PointXYZI> vg;
-    vg.setInputCloud(static_map);
-    vg.setLeafSize(vs, vs, vs);
-    vg.filter(*ds_map);
+    auto ds_map = downsampleWithRangeFilter(
+        static_map, static_cast<float>(save_voxel_size_), 0.0f, 0.0f, false);
 
     fs::path map_file = fs::path(save_dir_) /
                         ("global_map_" + std::string{ctx.agent.id} + ".pcd");

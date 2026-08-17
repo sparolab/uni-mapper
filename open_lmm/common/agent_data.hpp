@@ -31,6 +31,11 @@ struct DescriptorStore {
   DatabaseKdtree               total_db;    // anchor + follower descriptor DB 누적
   std::vector<Eigen::Vector3f> merged_map;  // KISSMatcher용 누적 맵 포인트
 
+  ~DescriptorStore() {
+    total_db.clear();
+    merged_map.clear();
+  }
+
   // anchor 에이전트 처리 후 호출
   void set_anchor(DatabaseKdtree&& db, std::vector<Eigen::Vector3f> map) {
     total_db   = std::move(db);

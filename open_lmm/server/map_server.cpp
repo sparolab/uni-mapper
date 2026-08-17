@@ -117,6 +117,8 @@ void MapServer::process() {
   std::cout << "SAVING OPTIMIZED POSES & MAPS" << std::endl;
   saveOptimizedPoses(output_save_dir_);
   if (!enable_map_updater_) saveOptimizedMap(output_save_dir_);
+  shared_data_->descriptor_store.total_db.clear();
+  shared_data_.reset();
   std::cout << "ALL PROCESSES DONE" << std::endl;
 }
 

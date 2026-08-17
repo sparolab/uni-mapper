@@ -1,5 +1,6 @@
 #pragma once
 
+#include <sstream>
 #include <string>
 #include <vector>
 #include <fmt/format.h>
@@ -12,7 +13,9 @@ namespace open_lmm {
 
 template <typename T>
 std::string convert_to_string(const T& value) {
-  return fmt::format("{}", value);
+  std::ostringstream stream;
+  stream << std::boolalpha << value;
+  return stream.str();
 }
 
 template <typename T2>

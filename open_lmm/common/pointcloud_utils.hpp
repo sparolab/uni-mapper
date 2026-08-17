@@ -1,3 +1,5 @@
+#pragma once
+
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
 #include <tbb/concurrent_hash_map.h>

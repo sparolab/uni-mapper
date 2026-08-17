@@ -7,6 +7,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     # basic tools
     build-essential \
+    gcc-12 \
+    g++-12 \
     cmake \
     wget \
     git \
@@ -23,6 +25,14 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     x11-apps \
     && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 120 && \
+    update-alternatives --set gcc /usr/bin/gcc-12 && \
+    update-alternatives --set g++ /usr/bin/g++-12
+
+ENV CC=/usr/bin/gcc-12
+ENV CXX=/usr/bin/g++-12
 
 #! Python packages
 # RUN pip3 install --no-cache-dir opencv-python

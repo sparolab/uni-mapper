@@ -1,5 +1,6 @@
 #include "erasor.hpp"
 
+#include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 
 #include <small_gicp/pcl/pcl_point.hpp>
@@ -61,10 +62,14 @@ void ErasorServer::run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
     return;
   }
 
+  pcl::PointCloud<PointT>::Ptr transformed_scan(new pcl::PointCloud<PointT>());
+  pcl::transformPointCloud(*scan, *transformed_scan, optimized_pose.matrix());
+
   pcl::PointCloud<PointT>::Ptr filter_pc(new pcl::PointCloud<PointT>());
   // TODO(gil) : use small gicp
   //  VoxelPointCloud(scan, filter_pc, cfg_.query_voxel_size_);
-  filter_pc = small_gicp::voxelgrid_sampling_tbb(*scan, cfg_.query_voxel_size_);
+  filter_pc = small_gicp::voxelgrid_sampling_tbb(
+      *transformed_scan, cfg_.query_voxel_size_);
   // read pose in VIEWPOINT Field in pcd
   float x_curr = optimized_pose.translation().x();
   float y_curr = optimized_pose.translation().y();

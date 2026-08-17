@@ -1,5 +1,3 @@
-#pragma once
-
 #include "loop_detector_kdtree.hpp"
 
 #include <pcl/common/transforms.h>

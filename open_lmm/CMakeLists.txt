@@ -1,36 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 project(open_lmm VERSION 1.0.0 LANGUAGES C CXX)
 
-#############
-## Options ##
-#############
-# Ccache option
-option(USE_CCACHE "Build using Ccache if found on the path" ON)
-# Mandantory : use below options to build the project
-option(USE_SYSTEM_EIGEN3 "Use system pre-installed Eigen" ON)
-option(USE_SYSTEM_TBB "Use system pre-installed oneAPI/tbb" ON)
-option(USE_SYSTEM_PCL "Use system pre-installed PCL" ON)
-option(USE_SYSTEM_GTSAM "Use system pre-installed GTSAM" ON)  # tested on v4.2a9
-option(USE_SYSTEM_NANOFLANN "Use system pre-installed nanoflann" OFF)  # fetched from v1.5.5
-option(USE_SYSTEM_TQDMCPP "Use system pre-installed tqdmcpp" OFF)  # fetched from custom tqdmcpp
-# Non-mandantory
-# - [OFF] will fetch the dependencies (recommended)
-# - [ON] make sure you have the below dependencies installed to your system
-option(USE_SYSTEM_SMALL_GICP "Use system pre-installed small_gicp" OFF)
-option(USE_SYSTEM_KISS_MATCHER "Use system pre-installed kiss_matcher" OFF)
-option(USE_SYSTEM_NLOHMANN_JSON "Use system pre-installed nlohmann_json" OFF)
-
-# ccache setup
-if(USE_CCACHE)
-  find_program(CCACHE_PATH ccache)
-  if(CCACHE_PATH)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
-    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
-    message(STATUS "Using ccache: ${CCACHE_PATH}")
-  endif()
-endif()
-
-# Set build
+# 빌드 설정
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 set(CMAKE_BUILD_TYPE Release)
@@ -40,9 +11,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Set open_lmm dynamic loading create libraries list
 set(OPEN_LMM_CREATE_LIBRARIES "" CACHE INTERNAL "List of all OpenLMM create libraries")
 
-# Custom cmake settings and find dependencies
-include(cmake/CompilerOptions.cmake)
-include(thirdparty/find_dependencies.cmake)
+# CMake 레이어 — options → externals → internals 순서로 로드
+include(cmake/options.cmake)
+include(cmake/externals.cmake)
+include(cmake/internals.cmake)
 
 
 # cmake policy
