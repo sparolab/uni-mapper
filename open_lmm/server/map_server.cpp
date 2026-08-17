@@ -17,7 +17,13 @@
 
 namespace open_lmm {
 
-MapServer::MapServer() { parseConfig(); }
+MapServer::MapServer() {
+  try {
+    parseConfig();
+  } catch (const std::exception& e) {
+    initialization_error_ = Error::ParseError(e.what());
+  }
+}
 MapServer::~MapServer() {}
 
 void MapServer::parseConfig() {
@@ -32,6 +38,10 @@ void MapServer::parseConfig() {
 
   config_map_server_ =
       Config(GlobalConfig::get_global_config_path("config_map_server"));
+  if (!config_map_server_->is_valid()) {
+    initialization_error_ = Error::ParseError(config_map_server_->error_message());
+    return;
+  }
   enable_map_updater_ =
       config_map_server_->param<bool>("map_server", "enable_map_updater", true);
   anchor_agent_index_ =
@@ -41,15 +51,39 @@ void MapServer::parseConfig() {
 
   config_data_loader_ =
       Config(GlobalConfig::get_global_config_path("config_data_loader"));
+  if (!config_data_loader_->is_valid()) {
+    initialization_error_ = Error::ParseError(config_data_loader_->error_message());
+    return;
+  }
   config_loop_detector_ =
       Config(GlobalConfig::get_global_config_path("config_loop_detector"));
+  if (!config_loop_detector_->is_valid()) {
+    initialization_error_ = Error::ParseError(config_loop_detector_->error_message());
+    return;
+  }
   config_dynamic_remover_ =
       Config(GlobalConfig::get_global_config_path("config_dynamic_remover"));
+  if (!config_dynamic_remover_->is_valid()) {
+    initialization_error_ = Error::ParseError(
+        config_dynamic_remover_->error_message());
+    return;
+  }
 
   Config config_backend_optimizer =
       Config(GlobalConfig::get_global_config_path("config_backend_optimizer"));
+  if (!config_backend_optimizer.is_valid()) {
+    initialization_error_ = Error::ParseError(
+        config_backend_optimizer.error_message());
+    return;
+  }
+  auto optimizer_result =
+      BackendOptimizerBase::createInstance(config_backend_optimizer);
+  if (!optimizer_result) {
+    initialization_error_ = optimizer_result.GetError();
+    return;
+  }
   backend_optimizer_ = std::shared_ptr<BackendOptimizerBase>(
-      BackendOptimizerBase::createInstance(config_backend_optimizer));
+      std::move(optimizer_result).Value());
 }
 
 std::vector<AgentPipelineCtx> MapServer::buildContexts() const {
@@ -74,14 +108,35 @@ std::vector<AgentPipelineCtx> MapServer::buildContexts() const {
   return ctxs;
 }
 
-void MapServer::process() {
+Result<void> MapServer::process() {
+  if (initialization_error_) {
+    return Result<void>::Failure(*initialization_error_);
+  }
+  if (agent_num_ <= 0) {
+    return Result<void>::Failure(Error::InvalidArgument("No agents configured"));
+  }
+  if (agent_num_ > 26) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "At most 26 agents are supported by character agent IDs"));
+  }
+  if (anchor_agent_index_ < 0 || anchor_agent_index_ >= agent_num_) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "anchor_agent_index " + std::to_string(anchor_agent_index_) +
+        " is out of range for " + std::to_string(agent_num_) + " agents"));
+  }
   auto contexts = buildContexts();
+
+  auto align_loader_result =
+      DataLoaderBase::createInstance(config_data_loader_.value());
+  if (!align_loader_result) {
+    return Result<void>::Failure(align_loader_result.GetError());
+  }
 
   //! Phase 1: Alignment Pipeline (DataLoad → LoopDetect → Optimize)
   Pipeline align_pipeline;
   align_pipeline
     .AddNode(std::make_unique<DataLoadNode>(
-        DataLoaderBase::createInstance(config_data_loader_.value())))
+        std::move(align_loader_result).Value()))
     .AddNode(std::make_unique<LoopDetectNode>(
         [cfg = config_loop_detector_.value()]() {
           return LoopDetectorBase::createInstance(cfg);
@@ -90,16 +145,19 @@ void MapServer::process() {
 
   auto align_result = align_pipeline.Run(contexts, *shared_data_);
   if (!align_result) {
-    spdlog::error("[MapServer] Alignment pipeline failed: {}",
-                  align_result.GetError().Message());
-    std::exit(1);
+    return Result<void>::Failure(align_result.GetError());
   }
 
   //! Phase 2: Map Update Pipeline (optional, 모든 에이전트 Optimize 완료 후)
   if (enable_map_updater_) {
+    auto update_loader_result =
+        DataLoaderBase::createInstance(config_data_loader_.value());
+    if (!update_loader_result) {
+      return Result<void>::Failure(update_loader_result.GetError());
+    }
     Pipeline update_pipeline;
     update_pipeline.AddNode(std::make_unique<MapUpdateNode>(
-        DataLoaderBase::createInstance(config_data_loader_.value()),
+        std::move(update_loader_result).Value(),
         [cfg = config_dynamic_remover_.value()]() {
           return DynamicRemoverBase::createInstance(cfg);
         },
@@ -108,18 +166,20 @@ void MapServer::process() {
 
     auto update_result = update_pipeline.Run(contexts, *shared_data_);
     if (!update_result) {
-      spdlog::error("[MapServer] Map update pipeline failed: {}",
-                    update_result.GetError().Message());
-      std::exit(1);
+      return Result<void>::Failure(update_result.GetError());
     }
   }
 
   std::cout << "SAVING OPTIMIZED POSES & MAPS" << std::endl;
   saveOptimizedPoses(output_save_dir_);
-  if (!enable_map_updater_) saveOptimizedMap(output_save_dir_);
+  if (!enable_map_updater_) {
+    auto save_result = saveOptimizedMap(output_save_dir_);
+    if (!save_result) return save_result;
+  }
   shared_data_->descriptor_store.total_db.clear();
   shared_data_.reset();
   std::cout << "ALL PROCESSES DONE" << std::endl;
+  return Result<void>::Ok();
 }
 
 void MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
@@ -144,9 +204,14 @@ void MapServer::saveOptimizedPoses(const std::string& output_save_dir) {
   }
 }
 
-void MapServer::saveOptimizedMap(const std::string& output_save_dir) {
+Result<void> MapServer::saveOptimizedMap(const std::string& output_save_dir) {
   for (const auto& [agent_id, opt_data] : shared_data_->optimized_data) {
-    const auto& filtered_scans = shared_data_->raw_data.at(agent_id).filtered_scans;
+    const auto raw_it = shared_data_->raw_data.find(agent_id);
+    if (raw_it == shared_data_->raw_data.end()) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "Optimized agent has no corresponding raw data"));
+    }
+    const auto& filtered_scans = raw_it->second.filtered_scans;
 
     pcl::PointCloud<pcl::PointXYZI>::Ptr optimized_map(
         new pcl::PointCloud<pcl::PointXYZI>);
@@ -154,6 +219,11 @@ void MapServer::saveOptimizedMap(const std::string& output_save_dir) {
       pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan(
           new pcl::PointCloud<pcl::PointXYZI>);
       int scan_idx = pose.first;
+      if (scan_idx < 0 || static_cast<std::size_t>(scan_idx) >=
+                              filtered_scans.size()) {
+        return Result<void>::Failure(Error::InvalidArgument(
+            "Optimized pose scan index is out of range"));
+      }
       Eigen::Matrix4d pose_matrix = pose.second.matrix();
       pcl::transformPointCloud(*filtered_scans.at(scan_idx),
                                *transformed_scan, pose_matrix);
@@ -165,6 +235,7 @@ void MapServer::saveOptimizedMap(const std::string& output_save_dir) {
         ("global_map_" + std::string{agent_id} + ".pcd");
     pcl::io::savePCDFileBinaryCompressed(output_map_file, *optimized_map);
   }
+  return Result<void>::Ok();
 }
 
 }  // namespace open_lmm

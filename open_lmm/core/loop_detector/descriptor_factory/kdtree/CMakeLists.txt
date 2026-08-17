@@ -10,5 +10,6 @@ target_link_libraries(descriptor_kdtree PUBLIC
   scan_context
   solid
   nanoflann::nanoflann
+  open_lmm_utils
 )
 openlmm_set_global_target_properties(descriptor_kdtree)

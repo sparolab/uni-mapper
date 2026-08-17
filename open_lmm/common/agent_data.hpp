@@ -14,7 +14,6 @@ namespace open_lmm {
 struct AgentRawData {
   char    agent_id{};
   PoseVec odom_poses;
-  ScanVec raw_scans;
   ScanVec filtered_scans;
   std::vector<Eigen::Vector3f> map_points;  // 2m voxel 다운샘플 맵 (KISSMatcher용)
 };

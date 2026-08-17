@@ -4,6 +4,7 @@
 #include <memory>
 #include <open_lmm/common/pipeline.hpp>
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/common/validation.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
 #include <pcl/io/pcd_io.h>
@@ -13,7 +14,8 @@ namespace open_lmm {
 
 class MapUpdateNode : public PipelineNodeBase {
  public:
-  using RemoverFactory = std::function<std::shared_ptr<DynamicRemoverBase>()>;
+  using RemoverFactory =
+      std::function<Result<std::shared_ptr<DynamicRemoverBase>>() >;
 
   MapUpdateNode(std::unique_ptr<DataLoaderBase> loader,
                 RemoverFactory                  remover_factory,
@@ -33,8 +35,17 @@ class MapUpdateNode : public PipelineNodeBase {
       return Result<ControlFlow>::Ok(ControlFlow::kSkip);
     }
 
-    auto raw_scans = loader_->loadRawScanData(ctx.data_dir);
-    auto dynamic_remover = remover_factory_();
+    auto raw_result = loader_->loadRawScanData(ctx.data_dir);
+    if (!raw_result) return Result<ControlFlow>::Failure(raw_result.GetError());
+    auto raw_scans = std::move(raw_result).Value();
+    auto count_result = ValidateScanPoseCount(
+        raw_scans.size(), it->second.optimized_poses.size(), ctx.data_dir.string());
+    if (!count_result) return Result<ControlFlow>::Failure(count_result.GetError());
+    auto remover_result = remover_factory_();
+    if (!remover_result) {
+      return Result<ControlFlow>::Failure(remover_result.GetError());
+    }
+    auto dynamic_remover = std::move(remover_result).Value();
     auto static_map = dynamic_remover->process(raw_scans, it->second.optimized_poses);
 
     auto ds_map = downsampleWithRangeFilter(
@@ -42,7 +53,10 @@ class MapUpdateNode : public PipelineNodeBase {
 
     fs::path map_file = fs::path(save_dir_) /
                         ("global_map_" + std::string{ctx.agent.id} + ".pcd");
-    pcl::io::savePCDFileBinaryCompressed(map_file, *ds_map);
+    if (pcl::io::savePCDFileBinaryCompressed(map_file, *ds_map) != 0) {
+      return Result<ControlFlow>::Failure(Error::InvalidArgument(
+          "Failed to save map file: " + map_file.string()));
+    }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
   }

@@ -4,6 +4,7 @@
 #include <map>
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/agent_data.hpp>
+#include <open_lmm/common/result.hpp>
 #include <open_lmm/utils/config.hpp>
 
 namespace open_lmm {
@@ -24,7 +25,7 @@ class BackendOptimizerBase {
       const std::map<char, AgentRawData>& all_raw_data) = 0;
 
   virtual void parseConfig(Config config) = 0;
-  static std::unique_ptr<BackendOptimizerBase> createInstance(Config config);
+  static Result<std::unique_ptr<BackendOptimizerBase>> createInstance(Config config);
 
  protected:
 };

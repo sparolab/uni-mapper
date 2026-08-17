@@ -1,5 +1,6 @@
 // STL
 #include <iostream>
+#include <stdexcept>
 
 // ROS2
 #include <ament_index_cpp/get_package_prefix.hpp>
@@ -26,10 +27,17 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
                   "/" + config_path;
   }
 
-  open_lmm::GlobalConfig::instance(config_path);
+  auto* global_config = open_lmm::GlobalConfig::instance(config_path);
+  if (!global_config->is_valid()) {
+    throw std::runtime_error("Global config failed: " +
+                             global_config->error_message());
+  }
 
   open_lmm::MapServer map_server;
-  map_server.process();
+  auto result = map_server.process();
+  if (!result) {
+    throw std::runtime_error("MapServer failed: " + result.GetError().Message());
+  }
 
   // TODO(gil) : rviz visualization
 }

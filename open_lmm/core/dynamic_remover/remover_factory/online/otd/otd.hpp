@@ -37,6 +37,6 @@ class OTD : public IOnlineRemoverPlugin {
   std::shared_ptr<otd::Otd3D<PointType>> p_otd_; 
   // auto p_otd_ = std::make_shared<Otd3D<PointType>>(tau_ratio, voxel_size);
 
-  pcl::PointCloud<pcl::PointXYZI>::Ptr static_map_;
-  pcl::PointCloud<pcl::PointXYZI>::Ptr dynamic_map_;
+  PointCloudType::Ptr ground_scan_;
+  PointCloudType::Ptr nonground_scan_;
 };

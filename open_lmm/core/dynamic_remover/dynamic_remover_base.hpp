@@ -25,7 +25,7 @@ class DynamicRemoverBase {
   virtual pcl::PointCloud<pcl::PointXYZI>::Ptr
   process(std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
           std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) = 0;
-  static std::shared_ptr<DynamicRemoverBase> createInstance(Config config);
+  static Result<std::shared_ptr<DynamicRemoverBase>> createInstance(Config config);
 };
 
 }  // namespace open_lmm

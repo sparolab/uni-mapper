@@ -18,11 +18,9 @@ OnlineParams::OnlineParams() {
   model = config.param<std::string>("dynamic_remover", "model", "");
 }
 
-DynamicRemoverOnline::DynamicRemoverOnline(const OnlineParams& params)
-    : params_(params) {
-  std::string so_model_name = "libcreate_" + params_.model + ".so";
-  online_model_ = loadModule(so_model_name);
-}
+DynamicRemoverOnline::DynamicRemoverOnline(
+    const OnlineParams& params, std::shared_ptr<IOnlineRemoverPlugin> model)
+    : params_(params), online_model_(std::move(model)) {}
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
@@ -49,7 +47,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
   return static_map;
 }
 
-std::shared_ptr<IOnlineRemoverPlugin> DynamicRemoverOnline::loadModule(
+Result<std::shared_ptr<IOnlineRemoverPlugin>> DynamicRemoverOnline::loadModule(
     const std::string& so_name) {
   return load_module_from_so<IOnlineRemoverPlugin>(
       so_name, "create_dynamic_remover_module");

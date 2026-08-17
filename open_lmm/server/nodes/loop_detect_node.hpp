@@ -11,7 +11,8 @@ namespace open_lmm {
 // DetectorFactory를 통해 Process() 호출 시마다 생성한다.
 class LoopDetectNode : public PipelineNodeBase {
  public:
-  using DetectorFactory = std::function<std::unique_ptr<LoopDetectorBase>()>;
+  using DetectorFactory =
+      std::function<Result<std::unique_ptr<LoopDetectorBase>>() >;
 
   explicit LoopDetectNode(DetectorFactory factory)
       : factory_(std::move(factory)) {}
@@ -22,7 +23,11 @@ class LoopDetectNode : public PipelineNodeBase {
       return Result<ControlFlow>::Ok(ControlFlow::kSkip);
     }
 
-    auto detector = factory_();
+    auto detector_result = factory_();
+    if (!detector_result) {
+      return Result<ControlFlow>::Failure(detector_result.GetError());
+    }
+    auto detector = std::move(detector_result).Value();
 
     LoopDetectorInput input{
         .agent_ctx        = ctx.agent,

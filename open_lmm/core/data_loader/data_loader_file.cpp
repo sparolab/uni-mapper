@@ -2,6 +2,7 @@
 
 #include <pcl/common/transforms.h>
 #include <spdlog/spdlog.h>
+#include <open_lmm/common/validation.hpp>
 
 namespace fs = std::filesystem;
 namespace open_lmm {
@@ -16,9 +17,9 @@ DataLoaderFile::DataLoaderFile(Config config) {
   } else if (param_.pose_format == "custom") {
     transformFunctor = customPoseToIsometry3d;
   } else {
-    spdlog::error("[DataLoaderFile] Unsupported pose format: {}. "
-                  "Supported: kitti, tum, custom", param_.pose_format);
-    std::exit(1);
+    initialization_error_ = Error::InvalidArgument(
+        "Unsupported pose format: '" + param_.pose_format +
+        "'. Supported: kitti, tum, custom");
   }
 
   if (param_.scan_type == "pcd") {
@@ -26,9 +27,9 @@ DataLoaderFile::DataLoaderFile(Config config) {
   } else if (param_.scan_type == "bin") {
     convertScanFunctor = readPointsFromBin;
   } else {
-    spdlog::error("[DataLoaderFile] Unsupported scan type: {}. "
-                  "Supported: pcd, bin", param_.scan_type);
-    std::exit(1);
+    initialization_error_ = Error::InvalidArgument(
+        "Unsupported scan type: '" + param_.scan_type +
+        "'. Supported: pcd, bin");
   }
 }
 
@@ -48,11 +49,20 @@ void DataLoaderFile::parseConfig(Config config) {
   param_.delimiter = config.param<std::string>("data_loader", "delimiter", " ");
 }
 
-AgentRawData DataLoaderFile::Process(const AgentContext& ctx,
-                                     const fs::path& data_dir) {
-  auto poses          = loadPoseData(data_dir);
-  auto raw_scans      = loadRawScanData(data_dir);
-  auto filtered_scans = loadFilteredScanData(data_dir);
+Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
+                                             const fs::path& data_dir) {
+  if (initialization_error_) {
+    return Result<AgentRawData>::Failure(*initialization_error_);
+  }
+  auto poses_result = loadPoseData(data_dir);
+  if (!poses_result) return Result<AgentRawData>::Failure(poses_result.GetError());
+  auto scans_result = loadFilteredScanData(data_dir);
+  if (!scans_result) return Result<AgentRawData>::Failure(scans_result.GetError());
+  auto poses = std::move(poses_result).Value();
+  auto filtered_scans = std::move(scans_result).Value();
+  auto count_result = ValidateScanPoseCount(filtered_scans.size(), poses.size(),
+                                             data_dir.string());
+  if (!count_result) return Result<AgentRawData>::Failure(count_result.GetError());
 
   // KISSMatcher용 2m voxel 다운샘플 맵 포인트 생성
   pcl::PointCloud<pcl::PointXYZI>::Ptr map(new pcl::PointCloud<pcl::PointXYZI>);
@@ -72,29 +82,26 @@ AgentRawData DataLoaderFile::Process(const AgentContext& ctx,
   std::vector<Eigen::Vector3f> map_points;
   pclToEigen(*map_ds, map_points);
 
-  return AgentRawData{
+  return Result<AgentRawData>::Ok(AgentRawData{
       .agent_id       = ctx.id,
       .odom_poses     = std::move(poses),
-      .raw_scans      = std::move(raw_scans),
       .filtered_scans = std::move(filtered_scans),
       .map_points     = std::move(map_points),
-  };
+  });
 }
 
-std::vector<Eigen::Isometry3d> DataLoaderFile::loadPoseData(
+Result<PoseVec> DataLoaderFile::loadPoseData(
     fs::path data_dir_path) {
   const fs::path pose_file_path = data_dir_path / param_.pose_file_name;
   if (!fs::exists(pose_file_path)) {
-    spdlog::error("[DataLoaderFile] Pose file not found: {}", pose_file_path.string());
-    std::exit(1);
+    return Result<PoseVec>::Failure(Error::FileNotFound(pose_file_path.string()));
   }
 
   std::ifstream file(pose_file_path);
   char delimiter;
-  if (param_.delimiter.size() > 1) {
-    spdlog::error("[DataLoaderFile] Delimiter must be a single character, got: {}",
-                  param_.delimiter);
-    std::exit(1);
+  if (param_.delimiter.size() != 1) {
+    return Result<PoseVec>::Failure(Error::InvalidArgument(
+        "Delimiter must be exactly one character, got: '" + param_.delimiter + "'"));
   } else {
     delimiter = param_.delimiter[0];
   }
@@ -107,17 +114,34 @@ std::vector<Eigen::Isometry3d> DataLoaderFile::loadPoseData(
 
   PoseVec poses;
 
+  std::size_t line_number = 0;
   for (auto line : lines) {
+    ++line_number;
     std::istringstream iss(line);
     std::vector<double> values;
     std::string value;
-    while (std::getline(iss, value, delimiter)) {
-      values.push_back(std::stod(value));
+    try {
+      while (std::getline(iss, value, delimiter)) {
+        if (!value.empty()) values.push_back(std::stod(value));
+      }
+      const std::size_t expected_values =
+          param_.pose_format == "kitti" ? 12U :
+          param_.pose_format == "tum" ? 8U : values.size();
+      if (values.size() != expected_values) {
+        return Result<PoseVec>::Failure(Error::ParseError(
+            pose_file_path.string() + ":" + std::to_string(line_number) +
+            ": expected " + std::to_string(expected_values) +
+            " values, got " + std::to_string(values.size())));
+      }
+      poses.push_back(param_.extrinsic * transformFunctor(values));
+    } catch (const std::exception& e) {
+      return Result<PoseVec>::Failure(Error::ParseError(
+          pose_file_path.string() + ":" + std::to_string(line_number) +
+          ": " + e.what()));
     }
-    poses.push_back(param_.extrinsic * transformFunctor(values));
   }
 
-  return poses;
+  return Result<PoseVec>::Ok(std::move(poses));
 }
 
 // const fs::path data_dir_name = data_dir_path.filename();
@@ -129,8 +153,10 @@ std::vector<Eigen::Isometry3d> DataLoaderFile::loadPoseData(
 // filtered_scans.push_back(p_scan_preprocessed);
 // pcl::io::savePCDFileBinaryCompressed(save_file_path, *p_scan_preprocessed);
 
-ScanVec DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
-  auto raw_scans = loadRawScanData(data_dir_path);
+Result<ScanVec> DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
+  auto raw_result = loadRawScanData(data_dir_path);
+  if (!raw_result) return Result<ScanVec>::Failure(raw_result.GetError());
+  auto raw_scans = std::move(raw_result).Value();
   ScanVec p_filtered_scans;
 
   auto T = tq::tqdm(raw_scans);
@@ -140,14 +166,13 @@ ScanVec DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
         scan, param_.voxel_size, param_.min_range, param_.max_range));
   }
   T.finish();
-  return p_filtered_scans;
+  return Result<ScanVec>::Ok(std::move(p_filtered_scans));
 }
 
-ScanVec DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
+Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
   const fs::path scan_dir_path = data_dir_path / param_.scan_dir_name;
   if (!fs::exists(scan_dir_path) || !fs::is_directory(scan_dir_path)) {
-    spdlog::error("[DataLoaderFile] Scan directory not found: {}", scan_dir_path.string());
-    std::exit(1);
+    return Result<ScanVec>::Failure(Error::FileNotFound(scan_dir_path.string()));
   }
 
   std::vector<fs::path> scan_files;
@@ -169,7 +194,7 @@ ScanVec DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
     raw_scans.push_back(p_scan);
   }
 
-  return raw_scans;
+  return Result<ScanVec>::Ok(std::move(raw_scans));
 }
 
 }  // namespace open_lmm

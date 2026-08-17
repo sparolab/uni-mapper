@@ -4,11 +4,6 @@
 
 namespace open_lmm {
 
-[[noreturn]] void module_load_fatal(const std::string& message) {
-  spdlog::error("[load_module] {}", message);
-  std::exit(1);
-}
-
 // Legacy helpers — 직접 사용 지양, load_module_from_so 사용 권장
 void open_so(const std::string& so_name) {
   void* handle = dlopen(so_name.c_str(), RTLD_LAZY);

@@ -57,6 +57,12 @@ class Pipeline {
           ctx.flow = ControlFlow::kKill;
           return Result<void>::Failure(r.GetError());
         }
+        if (r.Value() == ControlFlow::kKill) {
+          ctx.flow = ControlFlow::kKill;
+          return Result<void>::Failure(Error::InvalidArgument(
+              std::string("Pipeline node '") + node->Name() +
+              "' requested termination"));
+        }
         if (r.Value() == ControlFlow::kSkip) {
           ctx.flow = ControlFlow::kSkip;
           break;

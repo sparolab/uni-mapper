@@ -15,9 +15,16 @@ Config::Config(const std::string& config_filename)
   }
   std::ifstream ifs(config_filename);
   if (!ifs) {
-    spdlog::error("failed to open {}", config_filename);
+    error_message_ = "failed to open config file: " + config_filename;
+    spdlog::error("{}", *error_message_);
   } else {
-    json = nlohmann::json::parse(ifs, nullptr, true, true);
+    try {
+      json = nlohmann::json::parse(ifs, nullptr, true, true);
+    } catch (const nlohmann::json::exception& e) {
+      error_message_ = "failed to parse config file " + config_filename +
+                       ": " + e.what();
+      spdlog::error("{}", *error_message_);
+    }
   }
 
   config = json;

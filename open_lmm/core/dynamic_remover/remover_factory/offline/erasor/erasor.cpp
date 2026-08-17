@@ -19,6 +19,9 @@ ErasorServer::ErasorServer(const common::Config& params) : cfg_(params) {
 // ErasorServer::~ErasorServer() {}
 
 void ErasorServer::initialize() {
+  query_voi_.reset(new pcl::PointCloud<PointT>());
+  map_voi_.reset(new pcl::PointCloud<PointT>());
+  map_outskirts_.reset(new pcl::PointCloud<PointT>());
   map_static_estimate_.reset(new pcl::PointCloud<PointT>());
   map_egocentric_complement_.reset(new pcl::PointCloud<PointT>());
   map_staticAdynamic.reset(new pcl::PointCloud<PointT>());
@@ -92,15 +95,21 @@ void ErasorServer::run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
   erasor_core_.get_static_estimate(*map_static_estimate_, *map_staticAdynamic,
                                    *map_egocentric_complement_);
 
-  *map_arranged_ =
-      *map_static_estimate_ + *map_outskirts_ + *map_egocentric_complement_;
+  const auto arranged_size = map_static_estimate_->size() +
+                             map_outskirts_->size() +
+                             map_egocentric_complement_->size();
+  map_arranged_->clear();
+  map_arranged_->reserve(arranged_size);
+  *map_arranged_ += *map_static_estimate_;
+  *map_arranged_ += *map_outskirts_;
+  *map_arranged_ += *map_egocentric_complement_;
 }
 
 void ErasorServer::fetch_VoI(double x_criterion, double y_criterion,
                              pcl::PointCloud<PointT>& query_pcd) {
-  query_voi_.reset(new pcl::PointCloud<PointT>());
-  map_voi_.reset(new pcl::PointCloud<PointT>());
-  map_outskirts_.reset(new pcl::PointCloud<PointT>());
+  query_voi_->clear();
+  map_voi_->clear();
+  map_outskirts_->clear();
 
   if (cfg_.mode == "naive") {
     double max_dist_square = pow(cfg_.max_range_, 2);

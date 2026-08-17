@@ -24,6 +24,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+find_package(spdlog REQUIRED)
+find_package(fmt REQUIRED)
+
 add_library(open_lmm_utils SHARED)
 target_sources(open_lmm_utils PRIVATE
   config.cpp
@@ -32,5 +35,7 @@ target_sources(open_lmm_utils PRIVATE
 target_link_libraries(open_lmm_utils PUBLIC
   Eigen3::Eigen
   nlohmann_json::nlohmann_json
+  spdlog::spdlog
+  fmt::fmt
 )
 openlmm_set_global_target_properties(open_lmm_utils)

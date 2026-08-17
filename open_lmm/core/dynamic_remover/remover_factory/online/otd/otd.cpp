@@ -11,28 +11,21 @@ void OTD::initialize() {
   p_otd_ = std::make_shared<otd::Otd3D<PointType>>(params_.tau_ratio,
                                                    params_.voxel_size);
 
-  static_map_ =
-      pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
-  dynamic_map_ =
-      pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
+  ground_scan_.reset(new PointCloudType);
+  nonground_scan_.reset(new PointCloudType);
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr OTD::run(
     pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
     Eigen::Isometry3d& optimized_pose) {
   // PointCloudType::Ptr scan(new PointCloudType);
-  PointCloudType::Ptr ground_ptr(new PointCloudType);
-  PointCloudType::Ptr nonground_ptr(new PointCloudType);
+  ground_scan_->clear();
+  nonground_scan_->clear();
 
-  p_grdseg_->Run(scan, ground_ptr, nonground_ptr, optimized_pose.matrix());
-  p_otd_->Run(ground_ptr, nonground_ptr, scan_num_);
+  p_grdseg_->Run(scan, ground_scan_, nonground_scan_, optimized_pose.matrix());
+  p_otd_->Run(ground_scan_, nonground_scan_, scan_num_);
 
   // scan_.writeLabel("/home/gil/labels/", scan_num_);
-
-  *static_map_ += *ground_ptr;
-  if (params_.replace_intensity) {
-    *static_map_ += *nonground_ptr;
-  }
 
   // std::cout << "raw size : " << scan->size() << std::endl;
   // std::cout << "grund size : " << ground_ptr->size() << std::endl;

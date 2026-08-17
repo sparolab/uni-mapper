@@ -13,11 +13,9 @@ OfflineParams::OfflineParams() {
   model = config.param<std::string>("dynamic_remover", "model", "");
 }
 
-DynamicRemoverOffline::DynamicRemoverOffline(const OfflineParams& params)
-    : params_(params) {
-  std::string so_model_name = "libcreate_" + params_.model + ".so";
-  offline_model_ = loadModule(so_model_name);
-}
+DynamicRemoverOffline::DynamicRemoverOffline(
+    const OfflineParams& params, std::shared_ptr<IOfflineRemoverPlugin> model)
+    : params_(params), offline_model_(std::move(model)) {}
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::genRawMap(
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
@@ -40,10 +38,11 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::genRawMap(
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::process(
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
     std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) {
-  pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map =
-      genRawMap(scans, optimized_poses);
-
-  offline_model_->setRawMap(raw_map);
+  if (offline_model_->needsRawMap()) {
+    pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map =
+        genRawMap(scans, optimized_poses);
+    offline_model_->setRawMap(raw_map);
+  }
 
   auto T = tq::tqdm(scans);
   T.set_prefix("Dynamic Remover");
@@ -65,7 +64,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::process(
   return static_map;
 }
 
-std::shared_ptr<IOfflineRemoverPlugin> DynamicRemoverOffline::loadModule(
+Result<std::shared_ptr<IOfflineRemoverPlugin>> DynamicRemoverOffline::loadModule(
     const std::string& so_name) {
   return load_module_from_so<IOfflineRemoverPlugin>(
       so_name, "create_dynamic_remover_module");

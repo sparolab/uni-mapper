@@ -61,7 +61,7 @@ class Scan {
          * @param voxel     The voxel to get the convolution score of.
          * @return double   The convolution score.
          */
-  double getConvScore(Voxel& voxel);
+  double getConvScore(const Voxel& voxel) const;
         
         /**
          * @brief Get the voxel's convolution score over the window.

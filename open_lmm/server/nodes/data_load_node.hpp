@@ -12,7 +12,11 @@ class DataLoadNode : public PipelineNodeBase {
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
-    AgentRawData raw = loader_->Process(ctx.agent, ctx.data_dir);
+    auto raw_result = loader_->Process(ctx.agent, ctx.data_dir);
+    if (!raw_result) {
+      return Result<ControlFlow>::Failure(raw_result.GetError());
+    }
+    AgentRawData raw = std::move(raw_result).Value();
     ctx.raw_data = raw;
     db.raw_data[ctx.agent.id] = std::move(raw);
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);

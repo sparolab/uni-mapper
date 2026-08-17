@@ -4,6 +4,7 @@
 #include <sstream>
 #include <iostream>
 #include <iomanip>
+#include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
@@ -160,8 +161,8 @@ template <typename T>
 T Config::param_cast(const std::string& module_name, const std::string& param_name) const {
   auto found = param<T>(module_name, param_name);
   if (!found) {
-    spdlog::critical("param {}/{} not found", module_name, param_name);
-    abort();
+    throw std::runtime_error("required config parameter " + module_name +
+                             "/" + param_name + " not found");
   }
 
   spdlog::debug("param {}/{}={}", module_name, param_name, convert_to_string(found.value()));
@@ -226,8 +227,8 @@ T Config::param_cast_nested(const std::vector<std::string>& nested_module_names,
     for (const auto& module_name : nested_module_names) {
       param_name << module_name << "/";
     }
-    spdlog::critical("param {} not found", param_name.str());
-    abort();
+    throw std::runtime_error("required config parameter " + param_name.str() +
+                             " not found");
   }
   return *found;
 }

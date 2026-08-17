@@ -159,8 +159,9 @@ void ScanMap::reset()
     // 遍历block_list清除点
     for(const ScanBlock& scan_block : scan_blocks)
     {
-        // 释放所有points以避免占用过大内存
-        Points().swap(local_blocks[scan_block.local_block_linear_idx].points);
+        // Reuse the per-block storage on the next scan. The total retained
+        // capacity is bounded by the largest scan seen by this ScanMap.
+        local_blocks[scan_block.local_block_linear_idx].points.clear();
     }
     // scan_blocks的数量通常变化不大，因此不释放内存以避免反复分配
     scan_blocks.resize(0);

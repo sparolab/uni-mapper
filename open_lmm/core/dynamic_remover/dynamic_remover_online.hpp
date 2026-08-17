@@ -21,18 +21,20 @@ struct OnlineParams {
 
 class DynamicRemoverOnline : public DynamicRemoverBase {
  public:
-  DynamicRemoverOnline(const OnlineParams& params);
+  DynamicRemoverOnline(const OnlineParams& params,
+                       std::shared_ptr<IOnlineRemoverPlugin> model);
   ~DynamicRemoverOnline() override = default;
   pcl::PointCloud<pcl::PointXYZI>::Ptr process(
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) override;
 
+  static Result<std::shared_ptr<IOnlineRemoverPlugin>> loadModule(
+      const std::string& so_name);
+
  private:
   OnlineParams params_;
   std::shared_ptr<IOnlineRemoverPlugin> online_model_;
 
-  static std::shared_ptr<IOnlineRemoverPlugin> loadModule(
-      const std::string& so_name);
 };
 
 }  // namespace open_lmm

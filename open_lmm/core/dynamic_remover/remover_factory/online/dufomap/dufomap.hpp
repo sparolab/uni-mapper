@@ -3,6 +3,7 @@
 // STL
 #include <boost/filesystem.hpp>
 #include <iostream>
+#include <memory>
 #include <thread>
 // 3rdParty
 #include <Eigen/Core>
@@ -37,8 +38,9 @@ class DUFOMap : public IOnlineRemoverPlugin {
   pcl::PointCloud<pcl::PointXYZI>::Ptr getStaticMap() override;
 
  private:
-  ufo::Map<ufo::MapType::SEEN_FREE | ufo::MapType::REFLECTION |
-           ufo::MapType::LABEL>* ufo_map_;
+  using MapType = ufo::Map<ufo::MapType::SEEN_FREE | ufo::MapType::REFLECTION |
+                           ufo::MapType::LABEL>;
+  std::unique_ptr<MapType> ufo_map_;
   DUFOMapParams params_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map_;
 };

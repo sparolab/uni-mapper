@@ -32,7 +32,8 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr HmmMos::run(
 
   // scan_.writeLabel("/home/gil/labels/", scan_num_);
 
-  *static_map_ += *scan_.getGlobalStaticScan();
+  auto static_scan = scan_.getGlobalStaticScan();
+  *static_map_ += *static_scan;
   if (params_.replace_intensity) {
     *static_map_ += *scan_.getGlobalDynamicScan();
   }
@@ -40,7 +41,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr HmmMos::run(
   // TODO(gil) : save label
 
   scan_num_++;
-  return scan_.getGlobalStaticScan();
+  return static_scan;
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr HmmMos::getStaticMap() {

@@ -32,6 +32,7 @@ class FreeDom : public IOfflineRemoverPlugin {
 
   void initialize();
   void setParams();
+  bool needsRawMap() const override { return false; }
   void setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr& raw_map) override;
   pcl::PointCloud<pcl::PointXYZI>::Ptr getStaticMap() override;
 

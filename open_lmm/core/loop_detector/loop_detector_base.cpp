@@ -6,19 +6,26 @@
 
 namespace open_lmm {
 
-std::unique_ptr<LoopDetectorBase> LoopDetectorBase::createInstance(
+Result<std::unique_ptr<LoopDetectorBase>> LoopDetectorBase::createInstance(
     Config config) {
   std::string loop_detector_type =
       config.param<std::string>("loop_detector", "loop_detector_type", "");
   if (loop_detector_type == "kdtree") {
-    return std::make_unique<LoopDetectorKdtree>(KdtreeParams());
+    KdtreeParams params;
+    auto module = LoopDetectorKdtree::loadModule(
+        "libcreate_" + params.model + ".so");
+    if (!module) {
+      return Result<std::unique_ptr<LoopDetectorBase>>::Failure(module.GetError());
+    }
+    return Result<std::unique_ptr<LoopDetectorBase>>::Ok(
+        std::make_unique<LoopDetectorKdtree>(params, std::move(module).Value()));
   } else if (loop_detector_type == "hashmap") {
-    spdlog::error("[LoopDetectorBase] Hashmap loop detector is not implemented");
-    std::exit(1);
+    return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
+        Error::InvalidArgument("Hashmap loop detector is not implemented"));
   }
-  spdlog::error("[LoopDetectorBase] Unknown loop_detector_type: '{}'. "
-                "Supported: kdtree", loop_detector_type);
-  std::exit(1);
+  return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
+      Error::InvalidArgument("Unknown loop_detector_type: '" +
+                             loop_detector_type + "'. Supported: kdtree"));
 };
 
 bool LoopDetectorBase::TryKissMatcher(

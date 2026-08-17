@@ -39,7 +39,7 @@ class LoopDetectorBase {
   explicit LoopDetectorBase(Config config);
   virtual ~LoopDetectorBase() = default;
   virtual LoopDetectorOutput Process(const LoopDetectorInput& input) = 0;
-  static std::unique_ptr<LoopDetectorBase> createInstance(Config config);
+  static Result<std::unique_ptr<LoopDetectorBase>> createInstance(Config config);
   bool TryKissMatcher(const std::vector<Eigen::Vector3f> tgt_map_vec,
                       const std::vector<Eigen::Vector3f> src_map_vec,
                       const float leaf_size, const bool use_quatro,

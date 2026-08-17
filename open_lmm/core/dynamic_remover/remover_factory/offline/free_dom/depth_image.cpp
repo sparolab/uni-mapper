@@ -204,7 +204,7 @@ void DepthImage::reset()
         eroded_raycast_enhance_region->setTo(cv::Scalar(255));
     }
 
-    Points().swap(enhanced_pointcloud);
+    enhanced_pointcloud.clear();
 }
 
 bool DepthImage::point2idx(const pcl::PointXYZI& point, unsigned int& row, unsigned int& col,unsigned int& depth) const

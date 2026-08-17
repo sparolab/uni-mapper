@@ -18,6 +18,9 @@ class OptimizeNode : public PipelineNodeBase {
       return Result<ControlFlow>::Ok(ControlFlow::kSkip);
     }
 
+    auto loops_valid = ValidateLoops(ctx, db);
+    if (!loops_valid) return Result<ControlFlow>::Failure(loops_valid.GetError());
+
     auto all_opt = optimizer_->Process(
         ctx.agent, *ctx.raw_data,
         ctx.loop_output->intra_loops,
@@ -34,6 +37,34 @@ class OptimizeNode : public PipelineNodeBase {
   const char* Name() const override { return "Optimize"; }
 
  private:
+  static Result<void> ValidateLoops(const AgentPipelineCtx& ctx,
+                                    const SharedDatabase& db) {
+    const auto validate = [&](const LoopPair& loop) -> Result<void> {
+      if (loop.from.first != ctx.agent.id ||
+          loop.from.second >= ctx.raw_data->filtered_scans.size()) {
+        return Result<void>::Failure(Error::InvalidArgument(
+            "Loop source agent or scan index is invalid"));
+      }
+      const auto target = db.raw_data.find(loop.to.first);
+      if (target == db.raw_data.end() ||
+          loop.to.second >= target->second.filtered_scans.size() ||
+          loop.to.second >= target->second.odom_poses.size()) {
+        return Result<void>::Failure(Error::InvalidArgument(
+            "Loop target agent or scan index is invalid"));
+      }
+      return Result<void>::Ok();
+    };
+    for (const auto& loop : ctx.loop_output->intra_loops) {
+      auto result = validate(loop);
+      if (!result) return result;
+    }
+    for (const auto& loop : ctx.loop_output->inter_loops) {
+      auto result = validate(loop);
+      if (!result) return result;
+    }
+    return Result<void>::Ok();
+  }
+
   std::shared_ptr<BackendOptimizerBase> optimizer_;
 };
 

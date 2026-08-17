@@ -121,7 +121,7 @@ void Map::findDynamicVoxels(Scan &scan, boost::circular_buffer<Scan> &scanHistor
 
     // Extend the spatial convolution score to a spatio-temporal convolution.
     std::vector<double> scoresOverWindow;
-    for (auto x : scanHistory)
+    for (const auto& x : scanHistory)
     {
         for (auto y : x.occupiedVoxels)
         {
@@ -215,7 +215,8 @@ void Map::findMedianValue(Scan &scan)
 {
     // Clean the convolution scores.
     // Average the convolution scores around the neighbour.
-    Scan scanOriginal = scan;
+    std::vector<double> medianScores;
+    medianScores.reserve(scan.occupiedVoxels.size());
     for (auto &vox : scan.occupiedVoxels)
     {
         Voxel v;
@@ -239,12 +240,12 @@ void Map::findMedianValue(Scan &scan)
             }
         }
         int val = utils::findMedian(voxScores); 
-        scanOriginal.setConvScore(vox, val);
+        medianScores.push_back(val);
     }
 
-    for (auto &vox : scan.occupiedVoxels)
+    for (std::size_t i = 0; i < scan.occupiedVoxels.size(); ++i)
     {
-        scan.setConvScore(vox, scanOriginal.getConvScore(vox));
+        scan.setConvScore(scan.occupiedVoxels[i], medianScores[i]);
     }
 }
 

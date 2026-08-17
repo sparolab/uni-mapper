@@ -4,6 +4,7 @@
 #include <pcl/kdtree/kdtree_flann.h>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/common/validation.hpp>
 
 namespace open_lmm {
 
@@ -18,10 +19,10 @@ KdtreeParams::KdtreeParams() {
   model = config.param<std::string>("loop_detector", "model", "");
 }
 
-LoopDetectorKdtree::LoopDetectorKdtree(const KdtreeParams& params)
-    : params_(params) {
-  std::string so_model_name = "libcreate_" + params_.model + ".so";
-  model_descriptor_ = loadModule(so_model_name);
+LoopDetectorKdtree::LoopDetectorKdtree(
+    const KdtreeParams& params,
+    std::shared_ptr<IDescriptorKdtree> model_descriptor)
+    : params_(params), model_descriptor_(std::move(model_descriptor)) {
   database_ = DatabaseKdtree();
 }
 
@@ -95,7 +96,14 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
     float distance_threshold) {
   std::vector<LoopPair> loop_pairs;
 
+  if (transformed_poses.empty()) return loop_pairs;
+
   for (const auto& [db_id, opt_data] : all_optimized) {
+    const auto raw_it = all_raw_data.find(db_id);
+    if (raw_it == all_raw_data.end() || opt_data.kdtree_poses.empty() ||
+        raw_it->second.odom_poses.empty()) {
+      continue;
+    }
     pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
         new pcl::PointCloud<pcl::PointXYZ>);
@@ -119,14 +127,17 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
       std::vector<float> pointNKNSquaredDistance(1);
       pcl::PointXYZ src_point(pose.translation().x(), pose.translation().y(),
                               pose.translation().z());
-      kdtree.nearestKSearch(src_point, 1, pointIdxNKNSearch,
-                            pointNKNSquaredDistance);
+      const int found = kdtree.nearestKSearch(
+          src_point, 1, pointIdxNKNSearch, pointNKNSquaredDistance);
+      auto neighbor_result = ValidateNearestNeighborResult(
+          found, pointIdxNKNSearch, raw_it->second.odom_poses.size(),
+          "LoopDetectorKdtree");
+      if (!neighbor_result || pointNKNSquaredDistance.empty()) continue;
 
-      if (pointIdxNKNSearch[0] != -1 &&
-          std::sqrt(pointNKNSquaredDistance[0]) < distance_threshold) {
-        auto key = pointIdxNKNSearch[0];
+      if (std::sqrt(pointNKNSquaredDistance[0]) < distance_threshold) {
+        auto key = neighbor_result.Value();
         auto init_rel_pose = pose.cast<double>().inverse() *
-                             all_raw_data.at(db_id).odom_poses[key];
+                             raw_it->second.odom_poses[key];
 
         LoopPair inter_loop;
         inter_loop.to = std::make_pair(db_id, static_cast<size_t>(key));
@@ -193,7 +204,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   };
 }
 
-std::shared_ptr<IDescriptorKdtree> LoopDetectorKdtree::loadModule(
+Result<std::shared_ptr<IDescriptorKdtree>> LoopDetectorKdtree::loadModule(
     const std::string& so_name) {
   return load_module_from_so<IDescriptorKdtree>(
       so_name, "create_descriptor_kdtree_module");

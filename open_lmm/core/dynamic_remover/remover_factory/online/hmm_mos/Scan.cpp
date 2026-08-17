@@ -1,4 +1,5 @@
 #include "Scan.hpp"
+#include <stdexcept>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
@@ -69,8 +70,8 @@ bool Scan::checkIfEntryExists(const Voxel &voxel)
 
 void Scan::findObservedVoxels()
 {    
-    std::vector<std::vector<std::vector<bool> > > obs(dim_, std::vector<std::vector<bool> >(
-                                                      dim_, std::vector<bool>(dim_)));
+    const std::size_t dim = static_cast<std::size_t>(dim_);
+    std::vector<bool> obs(dim * dim * dim);
     std::vector<std::vector<Eigen::Vector3i> > all(occupiedVoxels.size());
     
     // Sensor position.
@@ -143,18 +144,21 @@ void Scan::findObservedVoxels()
             i = y(0) + offset - sX;
             j = y(1) + offset - sY;
             k = y(2) + offset - sZ;
-            if (!obs[i][j][k])
+            const std::size_t obs_index =
+                (static_cast<std::size_t>(i) * dim + static_cast<std::size_t>(j)) * dim +
+                static_cast<std::size_t>(k);
+            if (!obs[obs_index])
             {
-                obs[i][j][k] = true;
+                obs[obs_index] = true;
                 observedVoxels.push_back(y);
             }
         }
     }
 }
 
-double Scan::getConvScore(Voxel &voxel)
+double Scan::getConvScore(const Voxel &voxel) const
 {
-    return scan_[voxel].convScore;
+    return scan_.at(voxel).convScore;
 }
 
 double Scan::getConvScoreOverWindow(Voxel &voxel)
@@ -216,9 +220,8 @@ void Scan::setDynamicHighConfidence(Voxel &voxel)
     
     if (!file)
     {
-        std::cerr << "./hmm-mos: Scan file " + fileName + 
-                     " could not be opened! Exiting program." << std::endl;
-        exit(1);
+        throw std::runtime_error("hmm-mos scan file could not be opened: " +
+                                 fileName);
     }
 
     float item;

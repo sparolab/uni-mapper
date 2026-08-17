@@ -21,7 +21,8 @@ struct OfflineParams {
 
 class DynamicRemoverOffline : public DynamicRemoverBase {
  public:
-  DynamicRemoverOffline(const OfflineParams& params);
+  DynamicRemoverOffline(const OfflineParams& params,
+                        std::shared_ptr<IOfflineRemoverPlugin> model);
   ~DynamicRemoverOffline() override = default;
   pcl::PointCloud<pcl::PointXYZI>::Ptr process(
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
@@ -29,6 +30,9 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
   pcl::PointCloud<pcl::PointXYZI>::Ptr genRawMap(
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
+
+  static Result<std::shared_ptr<IOfflineRemoverPlugin>> loadModule(
+      const std::string& so_name);
 
  private:
   OfflineParams params_;
@@ -39,8 +43,6 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
    * @param so_name  Dynamic library name
    * @return         Loaded dynamic removal module
    */
-  static std::shared_ptr<IOfflineRemoverPlugin> loadModule(
-      const std::string& so_name);
 };
 
 }  // namespace open_lmm

@@ -1,6 +1,10 @@
 #pragma once
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
 namespace open_lmm {
@@ -24,6 +28,9 @@ struct Error {
   }
   static Error InvalidArgument(std::string_view detail) {
     return {Code::kInvalidArgument, std::string(detail)};
+  }
+  static Error ParseError(std::string_view detail) {
+    return {Code::kParseError, "Parse error: " + std::string(detail)};
   }
   static Error PluginLoadFailed(std::string_view detail) {
     return {Code::kPluginLoadFailed, "Plugin load failed: " + std::string(detail)};

@@ -18,9 +18,9 @@ class MapServer {
   MapServer();
   ~MapServer();
   void parseConfig();
-  void process();
+  Result<void> process();
   void saveOptimizedPoses(const std::string& save_dir);
-  void saveOptimizedMap(const std::string& save_dir);
+  Result<void> saveOptimizedMap(const std::string& save_dir);
 
  private:
   std::vector<AgentPipelineCtx> buildContexts() const;
@@ -37,6 +37,7 @@ class MapServer {
 
   // 에이전트 간 누적 팩터 상태 공유
   std::shared_ptr<BackendOptimizerBase> backend_optimizer_;
+  std::optional<Error> initialization_error_;
 
   // 노드 생성용 config
   std::optional<Config> config_data_loader_;

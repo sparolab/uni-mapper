@@ -5,14 +5,15 @@
 namespace open_lmm {
 
 // TODO(gil) : add DataLoaderRosbag
-std::unique_ptr<DataLoaderBase> DataLoaderBase::createInstance(Config config) {
+Result<std::unique_ptr<DataLoaderBase>> DataLoaderBase::createInstance(Config config) {
   std::string data_loader_type =
       config.param<std::string>("data_loader", "data_loader_type", "");
   if (data_loader_type == "file_based") {
-    return std::make_unique<DataLoaderFile>(config);
+    return Result<std::unique_ptr<DataLoaderBase>>::Ok(
+        std::make_unique<DataLoaderFile>(config));
   }
-  spdlog::error("[DataLoaderBase] Unknown data_loader_type: '{}'. "
-                "Supported: file_based", data_loader_type);
-  std::exit(1);
+  return Result<std::unique_ptr<DataLoaderBase>>::Failure(
+      Error::InvalidArgument("Unknown data_loader_type: '" + data_loader_type +
+                             "'. Supported: file_based"));
 };
 }  // namespace open_lmm

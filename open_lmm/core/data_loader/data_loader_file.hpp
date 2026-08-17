@@ -30,17 +30,18 @@ class DataLoaderFile : public DataLoaderBase {
   explicit DataLoaderFile(Config config);
   ~DataLoaderFile() override = default;
   void parseConfig(Config config) override;
-  AgentRawData Process(const AgentContext& ctx,
-                       const fs::path& data_dir) override;
-  PoseVec loadPoseData(fs::path data_dir_path);
-  ScanVec loadRawScanData(fs::path data_dir_path) override;
-  ScanVec loadFilteredScanData(fs::path data_dir_path);
+  Result<AgentRawData> Process(const AgentContext& ctx,
+                               const fs::path& data_dir) override;
+  Result<PoseVec> loadPoseData(fs::path data_dir_path);
+  Result<ScanVec> loadRawScanData(fs::path data_dir_path) override;
+  Result<ScanVec> loadFilteredScanData(fs::path data_dir_path);
   std::function<Eigen::Isometry3d(std::vector<double>&)> transformFunctor;
   std::function<pcl::PointCloud<pcl::PointXYZI>::Ptr(std::string)>
       convertScanFunctor;
 
  private:
   DataLoaderFileParam param_;
+  std::optional<Error> initialization_error_;
 };
 
 }  // namespace open_lmm

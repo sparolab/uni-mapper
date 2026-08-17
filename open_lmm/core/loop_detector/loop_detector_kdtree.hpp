@@ -34,11 +34,14 @@ struct KdtreeParams {
  */
 class LoopDetectorKdtree : public LoopDetectorBase {
  public:
-  explicit LoopDetectorKdtree(const KdtreeParams& params);
-  explicit LoopDetectorKdtree(Config config);
+  LoopDetectorKdtree(const KdtreeParams& params,
+                     std::shared_ptr<IDescriptorKdtree> model_descriptor);
   ~LoopDetectorKdtree() override = default;
 
   LoopDetectorOutput Process(const LoopDetectorInput& input) override;
+
+  static Result<std::shared_ptr<IDescriptorKdtree>> loadModule(
+      const std::string& so_name);
 
  private:
   LoopPair createLoopPair(char agent_id, size_t current_idx,
@@ -72,8 +75,6 @@ class LoopDetectorKdtree : public LoopDetectorBase {
    * @param so_name  Dynamic library name
    * @return         Loaded dynamic removal module
    */
-  static std::shared_ptr<IDescriptorKdtree> loadModule(
-      const std::string& so_name);
 };
 
 }  // namespace open_lmm

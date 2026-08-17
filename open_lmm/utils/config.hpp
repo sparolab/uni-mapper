@@ -20,6 +20,11 @@ public:
   Config(const std::string& config_filename);
   virtual ~Config();
 
+  [[nodiscard]] bool is_valid() const { return !error_message_.has_value(); }
+  [[nodiscard]] const std::string& error_message() const {
+    return error_message_.value();
+  }
+
   /**
    * @brief Get the creation date of the configuration file
    * @author added by Gilhwan Kang
@@ -104,6 +109,7 @@ public:
 protected:
   std::any config;
   std::string config_path;
+  std::optional<std::string> error_message_;
 };
 
 
