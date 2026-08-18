@@ -198,13 +198,14 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
 }
 
 std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
-    const LoopDetectorInput& input,
+    const AlgorithmExecutionContext& context,
+    const LoopDetectorProcessInput& input,
     std::vector<Eigen::Vector3f>& out_transformed_map_points,
     std::optional<MapAlignmentProposal>& out_proposal) {
   OPEN_LMM_ZONE_N("LoopDetector.KissMatcher");
   std::vector<LoopPair> additional_loops;
   // anchor: 맵 포인트를 out으로 전달 (caller가 descriptor_store에 set_anchor 호출)
-  if (input.agent_ctx.is_anchor()) {
+  if (context.agent.is_anchor()) {
     out_transformed_map_points = input.current.map_points;
     return additional_loops;
   }
@@ -214,7 +215,7 @@ std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
                                 : input.all_optimized.begin()->first;
   out_proposal = KissAlignmentProposer().Propose(
       input.descriptor_store.merged_map, input.current.map_points,
-      target_agent, input.agent_ctx.id, params_.kiss_voxel_size,
+      target_agent, context.agent.id, params_.kiss_voxel_size,
       params_.kiss_use_quatro);
   if (!out_proposal) {
     return additional_loops;
@@ -228,7 +229,7 @@ std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
 
   additional_loops = findLoopPairsFromKdTree(
       input.all_optimized, input.all_raw_data,
-      transformed_poses, input.agent_ctx, params_.pose_nn_distance_threshold);
+      transformed_poses, context.agent, params_.pose_nn_distance_threshold);
 
   out_transformed_map_points = transformEigenPoints(
       input.current.map_points, relative_map_pose);
@@ -237,12 +238,13 @@ std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
 }
 
 std::vector<LoopPair> LoopDetectorKdtree::loopsFromGlobalTransform(
-    const LoopDetectorInput& input,
+    const AlgorithmExecutionContext& context,
+    const LoopDetectorProcessInput& input,
     const Eigen::Isometry3d& target_T_source) {
   auto transformed_poses = transformEigenPoses(
       input.current.odom_poses, target_T_source.matrix().cast<float>());
   return findLoopPairsFromKdTree(input.all_optimized, input.all_raw_data,
-                                 transformed_poses, input.agent_ctx,
+                                 transformed_poses, context.agent,
                                  params_.pose_nn_distance_threshold);
 }
 
@@ -268,7 +270,8 @@ AlignmentVisualizationPoint VisualizationPoint(
 }
 
 AlignmentVisualizationData DescriptorVisualization(
-    const LoopDetectorInput& input, const LoopPairVec& loops,
+    const AlgorithmExecutionContext& context,
+    const LoopDetectorProcessInput& input, const LoopPairVec& loops,
     const DescriptorAlignmentDiagnostics& diagnostics,
     const Eigen::Isometry3d& target_T_source, const AgentId& target_agent) {
   AlignmentVisualizationData output;
@@ -313,20 +316,38 @@ AlignmentVisualizationData DescriptorVisualization(
 }
 }  // namespace
 
-LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
+Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
+    const AlgorithmExecutionContext& context,
+    const LoopDetectorProcessInput& input) {
+  AlgorithmExecutionTimer timer(context);
+  auto cancellation =
+      CheckAlgorithmCancellation(context, "before loop detection");
+  if (!cancellation) {
+    return Result<LoopDetectorOutput>::Failure(cancellation.GetError());
+  }
+  const auto publish = [&](LoopDetectorOutput output)
+      -> Result<LoopDetectorOutput> {
+    auto completed =
+        CheckAlgorithmCancellation(context, "after loop detection");
+    if (!completed) {
+      return Result<LoopDetectorOutput>::Failure(completed.GetError());
+    }
+    return Result<LoopDetectorOutput>::Ok(std::move(output));
+  };
+  try {
   OPEN_LMM_ZONE_N("LoopDetector.Process");
   OPEN_LMM_PLOT("loop_detector.scan_count", input.current.filtered_scans.size());
-  database_->setAgentId(input.agent_ctx.id);
+  database_->setAgentId(context.agent.id);
 
-  auto intra_loops = detectIntraLoops(input.current.filtered_scans, input.agent_ctx);
-  if (!input.agent_ctx.is_anchor() && input.stored_alignment) {
+  auto intra_loops = detectIntraLoops(input.current.filtered_scans, context.agent);
+  if (!context.agent.is_anchor() && input.stored_alignment) {
     const auto& stored = *input.stored_alignment;
     if (!IsFiniteRigidTransform(stored.proposal.target_T_source) ||
-        stored.proposal.source_agent != input.agent_ctx.id) {
+        stored.proposal.source_agent != context.agent.id) {
       throw std::runtime_error("stored alignment is invalid for the current agent");
     }
     auto inter_loops = loopsFromGlobalTransform(
-        input, stored.proposal.target_T_source);
+        context, input, stored.proposal.target_T_source);
     if (inter_loops.empty()) {
       throw std::runtime_error(
           "stored alignment produced no valid inter-agent loops");
@@ -334,7 +355,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
     auto transformed_map_points = transformEigenPoints(
         input.current.map_points,
         stored.proposal.target_T_source.matrix().cast<float>());
-    return LoopDetectorOutput{
+    return publish(LoopDetectorOutput{
         .intra_loops = std::move(intra_loops),
         .inter_loops = std::move(inter_loops),
         .agent_descriptors = std::make_shared<const DatabaseKdtree>(
@@ -346,7 +367,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
         .accepted_target_agent = stored.proposal.target_agent,
         .accepted_at_unix_ms = stored.accepted_at_unix_ms,
         .accepted_alignment_metrics = stored.proposal.metrics,
-    };
+    });
   }
   std::vector<Eigen::Vector3f> transformed_map_points;
   std::optional<MapAlignmentProposal> kiss_proposal;
@@ -357,25 +378,25 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   std::optional<Eigen::Isometry3d> accepted_global_T_agent;
   std::optional<AlignmentMethod> accepted_alignment_method;
   std::optional<AlignmentApproval> accepted_alignment_approval;
-  AgentId accepted_target_agent = input.agent_ctx.id;
+  AgentId accepted_target_agent = context.agent.id;
   AlignmentMetrics accepted_alignment_metrics;
 
-  const bool feedback_available = input.alignment_feedback &&
-                                  input.alignment_feedback->IsEnabled();
-  if (!input.agent_ctx.is_anchor() && !feedback_available &&
+  const bool feedback_available =
+      context.feedback && context.feedback->IsEnabled();
+  if (!context.agent.is_anchor() && !feedback_available &&
       (params_.feedback_mode == "interactive" ||
        params_.feedback_mode == "always_manual")) {
     throw std::runtime_error(
         "alignment.feedback_mode requires an enabled GUI feedback service");
   }
-  const bool interactive = !input.agent_ctx.is_anchor() &&
+  const bool interactive = !context.agent.is_anchor() &&
       params_.feedback_mode != "automatic" && feedback_available;
   if (!interactive) {
-    kiss_loops = detectKissMatcherLoops(input, transformed_map_points,
+    kiss_loops = detectKissMatcherLoops(context, input, transformed_map_points,
                                         kiss_proposal);
   }
 
-  if (input.agent_ctx.is_anchor()) {
+  if (context.agent.is_anchor()) {
     accepted_global_T_agent = Eigen::Isometry3d::Identity();
     accepted_alignment_method = AlignmentMethod::kKissMatcher;
     accepted_alignment_approval = AlignmentApproval::kAutomatic;
@@ -384,25 +405,25 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   if (!interactive) {
     descriptor_loops = detectInterLoops(input.current.filtered_scans,
                                         input.descriptor_store,
-                                        input.agent_ctx);
+                                        context.agent);
     descriptor_proposal = DescriptorAlignmentProposer(
         DescriptorOptions(params_)).Propose(
         input.all_optimized.empty() ? AgentId{}
                                     : input.all_optimized.begin()->first,
-        input.agent_ctx.id, input.current.odom_poses,
+        context.agent.id, input.current.odom_poses,
         input.all_optimized, descriptor_loops);
     LogProposalDifference(kiss_proposal, descriptor_proposal);
     std::vector<LoopPair> descriptor_pose_loops;
     if (descriptor_proposal) {
       descriptor_pose_loops = loopsFromGlobalTransform(
-          input, descriptor_proposal->target_T_source);
+          context, input, descriptor_proposal->target_T_source);
     }
-    if (params_.headless_policy == "fail" && !input.agent_ctx.is_anchor()) {
+    if (params_.headless_policy == "fail" && !context.agent.is_anchor()) {
       throw std::runtime_error(
           "headless alignment is disabled by alignment.headless_policy=fail");
     }
     if (params_.headless_policy == "kiss_only") {
-      if (!input.agent_ctx.is_anchor() && !kiss_proposal) {
+      if (!context.agent.is_anchor() && !kiss_proposal) {
         throw std::runtime_error("KISS Matcher did not produce an alignment");
       }
       inter_loops = kiss_loops;
@@ -418,7 +439,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
       accepted_alignment_approval = AlignmentApproval::kAutomatic;
       accepted_target_agent = kiss_proposal->target_agent;
       accepted_alignment_metrics = kiss_proposal->metrics;
-    } else if (!input.agent_ctx.is_anchor() &&
+    } else if (!context.agent.is_anchor() &&
                params_.headless_policy != "kiss_only") {
       if (descriptor_proposal) {
         accepted_global_T_agent = descriptor_proposal->target_T_source;
@@ -439,8 +460,8 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
     coordinator_input.feedback_mode = params_.feedback_mode;
     coordinator_input.feedback_timeout =
         std::chrono::seconds(params_.feedback_timeout_sec);
-    coordinator_input.feedback = input.alignment_feedback;
-    coordinator_input.cancellation = input.cancellation;
+    coordinator_input.feedback = context.feedback;
+    coordinator_input.cancellation = context.cancellation;
     coordinator_input.target_points =
         AlignmentPoints(input.descriptor_store.merged_map);
     coordinator_input.source_points = AlignmentPoints(input.current.map_points);
@@ -448,26 +469,26 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
     coordinator_input.target_agent = input.all_optimized.empty()
                                          ? AgentId{}
                                          : input.all_optimized.begin()->first;
-    coordinator_input.source_agent = input.agent_ctx.id;
+    coordinator_input.source_agent = context.agent.id;
     coordinator_input.kiss_proposer = [&] {
       *alignment_visualization = {};
-      kiss_loops = detectKissMatcherLoops(input, transformed_map_points,
+      kiss_loops = detectKissMatcherLoops(context, input, transformed_map_points,
                                           kiss_proposal);
       return kiss_proposal;
     };
     coordinator_input.descriptor_proposer = [&] {
       descriptor_loops = detectInterLoops(input.current.filtered_scans,
                                           input.descriptor_store,
-                                          input.agent_ctx);
+                                          context.agent);
       DescriptorAlignmentDiagnostics descriptor_diagnostics;
       descriptor_proposal = DescriptorAlignmentProposer(
           DescriptorOptions(params_)).Propose(
-          coordinator_input.target_agent, input.agent_ctx.id,
+          coordinator_input.target_agent, context.agent.id,
           input.current.odom_poses, input.all_optimized, descriptor_loops,
           &descriptor_diagnostics);
       if (descriptor_proposal) {
         *alignment_visualization = DescriptorVisualization(
-            input, descriptor_loops, descriptor_diagnostics,
+            context, input, descriptor_loops, descriptor_diagnostics,
             descriptor_proposal->target_T_source,
             coordinator_input.target_agent);
       } else {
@@ -482,7 +503,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
         validated_loops = kiss_loops;
       } else {
         validated_loops =
-            loopsFromGlobalTransform(input, proposal.target_T_source);
+            loopsFromGlobalTransform(context, input, proposal.target_T_source);
       }
       if (validated_loops.empty()) {
         return Result<void>::Failure(Error::RegistrationFailed(
@@ -493,10 +514,8 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
 
     auto alignment = coordinator.Align(coordinator_input);
     if (!alignment) {
-      if (alignment.GetError().code == Error::Code::kCancelled) {
-        throw CancellationException(alignment.GetError().Message());
-      }
-      throw std::runtime_error(alignment.GetError().Message());
+      return Result<LoopDetectorOutput>::Failure(
+          WithAlgorithmContext(alignment.GetError(), context));
     }
     const auto& proposal = alignment.Value();
     inter_loops = std::move(validated_loops);
@@ -512,7 +531,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   OPEN_LMM_PLOT("loop_detector.intra_loops", intra_loops.size());
   OPEN_LMM_PLOT("loop_detector.inter_loops", inter_loops.size());
 
-  return LoopDetectorOutput{
+  return publish(LoopDetectorOutput{
       .intra_loops             = std::move(intra_loops),
       .inter_loops             = std::move(inter_loops),
       .agent_descriptors      = std::make_shared<const DatabaseKdtree>(
@@ -528,7 +547,19 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
                 std::chrono::system_clock::now().time_since_epoch()).count())
           : 0,
       .accepted_alignment_metrics = accepted_alignment_metrics,
-  };
+  });
+  } catch (const CancellationException& error) {
+    return Result<LoopDetectorOutput>::Failure(WithAlgorithmContext(
+        Error::Cancelled(error.what()), context));
+  } catch (const std::exception& error) {
+    return Result<LoopDetectorOutput>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument(std::string("loop detector exception: ") +
+                               error.what()),
+        context));
+  } catch (...) {
+    return Result<LoopDetectorOutput>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument("unknown loop detector exception"), context));
+  }
 }
 
 Result<std::shared_ptr<IDescriptorKdtree>> LoopDetectorKdtree::loadModule(

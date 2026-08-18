@@ -425,11 +425,26 @@ void IridescenceGui::DrawPipelineUi() {
     ImGui::Text("Picked: %.3f %.3f %.3f", (*picked_point_).x(),
                 (*picked_point_).y(), (*picked_point_).z());
   }
+  ImGui::Text("Session nodes");
+  for (const auto& descriptor : node_descriptors_) {
+    if (descriptor.scope != ExecutionScope::kSession) continue;
+    if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+    const std::string label = std::string(descriptor.name) + "##session_node";
+    if (ImGui::SmallButton(label.c_str()) && services_.submit_node) {
+      auto result = services_.submit_node(descriptor.id, std::nullopt);
+      command_error_ = result ? std::string{} : result.GetError().Message();
+    }
+    if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+    ImGui::SameLine();
+  }
+  ImGui::NewLine();
+  ImGui::Separator();
   ImGui::Text("Agents");
   for (const AgentId& agent : model_.Agents()) {
     ImGui::BulletText("Agent %s", agent.Value().c_str());
     ImGui::PushID(agent.Value().c_str());
     for (const auto& descriptor : node_descriptors_) {
+      if (descriptor.scope != ExecutionScope::kPerAgent) continue;
       if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
       const std::string label = std::string(descriptor.name) + "##node";
       if (ImGui::SmallButton(label.c_str()) && services_.submit_node) {

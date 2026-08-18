@@ -4,11 +4,23 @@ target_sources(open_lmm_map_server PRIVATE
   map_server.cpp
   stage_executor.cpp
   stage_runner.cpp
+  execution/alignment_artifact_store.cpp
+  execution/alignment_executor.cpp
+  execution/data_load_executor.cpp
+  execution/map_update_executor.cpp
+  execution/optimize_executor.cpp
+  execution/save_executor.cpp
+  execution/stage_coordinator.cpp
+  bootstrap/algorithm_factory.cpp
+  bootstrap/session_bootstrapper.cpp
   artifact_repository.cpp
   file_set_transaction.cpp
   output_repository.cpp
   session_manager.cpp
+  session_payload_builder.cpp
   session_state.cpp
+  query/visualization_projector.cpp
+  transaction/session_reconfigurer.cpp
   pipeline_controller.cpp
   resource_governor.cpp
   runtime_service.cpp

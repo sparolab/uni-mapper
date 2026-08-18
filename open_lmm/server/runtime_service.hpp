@@ -46,13 +46,13 @@ struct SessionExecutionEvent {
 
 class RuntimeService {
  public:
-  using RunnerFactory = std::function<Result<std::shared_ptr<StageRunner>>(
+  using PortFactory = std::function<Result<std::shared_ptr<StageRuntimePort>>(
       const BootstrapRequest&, const std::filesystem::path&)>;
 
   explicit RuntimeService(std::size_t maximum_sessions = 8,
-                          RunnerFactory runner_factory = {});
+                          PortFactory port_factory = {});
   explicit RuntimeService(ResourceBudget budget,
-                          RunnerFactory runner_factory = {});
+                          PortFactory port_factory = {});
   ~RuntimeService();
   RuntimeService(const RuntimeService&) = delete;
   RuntimeService& operator=(const RuntimeService&) = delete;
@@ -84,7 +84,7 @@ class RuntimeService {
   mutable std::mutex registry_mutex_;
   std::map<SessionId, std::shared_ptr<RuntimeSession>> sessions_;
   std::shared_ptr<ResourceGovernor> governor_;
-  RunnerFactory runner_factory_;
+  PortFactory port_factory_;
 };
 
 }  // namespace open_lmm

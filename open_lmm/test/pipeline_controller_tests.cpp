@@ -1,5 +1,6 @@
 #include <open_lmm/server/pipeline_controller.hpp>
 #include <open_lmm/core/loop_detector/map_alignment_coordinator.hpp>
+#include "test_runtime_port.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -22,16 +23,35 @@ void Check(bool condition, const char* message) {
   }
 }
 
-class FakeRunner final : public StageRunner {
+class FakeRunner final : public test::RuntimePortFixture {
  public:
-  void SetCancellationToken(std::shared_ptr<CancellationToken> token) override {
-    cancellation = std::move(token);
+  enum class ReceiptFault { kNone, kBase, kCommitted, kNoMutation };
+  explicit FakeRunner(
+      std::vector<AgentId> agents = {Id("A"), Id("B")})
+      : RuntimePortFixture(std::move(agents)) {}
+
+  CommittedSessionSnapshot Snapshot() const override {
+    if (on_agent_ids) on_agent_ids();
+    return RuntimePortFixture::Snapshot();
   }
-  void SetAlignmentFeedbackBroker(
-      std::shared_ptr<AlignmentFeedbackBroker> value) override {
-    alignment_feedback = std::move(value);
+
+  Result<void> ExecuteFixture(const ExecutionCommand& command,
+                              const ExecutionContext& context) override {
+    cancellation = context.cancellation;
+    alignment_feedback = context.alignment_feedback;
+    switch (command.kind) {
+      case ExecutionCommandKind::kStage:
+        return RunStage(*command.stage);
+      case ExecutionCommandKind::kNode:
+        return RunNode(*command.node, command.agent);
+      case ExecutionCommandKind::kOptimizeThrough:
+        return RunOptimizeThrough(*command.agent);
+      case ExecutionCommandKind::kReconfigure:
+        return Reconfigure(*command.config_domain, command.config_revision);
+    }
+    return Result<void>::Failure(Error::InvalidArgument("unknown fixture command"));
   }
-  Result<void> RunNode(NodeId, std::optional<AgentId>) override {
+  Result<void> RunNode(NodeId, std::optional<AgentId>) {
     node_entered.store(true);
     if (non_cooperative_node) {
       while (!release_non_cooperative.load(std::memory_order_acquire)) {
@@ -54,7 +74,7 @@ class FakeRunner final : public StageRunner {
             .non_interruptible_operations = {"fake blocking plugin"},
             .requires_process_isolation = true};
   }
-  Result<void> RunStage(StageId stage) override {
+  Result<void> RunStage(StageId stage) {
     {
       std::lock_guard lock(mutex);
       calls.push_back(stage);
@@ -110,31 +130,37 @@ class FakeRunner final : public StageRunner {
     }
     return Result<void>::Ok();
   }
-  Result<void> RunOptimizeThrough(const AgentId& target) override {
+  Result<void> RunOptimizeThrough(const AgentId& target) {
     replay_target = target;
     return replay_fails
         ? Result<void>::Failure(Error::OptimizationFailed("induced replay"))
         : Result<void>::Ok();
   }
-  Result<void> Reconfigure(ConfigDomain domain, uint64_t) override {
+  Result<void> Reconfigure(ConfigDomain domain, uint64_t) {
     reconfigured_domain = domain;
     return fail_reconfigure
         ? Result<void>::Failure(
               Error::InvalidArgument("fake reconfigure failure"))
         : Result<void>::Ok();
   }
-  std::vector<AgentId> AgentIds() const override {
-    std::lock_guard lock(mutex);
-    if (on_agent_ids) on_agent_ids();
-    return agent_ids;
+  ExecutionReceipt AdjustReceipt(ExecutionReceipt receipt) const override {
+    switch (receipt_fault) {
+      case ReceiptFault::kNone: break;
+      case ReceiptFault::kBase: ++receipt.base_revision; break;
+      case ReceiptFault::kCommitted: ++receipt.committed_revision; break;
+      case ReceiptFault::kNoMutation:
+        receipt.committed_revision = receipt.base_revision;
+        break;
+    }
+    return receipt;
   }
-
   mutable std::mutex mutex;
   std::vector<StageId> calls;
   std::optional<StageId> fail_stage;
   std::optional<AgentId> replay_target;
   bool replay_fails = false;
   bool fail_reconfigure = false;
+  ReceiptFault receipt_fault = ReceiptFault::kNone;
   std::optional<ConfigDomain> reconfigured_domain;
   bool block_node_until_cancel = false;
   std::atomic<bool> node_entered{false};
@@ -147,50 +173,25 @@ class FakeRunner final : public StageRunner {
   bool coordinate_alignment = false;
   std::chrono::milliseconds alignment_timeout{};
   std::optional<MapAlignmentProposal> coordinated_alignment;
-  std::vector<AgentId> agent_ids{Id("A"), Id("B")};
   bool hold_mutex_during_feedback = false;
   std::atomic<bool> feedback_mutex_held{false};
   std::atomic<bool> allow_feedback_notification{false};
   std::function<void()> on_agent_ids;
 };
 
-class ManagedSessionRunner final : public StageRunner {
+class ManagedSessionRunner final : public test::RuntimePortFixture {
  public:
-  ManagedSessionRunner() {
-    repository_.Reset({Id("A")});
-    snapshot_.revision = 1;
-    snapshot_.config_revision = 5;
-    snapshot_.ordered_agents = {Id("A")};
-    snapshot_.artifacts = repository_.Snapshot();
-  }
+  ManagedSessionRunner() : RuntimePortFixture({Id("A")}, 5) {}
 
-  void SetCancellationToken(std::shared_ptr<CancellationToken>) override {}
-  Result<void> RunStage(StageId) override { return Result<void>::Ok(); }
-  Result<void> RunNode(NodeId node, std::optional<AgentId> agent) override {
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext&) override {
     if (fail_next.exchange(false)) {
       return Result<void>::Failure(Error::InvalidArgument("induced failure"));
     }
-    std::lock_guard lock(mutex_);
-    repository_.Restore(snapshot_.artifacts);
-    repository_.BeginNode(node, agent);
-    repository_.CompleteNode(node, agent);
-    ++snapshot_.revision;
-    snapshot_.artifacts = repository_.Snapshot();
     return Result<void>::Ok();
-  }
-  Result<void> RunOptimizeThrough(const AgentId&) override { return Result<void>::Ok(); }
-  std::vector<AgentId> AgentIds() const override { return {Id("A")}; }
-  std::optional<CommittedSessionSnapshot> SessionSnapshot() const override {
-    std::lock_guard lock(mutex_);
-    return snapshot_;
   }
 
   std::atomic<bool> fail_next{false};
-
- private:
-  mutable std::mutex mutex_;
-  ArtifactRepository repository_;
-  CommittedSessionSnapshot snapshot_;
 };
 
 ArtifactState StateOf(const PipelineSnapshot& snapshot, ArtifactType type,
@@ -201,6 +202,22 @@ ArtifactState StateOf(const PipelineSnapshot& snapshot, ArtifactType type,
     }
   }
   return ArtifactState::kMissing;
+}
+
+bool SameArtifacts(const std::vector<ArtifactMetadata>& lhs,
+                   const std::vector<ArtifactMetadata>& rhs) {
+  if (lhs.size() != rhs.size()) return false;
+  for (std::size_t i = 0; i < lhs.size(); ++i) {
+    const auto& a = lhs[i];
+    const auto& b = rhs[i];
+    if (a.key != b.key || a.state != b.state || a.revision != b.revision ||
+        a.producer != b.producer || a.detail != b.detail ||
+        a.external_path != b.external_path ||
+        a.fingerprint != b.fingerprint) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void TestRunAllAndArtifacts() {
@@ -222,6 +239,71 @@ void TestRunAllAndArtifacts() {
         "map alignment artifact ready");
   Check(StateOf(snapshot, ArtifactType::kPoseFile, Id("B")) == ArtifactState::kReady,
         "pose artifact ready");
+}
+
+void TestMalformedExecutionReceiptsCannotPublishSuccess() {
+  for (const auto fault : {FakeRunner::ReceiptFault::kBase,
+                           FakeRunner::ReceiptFault::kCommitted,
+                           FakeRunner::ReceiptFault::kNoMutation}) {
+    auto runner = std::make_shared<FakeRunner>();
+    runner->receipt_fault = fault;
+    PipelineController controller(runner);
+    const auto submitted = controller.SubmitStage(StageId::kDataLoad);
+    Check(submitted && !controller.Wait(submitted.Value()),
+          "malformed successful receipt fails the job");
+    const auto snapshot = controller.Snapshot();
+    Check(snapshot.job && snapshot.job->state == JobState::kFailed,
+          "receipt mismatch transitions to failed");
+    Check(std::none_of(snapshot.recent_events.begin(),
+                       snapshot.recent_events.end(),
+                       [](const ExecutionEvent& event) {
+                         return event.type == EventType::kStageCompleted;
+                       }),
+          "receipt mismatch cannot publish stage success");
+    Check(StateOf(snapshot, ArtifactType::kRawData, Id("A")) ==
+              ArtifactState::kReady,
+          "controller resynchronizes the authoritative post-commit snapshot");
+    runner->receipt_fault = FakeRunner::ReceiptFault::kNone;
+    const auto rejected = controller.SubmitStage(StageId::kDataLoad);
+    Check(!rejected &&
+              rejected.GetError().severity == Error::Severity::kFatalSession,
+          "receipt protocol failure rejects later commands as fatal");
+  }
+}
+
+void TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession() {
+  auto runner = std::make_shared<FakeRunner>();
+  PipelineController controller(runner);
+  const auto loaded = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+  Check(loaded && controller.Wait(loaded.Value()),
+        "prepare committed raw artifact before malformed reconfigure");
+
+  runner->receipt_fault = FakeRunner::ReceiptFault::kCommitted;
+  const auto applied = controller.ApplyConfig(ConfigDomain::kDataLoader, 2);
+  Check(!applied &&
+            applied.GetError().severity == Error::Severity::kFatalSession,
+        "malformed post-commit reconfigure receipt is a fatal protocol error");
+  const auto snapshot = controller.Snapshot();
+  Check(snapshot.config_revision == 2 &&
+            StateOf(snapshot, ArtifactType::kRawData, Id("A")) ==
+                ArtifactState::kStale,
+        "failed ApplyConfig result still publishes authoritative committed state");
+  const auto committed = runner->Snapshot();
+  Check(committed.revision == 3 && committed.config_revision == 2,
+        "fixture confirms reconfigure committed before receipt corruption");
+
+  runner->receipt_fault = FakeRunner::ReceiptFault::kNone;
+  const auto retry = controller.ApplyConfig(ConfigDomain::kOptimizer, 3);
+  Check(!retry && retry.GetError().severity == Error::Severity::kFatalSession &&
+            runner->Snapshot().revision == committed.revision,
+        "poisoned controller performs no further reconfigure command");
+
+  auto replacement = std::make_shared<FakeRunner>();
+  Check(controller.ReplacePorts(replacement, replacement).IsOk(),
+        "fresh session replacement clears the protocol failure");
+  const auto recovered = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+  Check(recovered && controller.Wait(recovered.Value()),
+        "replacement session accepts commands after protocol failure");
 }
 
 void TestConcurrentSubmissionsAreSerialized() {
@@ -283,9 +365,9 @@ void TestFailureStopsPipeline() {
   auto snapshot = controller.Snapshot();
   Check(snapshot.job && snapshot.job->state == JobState::kFailed,
         "failed snapshot");
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) !=
             ArtifactState::kFailed,
-        "failed artifact marked");
+        "failed command leaves committed artifact metadata unchanged");
 }
 
 void TestBoundaryCancellation() {
@@ -329,10 +411,14 @@ void TestNodeCommandsAndMetadata() {
   auto runner = std::make_shared<FakeRunner>();
   PipelineController controller(runner);
   const auto descriptors = controller.NodeDescriptors();
-  Check(descriptors.size() == 5, "all node descriptors exposed");
+  Check(descriptors.size() == 6, "all node descriptors exposed");
   Check(descriptors[2].ordered, "optimizer metadata is ordered");
-  Check(!controller.SubmitNode(NodeId::kLoopDetect, Id("A")),
-        "missing RawData rejects node before job creation");
+  Check(descriptors[4].scope == ExecutionScope::kSession &&
+            descriptors[5].scope == ExecutionScope::kSession,
+        "session node scope is exposed to API consumers");
+  auto missing_input = controller.SubmitNode(NodeId::kLoopDetect, Id("A"));
+  Check(missing_input && !controller.Wait(missing_input.Value()),
+        "command port rejects node with missing RawData");
 
   std::vector<uint64_t> sequences;
   auto subscription =
@@ -345,6 +431,9 @@ void TestNodeCommandsAndMetadata() {
   Check(loop && controller.Wait(loop.Value()), "agent LoopDetect node");
   auto optimize = controller.SubmitNode(NodeId::kOptimize, Id("A"));
   Check(optimize && controller.Wait(optimize.Value()), "agent Optimize node");
+  auto save = controller.SubmitNode(NodeId::kPoseSave);
+  Check(save && controller.Wait(save.Value()),
+        "session PoseSave node does not require an agent target");
   Check(controller.WaitForEventCallbacks().IsOk(),
         "node event callbacks drain before inspecting subscriber state");
   for (std::size_t i = 1; i < sequences.size(); ++i) {
@@ -355,6 +444,16 @@ void TestNodeCommandsAndMetadata() {
   Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
             ArtifactState::kReady,
         "node output committed");
+  const auto pose_commit = std::find_if(
+      snapshot.recent_events.rbegin(), snapshot.recent_events.rend(),
+      [](const ExecutionEvent& event) {
+        return event.type == EventType::kArtifactCommitted &&
+               event.node == NodeId::kPoseSave;
+      });
+  Check(pose_commit != snapshot.recent_events.rend() &&
+            !pose_commit->agent &&
+            pose_commit->affected_agents == std::vector<AgentId>{Id("A")},
+        "PoseSave commit event reports its actual session file-set");
 }
 
 void TestConfigApplyInvalidation() {
@@ -370,16 +469,23 @@ void TestConfigApplyInvalidation() {
   Check(snapshot.config_revision == 2, "snapshot config revision");
   Check(StateOf(snapshot, ArtifactType::kRawData, Id("A")) == ArtifactState::kStale,
         "loader config invalidates raw data");
-  Check(!controller.SubmitNode(NodeId::kLoopDetect, Id("A")),
-        "stale artifact rejected as node input");
+  auto stale_input = controller.SubmitNode(NodeId::kLoopDetect, Id("A"));
+  Check(stale_input && !controller.Wait(stale_input.Value()),
+        "command port rejects stale node input");
   Check(!controller.ApplyConfig(ConfigDomain::kOptimizer, 2),
         "non-increasing config revision rejected");
 
   runner->fail_reconfigure = true;
+  const auto before_failure = runner->Snapshot();
   Check(!controller.ApplyConfig(ConfigDomain::kOptimizer, 3),
         "runner reconfigure failure is propagated");
   Check(controller.Snapshot().config_revision == 2,
         "failed runner reconfigure does not commit revision");
+  const auto after_failure = runner->Snapshot();
+  Check(after_failure.revision == before_failure.revision &&
+            after_failure.config_revision == before_failure.config_revision &&
+            SameArtifacts(after_failure.artifacts, before_failure.artifacts),
+        "pre-commit reconfigure failure preserves revision and artifacts");
 }
 
 
@@ -564,14 +670,15 @@ void TestManagedSessionMetadataIsAuthoritative() {
 void TestSessionRunnerReplacement() {
   auto first = std::make_shared<FakeRunner>();
   PipelineController controller(first);
-  auto replacement = std::make_shared<FakeRunner>();
-  replacement->agent_ids = {Id("C")};
+  auto replacement = std::make_shared<FakeRunner>(
+      std::vector<AgentId>{Id("C")});
   const auto before_revision = controller.Snapshot().config_revision;
-  Check(controller.ReplaceRunner(replacement).IsOk(),
+  Check(controller.ReplacePorts(replacement, replacement).IsOk(),
         "idle controller accepts a new session runner");
   const auto snapshot = controller.Snapshot();
-  Check(snapshot.config_revision == before_revision + 1,
-        "new session advances config revision");
+  Check(snapshot.config_revision == replacement->Snapshot().config_revision &&
+            snapshot.config_revision == before_revision,
+        "new session exposes the replacement port revision verbatim");
   Check(snapshot.agents == std::vector<AgentId>{Id("C")},
         "new session resets registered agents");
   Check(StateOf(snapshot, ArtifactType::kAgentInput, Id("C")) ==
@@ -664,7 +771,7 @@ void TestSnapshotDoesNotInvokeRunnerWhileControllerLocked() {
                              [&controller] { return controller.Snapshot(); });
   Check(snapshot.wait_for(std::chrono::milliseconds(500)) ==
             std::future_status::ready,
-        "Snapshot must not call StageRunner while holding controller state");
+        "Snapshot must not call the query port while holding controller state");
   Check(snapshot.get().agents == std::vector<AgentId>({Id("A"), Id("B")}),
         "Snapshot uses cached immutable agent IDs");
 }
@@ -791,8 +898,8 @@ void TestTerminalCallbackRejectsWorkerLifecycleCommands() {
           return;
         }
         const auto submitted = controller.SubmitStage(StageId::kDataLoad);
-        const auto replaced = controller.ReplaceRunner(
-            std::make_shared<FakeRunner>());
+        auto replacement = std::make_shared<FakeRunner>();
+        const auto replaced = controller.ReplacePorts(replacement, replacement);
         callback_result_promise.set_value(
             !submitted && !replaced &&
             submitted.GetError().Message().find("event callback") !=
@@ -876,6 +983,8 @@ void TestControllerCoordinatorTimeoutIntegration() {
 
 int main() {
   TestRunAllAndArtifacts();
+  TestMalformedExecutionReceiptsCannotPublishSuccess();
+  TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession();
   TestConcurrentSubmissionsAreSerialized();
   TestRerunInvalidatesDownstream();
   TestFailureStopsPipeline();

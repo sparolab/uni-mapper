@@ -23,7 +23,9 @@ class LoopDetectorKdtree : public LoopDetectorBase {
                      std::shared_ptr<IDescriptorKdtree> model_descriptor);
   ~LoopDetectorKdtree() override = default;
 
-  LoopDetectorOutput Process(const LoopDetectorInput& input) override;
+  Result<LoopDetectorOutput> Process(
+      const AlgorithmExecutionContext& context,
+      const LoopDetectorProcessInput& input) override;
 
   static Result<std::shared_ptr<IDescriptorKdtree>> loadModule(
       const std::string& so_name, const std::string& config_json);
@@ -41,12 +43,14 @@ class LoopDetectorKdtree : public LoopDetectorBase {
 
   // transformed_map_points를 out 파라미터로 반환
   std::vector<LoopPair> detectKissMatcherLoops(
-      const LoopDetectorInput& input,
+      const AlgorithmExecutionContext& context,
+      const LoopDetectorProcessInput& input,
       std::vector<Eigen::Vector3f>& out_transformed_map_points,
       std::optional<MapAlignmentProposal>& out_proposal);
 
   std::vector<LoopPair> loopsFromGlobalTransform(
-      const LoopDetectorInput& input,
+      const AlgorithmExecutionContext& context,
+      const LoopDetectorProcessInput& input,
       const Eigen::Isometry3d& target_T_source);
 
   std::vector<LoopPair> findLoopPairsFromKdTree(

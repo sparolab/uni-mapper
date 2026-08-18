@@ -11,6 +11,10 @@ class OptimizeNode : public PipelineNodeBase {
  public:
   explicit OptimizeNode(std::shared_ptr<BackendOptimizerBase> optimizer)
       : optimizer_(std::move(optimizer)) {}
+  OptimizeNode(std::shared_ptr<BackendOptimizerBase> optimizer,
+               AlgorithmExecutionContext algorithm_context)
+      : optimizer_(std::move(optimizer)),
+        algorithm_context_(std::move(algorithm_context)) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
@@ -27,18 +31,18 @@ class OptimizeNode : public PipelineNodeBase {
           "alignment output is missing its accepted global transform"));
     }
 
-    std::map<AgentId, AgentOptimizedData> all_opt;
-    try {
-      optimizer_->SetCancellationToken(ctx.cancellation);
-      all_opt = optimizer_->Process(
-          ctx.agent, *ctx.raw_data, ctx.loop_output->intra_loops,
-          ctx.loop_output->inter_loops, db.raw_data);
-    } catch (const CancellationException& e) {
-      return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
-    } catch (const std::exception& e) {
-      return Result<ControlFlow>::Failure(Error::OptimizationFailed(
-          "agent " + ctx.agent.id.Value() + ": " + e.what()));
+    AlgorithmExecutionContext algorithm_context = algorithm_context_;
+    algorithm_context.agent = ctx.agent;
+    algorithm_context.cancellation = ctx.cancellation;
+    BackendOptimizerInput input{*ctx.raw_data,
+                                ctx.loop_output->intra_loops,
+                                ctx.loop_output->inter_loops,
+                                db.raw_data};
+    auto processed = optimizer_->Process(algorithm_context, input);
+    if (!processed) {
+      return Result<ControlFlow>::Failure(processed.GetError());
     }
+    auto all_opt = std::move(processed).Value();
 
     std::map<AgentId, Eigen::Isometry3d> optimized_map_transforms;
     for (auto& [id, opt] : all_opt) {
@@ -98,6 +102,7 @@ class OptimizeNode : public PipelineNodeBase {
   }
 
   std::shared_ptr<BackendOptimizerBase> optimizer_;
+  AlgorithmExecutionContext algorithm_context_;
 };
 
 }  // namespace open_lmm

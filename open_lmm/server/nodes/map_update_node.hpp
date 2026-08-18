@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include <open_lmm/common/algorithm_execution_context.hpp>
 #include <open_lmm/common/pipeline.hpp>
 
 namespace open_lmm {
@@ -22,7 +23,9 @@ class MapUpdateNode : public PipelineNodeBase {
                 const std::string&              save_dir,
                 double                          save_voxel_size,
                 bool                            defer_commit = false,
-                HeavyPhaseAdmission heavy_phase_admission = {});
+                HeavyPhaseAdmission heavy_phase_admission = {},
+                AlgorithmExecutionContext data_loader_context = {},
+                AlgorithmExecutionContext remover_context = {});
   ~MapUpdateNode() override;
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
@@ -37,6 +40,8 @@ class MapUpdateNode : public PipelineNodeBase {
   double                               save_voxel_size_;
   bool                                 defer_commit_;
   HeavyPhaseAdmission                  heavy_phase_admission_;
+  AlgorithmExecutionContext            data_loader_context_;
+  AlgorithmExecutionContext            remover_context_;
 };
 
 }  // namespace open_lmm

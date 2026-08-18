@@ -26,9 +26,7 @@ const char* StageName(StageId stage) {
 }  // namespace
 
 bool ArtifactRepository::IsPerAgent(ArtifactType type) {
-  return type != ArtifactType::kOptimizerState &&
-         type != ArtifactType::kDescriptorState &&
-         type != ArtifactType::kConfigSnapshot;
+  return ArtifactOwnership(type) == ExecutionScope::kPerAgent;
 }
 
 void ArtifactRepository::RegisterAgents(const std::vector<AgentId>& agents) {
@@ -209,18 +207,66 @@ void ArtifactRepository::RecordExternalFile(
 Result<void> ArtifactRepository::ValidateNode(
     NodeId node, std::optional<AgentId> agent) const {
   std::lock_guard lock(mutex_);
+  auto execution_agents = executionAgentsLocked(node, agent);
+  if (!execution_agents) {
+    return Result<void>::Failure(execution_agents.GetError());
+  }
+  return Result<void>::Ok();
+}
+
+Result<std::vector<AgentId>> ArtifactRepository::ExecutionAgents(
+    NodeId node, std::optional<AgentId> agent) const {
+  std::lock_guard lock(mutex_);
+  return executionAgentsLocked(node, agent);
+}
+
+Result<std::vector<AgentId>> ArtifactRepository::executionAgentsLocked(
+    NodeId node, std::optional<AgentId> agent) const {
+  const auto& spec = ExecutionSpecFor(node);
+  std::vector<AgentId> execution_agents;
+  if (spec.scope == ExecutionScope::kSession) {
+    for (ArtifactType type : spec.required_artifacts) {
+      if (IsPerAgent(type)) continue;
+      const auto found = artifacts_.find({type, std::nullopt});
+      if (found == artifacts_.end() ||
+          found->second.state != ArtifactState::kReady) {
+        return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+            "required session artifact is not ready for node " +
+            std::string(spec.name)));
+      }
+    }
+    for (const AgentId& candidate : agents_) {
+      const bool ready = std::all_of(
+          spec.required_artifacts.begin(), spec.required_artifacts.end(),
+          [&](ArtifactType type) {
+            if (!IsPerAgent(type)) return true;
+            const auto found = artifacts_.find({type, candidate});
+            return found != artifacts_.end() &&
+                   found->second.state == ArtifactState::kReady;
+          });
+      if (ready) execution_agents.push_back(candidate);
+    }
+    if (execution_agents.empty()) {
+      return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+          "no ready agent artifacts for session node " +
+          std::string(spec.name)));
+    }
+    return Result<std::vector<AgentId>>::Ok(std::move(execution_agents));
+  }
   if (!agent) {
-    return Result<void>::Failure(
-        Error::InvalidArgument("node command required_artifacts an agent"));
+    return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+        "per-agent node command requires an agent"));
   }
   if (std::find(agents_.begin(), agents_.end(), *agent) == agents_.end()) {
-    return Result<void>::Failure(Error::InvalidArgument("unknown agent"));
+    return Result<std::vector<AgentId>>::Failure(
+        Error::InvalidArgument("unknown agent"));
   }
-  const auto& spec = ExecutionSpecFor(node);
-  std::vector<AgentId> execution_agents{*agent};
+  execution_agents = {*agent};
   if (spec.ordered) {
     auto prefix = OrderedAgentPrefix(agents_, *agent);
-    if (!prefix) return Result<void>::Failure(prefix.GetError());
+    if (!prefix) {
+      return Result<std::vector<AgentId>>::Failure(prefix.GetError());
+    }
     execution_agents = std::move(prefix).Value();
   }
   for (const AgentId& execution_agent : execution_agents) {
@@ -230,19 +276,35 @@ Result<void> ArtifactRepository::ValidateNode(
       ArtifactKey key{type, key_agent};
       auto it = artifacts_.find(key);
       if (it == artifacts_.end() || it->second.state != ArtifactState::kReady) {
-        return Result<void>::Failure(Error::InvalidArgument(
+        return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
             "required artifact is not ready for node " +
             std::string(spec.name)));
       }
     }
   }
-  return Result<void>::Ok();
+  return Result<std::vector<AgentId>>::Ok(std::move(execution_agents));
 }
 
 void ArtifactRepository::BeginNode(NodeId node, std::optional<AgentId> agent) {
   std::lock_guard lock(mutex_);
-  if (!agent) return;
-  const auto start = std::find(agents_.begin(), agents_.end(), *agent);
+  auto affected_agents = executionAgentsLocked(node, agent);
+  if (!affected_agents) return;
+  beginNodeLocked(node, affected_agents.Value());
+}
+
+void ArtifactRepository::BeginNode(
+    NodeId node, const std::vector<AgentId>& affected_agents) {
+  std::lock_guard lock(mutex_);
+  beginNodeLocked(node, affected_agents);
+}
+
+void ArtifactRepository::beginNodeLocked(
+    NodeId node, const std::vector<AgentId>& affected_agents) {
+  if (affected_agents.empty()) return;
+  const auto& spec = ExecutionSpecFor(node);
+  const auto start = spec.scope == ExecutionScope::kSession
+      ? agents_.begin()
+      : std::find(agents_.begin(), agents_.end(), affected_agents.back());
   const auto stale = [&](ArtifactType type, bool from_agent) {
     if (!IsPerAgent(type)) {
       auto& item = artifacts_[ArtifactKey{type, std::nullopt}];
@@ -251,8 +313,13 @@ void ArtifactRepository::BeginNode(NodeId node, std::optional<AgentId> agent) {
       item.producer = std::string(DescribeNode(node).name);
       return;
     }
-    auto begin = from_agent ? start : agents_.begin();
+    auto begin = from_agent && spec.ordered ? start : agents_.begin();
     for (auto it = begin; it != agents_.end(); ++it) {
+      const bool explicitly_affected =
+          std::find(affected_agents.begin(), affected_agents.end(), *it) !=
+          affected_agents.end();
+      if ((spec.scope == ExecutionScope::kSession || !spec.ordered) &&
+          !explicitly_affected) continue;
       auto& item = artifacts_[ArtifactKey{type, *it}];
       item.state = ArtifactState::kStale;
       item.revision = next_revision_++;
@@ -267,35 +334,68 @@ void ArtifactRepository::BeginNode(NodeId node, std::optional<AgentId> agent) {
 
 void ArtifactRepository::CompleteNode(NodeId node, std::optional<AgentId> agent) {
   std::lock_guard lock(mutex_);
+  if (ExecutionSpecFor(node).scope == ExecutionScope::kSession) {
+    auto affected_agents = executionAgentsLocked(node, agent);
+    if (!affected_agents) return;
+    completeNodeLocked(node, affected_agents.Value(), ArtifactState::kReady,
+                       {});
+    return;
+  }
   if (!agent) return;
+  completeNodeLocked(node, std::vector<AgentId>{*agent},
+                     ArtifactState::kReady, {});
+}
+
+void ArtifactRepository::CompleteNode(
+    NodeId node, const std::vector<AgentId>& affected_agents) {
+  std::lock_guard lock(mutex_);
+  completeNodeLocked(node, affected_agents, ArtifactState::kReady, {});
+}
+
+void ArtifactRepository::completeNodeLocked(
+    NodeId node, const std::vector<AgentId>& affected_agents,
+    ArtifactState state, const std::string& detail) {
   for (auto type : DescribeNode(node).produced_artifacts) {
-    std::optional<AgentId> key_agent;
-    if (IsPerAgent(type)) key_agent = agent;
-    ArtifactKey key{type, key_agent};
-    auto& item = artifacts_[key];
-    item.key = key;
-    item.state = ArtifactState::kReady;
-    item.revision = next_revision_++;
-    item.producer = std::string(DescribeNode(node).name);
-    item.detail.clear();
+    const std::vector<std::optional<AgentId>> owners = IsPerAgent(type)
+        ? [&] {
+            std::vector<std::optional<AgentId>> result;
+            result.reserve(affected_agents.size());
+            for (const auto& item : affected_agents) result.emplace_back(item);
+            return result;
+          }()
+        : std::vector<std::optional<AgentId>>{std::nullopt};
+    for (const auto& owner : owners) {
+      ArtifactKey key{type, owner};
+      auto& item = artifacts_[key];
+      item.key = key;
+      item.state = state;
+      item.revision = next_revision_++;
+      item.producer = std::string(DescribeNode(node).name);
+      item.detail = detail;
+    }
   }
 }
 
 void ArtifactRepository::FailNode(NodeId node, std::optional<AgentId> agent,
                                   std::string detail) {
   std::lock_guard lock(mutex_);
-  if (!agent) return;
-  for (auto type : DescribeNode(node).produced_artifacts) {
-    std::optional<AgentId> key_agent;
-    if (IsPerAgent(type)) key_agent = agent;
-    ArtifactKey key{type, key_agent};
-    auto& item = artifacts_[key];
-    item.key = key;
-    item.state = ArtifactState::kFailed;
-    item.revision = next_revision_++;
-    item.producer = std::string(DescribeNode(node).name);
-    item.detail = detail;
+  if (ExecutionSpecFor(node).scope == ExecutionScope::kSession) {
+    auto affected_agents = executionAgentsLocked(node, agent);
+    if (!affected_agents) return;
+    completeNodeLocked(node, affected_agents.Value(), ArtifactState::kFailed,
+                       detail);
+    return;
   }
+  if (!agent) return;
+  completeNodeLocked(node, std::vector<AgentId>{*agent},
+                     ArtifactState::kFailed, detail);
+}
+
+void ArtifactRepository::FailNode(
+    NodeId node, const std::vector<AgentId>& affected_agents,
+    std::string detail) {
+  std::lock_guard lock(mutex_);
+  completeNodeLocked(node, affected_agents, ArtifactState::kFailed, detail);
 }
 
 void ArtifactRepository::ApplyConfig(ConfigDomain domain,

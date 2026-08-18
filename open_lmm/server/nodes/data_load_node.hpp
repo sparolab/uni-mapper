@@ -9,10 +9,18 @@ class DataLoadNode : public PipelineNodeBase {
  public:
   explicit DataLoadNode(std::unique_ptr<DataLoaderBase> loader)
       : loader_(std::move(loader)) {}
+  DataLoadNode(std::unique_ptr<DataLoaderBase> loader,
+               AlgorithmExecutionContext algorithm_context)
+      : loader_(std::move(loader)),
+        algorithm_context_(std::move(algorithm_context)) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
-    auto raw_result = loader_->Process(ctx.agent, ctx.data_dir);
+    AlgorithmExecutionContext algorithm_context = algorithm_context_;
+    algorithm_context.agent = ctx.agent;
+    algorithm_context.cancellation = ctx.cancellation;
+    auto raw_result = loader_->Process(
+        algorithm_context, DataLoaderInput{ctx.data_dir});
     if (!raw_result) {
       return Result<ControlFlow>::Failure(raw_result.GetError());
     }
@@ -31,6 +39,7 @@ class DataLoadNode : public PipelineNodeBase {
 
  private:
   std::unique_ptr<DataLoaderBase> loader_;
+  AlgorithmExecutionContext algorithm_context_;
 };
 
 }  // namespace open_lmm

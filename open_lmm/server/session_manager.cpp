@@ -25,6 +25,15 @@ bool SessionManager::Matches(
 Result<void> SessionManager::Commit(
     const std::shared_ptr<const SessionState>& expected,
     std::shared_ptr<const SessionState> candidate) {
+  return CommitWithBarrier(expected, std::move(candidate), [] {
+    return Result<void>::Ok();
+  });
+}
+
+Result<void> SessionManager::CommitWithBarrier(
+    const std::shared_ptr<const SessionState>& expected,
+    std::shared_ptr<const SessionState> candidate,
+    const std::function<Result<void>()>& commit_side_effects) {
   std::lock_guard lock(mutex_);
   if (!committed_ || !expected || committed_.get() != expected.get() ||
       committed_->revision != expected->revision) {
@@ -35,6 +44,8 @@ Result<void> SessionManager::Commit(
     return Result<void>::Failure(
         Error::InvalidArgument("session transaction candidate revision is invalid"));
   }
+  auto side_effects = commit_side_effects();
+  if (!side_effects) return side_effects;
   committed_ = std::move(candidate);
   return Result<void>::Ok();
 }

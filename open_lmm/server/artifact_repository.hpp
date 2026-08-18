@@ -23,9 +23,15 @@ class ArtifactRepository {
   void CompleteLoopDetectThrough(const AgentId& target_agent,
                                  const std::vector<AgentId>& ordered_agents);
   Result<void> ValidateNode(NodeId node, std::optional<AgentId> agent) const;
+  [[nodiscard]] Result<std::vector<AgentId>> ExecutionAgents(
+      NodeId node, std::optional<AgentId> agent) const;
   void BeginNode(NodeId node, std::optional<AgentId> agent);
+  void BeginNode(NodeId node, const std::vector<AgentId>& affected_agents);
   void CompleteNode(NodeId node, std::optional<AgentId> agent);
+  void CompleteNode(NodeId node, const std::vector<AgentId>& affected_agents);
   void FailNode(NodeId node, std::optional<AgentId> agent, std::string detail);
+  void FailNode(NodeId node, const std::vector<AgentId>& affected_agents,
+                std::string detail);
   void ApplyConfig(ConfigDomain domain, uint64_t config_revision);
   void RecordExternalFile(ArtifactType type, AgentId agent,
                           std::string path, std::string fingerprint);
@@ -34,6 +40,13 @@ class ArtifactRepository {
 
  private:
   static bool IsPerAgent(ArtifactType type);
+  [[nodiscard]] Result<std::vector<AgentId>> executionAgentsLocked(
+      NodeId node, std::optional<AgentId> agent) const;
+  void beginNodeLocked(NodeId node,
+                       const std::vector<AgentId>& affected_agents);
+  void completeNodeLocked(NodeId node,
+                          const std::vector<AgentId>& affected_agents,
+                          ArtifactState state, const std::string& detail);
   void setTypes(const std::vector<ArtifactType>& types, ArtifactState state,
                 const std::string& producer, const std::string& detail = {});
   void invalidateDownstream(StageId stage);

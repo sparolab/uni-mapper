@@ -35,6 +35,16 @@ void Require(bool condition, const std::string& message) {
   }
 }
 
+open_lmm::Result<open_lmm::ExecutionReceipt> Execute(
+    open_lmm::MapServer& server, open_lmm::ExecutionCommand command) {
+  const auto snapshot = server.Snapshot();
+  open_lmm::ExecutionContext context{
+      std::make_shared<open_lmm::CancellationToken>(),
+      std::make_shared<open_lmm::AlignmentFeedbackBroker>(),
+      snapshot.revision};
+  return server.Execute(command, context);
+}
+
 class TemporaryTree {
  public:
   TemporaryTree() {
@@ -276,18 +286,21 @@ int main() {
   Require(configured.IsOk(), "load self-contained configuration");
 
   open_lmm::MapServer server;
+  const uint64_t batch_base_revision = server.Snapshot().revision;
   auto completed = server.process();
   if (!completed) {
     std::cerr << completed.GetError().Message() << '\n';
   }
   Require(completed.IsOk(), "complete two-agent pipeline");
 
-  const auto snapshot = server.SessionSnapshot();
-  Require(snapshot.has_value(), "publish committed session snapshot");
-  Require(snapshot->ordered_agents ==
+  const auto snapshot = server.Snapshot();
+  Require(snapshot.revision ==
+              batch_base_revision + open_lmm::PipelineStages().size(),
+          "batch compatibility path commits one receipt per port command");
+  Require(snapshot.ordered_agents ==
               std::vector<open_lmm::AgentId>({Id("agent1"), Id("agent2")}),
           "retain two ordered agents");
-  Require(snapshot->descriptor_count == 8,
+  Require(snapshot.descriptor_count == 8,
           "replaceable descriptor store contains one entry per scan");
   Require(CountNamedFiles(output, "optimized_poses_", ".txt") == 2,
           "save one optimized pose file per agent");
@@ -296,6 +309,29 @@ int main() {
           "pose filenames preserve configured directory AgentIds");
   Require(CountNamedFiles(output, "global_map_", ".pcd") == 2,
           "save one fallback map per agent with Map Update disabled");
+  auto map_before_pose_save = server.Visualization(Id("agent1"));
+  Require(map_before_pose_save && map_before_pose_save.Value().map_available,
+          "completed Save stage publishes the committed fallback map");
+  auto pose_saved = Execute(
+      server,
+      open_lmm::ExecutionCommand::Node(open_lmm::NodeId::kPoseSave));
+  Require(pose_saved.IsOk(), "run session PoseSave independently");
+  auto map_after_pose_save = server.Visualization(Id("agent1"));
+  Require(map_after_pose_save && map_after_pose_save.Value().map_available &&
+              map_after_pose_save.Value().points.size() ==
+                  map_before_pose_save.Value().points.size(),
+          "PoseSave preserves an already committed map visualization");
+  const auto fallback_before = server.Snapshot().revision;
+  auto fallback_saved = Execute(
+      server, open_lmm::ExecutionCommand::Node(
+                  open_lmm::NodeId::kFallbackMapSave));
+  Require(fallback_saved &&
+              fallback_saved.Value().base_revision == fallback_before &&
+              fallback_saved.Value().committed_revision ==
+                  fallback_before + 1 &&
+              fallback_saved.Value().affected_agents ==
+                  std::vector<open_lmm::AgentId>({Id("agent1"), Id("agent2")}),
+          "fallback map receipt derives both owners from artifact revisions");
   const fs::path manifest_path = FindNamedFile(output, "agent_manifest.json");
   Require(!manifest_path.empty(), "write the agent symbol manifest");
   std::ifstream manifest_input(manifest_path);
@@ -308,51 +344,85 @@ int main() {
               manifest["agents"][1]["symbol_byte"] == 2,
           "manifest preserves config-order AgentId to byte mapping");
 
+  const fs::path skip_config = fixture.path() / "skip-config";
+  const fs::path skip_output = fixture.path() / "skip-output";
+  WriteConfiguration(skip_config, data, skip_output);
+  auto skip_map_config = ReadJson(skip_config / "server/map_server.json");
+  skip_map_config["map_server"]["enable_map_updater"] = true;
+  WriteJson(skip_config / "server/map_server.json", skip_map_config);
+  open_lmm::MapServer skip_server(skip_config);
+  Require(Execute(skip_server, open_lmm::ExecutionCommand::Stage(
+                                   open_lmm::StageId::kDataLoad)).IsOk() &&
+              Execute(skip_server, open_lmm::ExecutionCommand::Stage(
+                                   open_lmm::StageId::kAlignment)).IsOk(),
+          "prepare optimized poses for fallback-map skip test");
+  const auto skip_before = skip_server.Snapshot().revision;
+  auto skipped_map = Execute(
+      skip_server, open_lmm::ExecutionCommand::Node(
+                       open_lmm::NodeId::kFallbackMapSave));
+  Require(skipped_map &&
+              skipped_map.Value().base_revision == skip_before &&
+              skipped_map.Value().committed_revision == skip_before + 1 &&
+              skip_server.Snapshot().revision ==
+                  skipped_map.Value().committed_revision &&
+              skipped_map.Value().affected_agents.empty() &&
+              CountNamedFiles(skip_output, "global_map_", ".pcd") == 0,
+          "fallback map node is an explicit no-op when Map Update is enabled");
+
   const auto valid_loop = ReadJson(config / "core/loop_detector.json");
   const auto valid_optimizer = ReadJson(config / "core/optimizer.json");
   const auto valid_remover = ReadJson(config / "core/remover.json");
   const auto valid_map = ReadJson(config / "server/map_server.json");
   WriteJson(config / "core/remover.json", nlohmann::json::object());
-  Require(server.Reconfigure(open_lmm::ConfigDomain::kMapSave, 2).IsOk(),
+  Require(Execute(server, open_lmm::ExecutionCommand::Reconfigure(
+                      open_lmm::ConfigDomain::kMapSave, 2)).IsOk(),
           "map-save reconfigure ignores unrelated invalid remover config");
-  auto preserved = server.CreateVisualizationSnapshot(Id("agent1"));
+  auto preserved = server.Visualization(Id("agent1"));
   Require(preserved && !preserved.Value().poses.empty() &&
               !preserved.Value().map_available,
           "map-save reconfigure preserves trajectory while invalidating map");
   WriteJson(config / "core/remover.json", valid_remover);
   WriteJson(config / "server/map_server.json", nlohmann::json::object());
-  Require(server.Reconfigure(open_lmm::ConfigDomain::kDynamicRemover, 3).IsOk(),
+  Require(Execute(server, open_lmm::ExecutionCommand::Reconfigure(
+                      open_lmm::ConfigDomain::kDynamicRemover, 3)).IsOk(),
           "remover reconfigure ignores unrelated invalid map-save config");
-  preserved = server.CreateVisualizationSnapshot(Id("agent1"));
+  preserved = server.Visualization(Id("agent1"));
   Require(preserved && !preserved.Value().poses.empty(),
           "remover reconfigure preserves optimized trajectory");
   auto changed_identity_map = valid_map;
   changed_identity_map["map_server"]["anchor_agent_index"] = 1;
   WriteJson(config / "server/map_server.json", changed_identity_map);
-  Require(!server.Reconfigure(open_lmm::ConfigDomain::kMapSave, 4),
+  Require(!Execute(server, open_lmm::ExecutionCommand::Reconfigure(
+                       open_lmm::ConfigDomain::kMapSave, 4)),
           "session identity field is rejected during map-save hot reload");
   WriteJson(config / "server/map_server.json", valid_map);
   WriteJson(config / "core/loop_detector.json", nlohmann::json::object());
-  Require(server.Reconfigure(open_lmm::ConfigDomain::kOptimizer, 4).IsOk(),
+  Require(Execute(server, open_lmm::ExecutionCommand::Reconfigure(
+                      open_lmm::ConfigDomain::kOptimizer, 4)).IsOk(),
           "optimizer reconfigure ignores unrelated invalid loop config");
   WriteJson(config / "core/loop_detector.json", valid_loop);
   WriteJson(config / "core/optimizer.json", nlohmann::json::object());
-  Require(server.Reconfigure(open_lmm::ConfigDomain::kLoopDetector, 5).IsOk(),
+  Require(Execute(server, open_lmm::ExecutionCommand::Reconfigure(
+                      open_lmm::ConfigDomain::kLoopDetector, 5)).IsOk(),
           "loop reconfigure ignores unrelated invalid optimizer config");
   WriteJson(config / "core/optimizer.json", valid_optimizer);
 
-  const auto reconfigured_snapshot = server.SessionSnapshot();
-  Require(reconfigured_snapshot.has_value(),
+  const auto reconfigured_snapshot = server.Snapshot();
+  Require(reconfigured_snapshot.revision != 0,
           "publish reconfigured committed session snapshot");
-  const uint64_t full_revision = reconfigured_snapshot->revision;
-  auto replay_loop = server.RunNode(open_lmm::NodeId::kLoopDetect, Id("agent2"));
+  const uint64_t full_revision = reconfigured_snapshot.revision;
+  auto replay_loop = Execute(server, open_lmm::ExecutionCommand::Node(
+                                         open_lmm::NodeId::kLoopDetect,
+                                         Id("agent2")));
   Require(replay_loop.IsOk(), "ordered LoopDetect replay for follower");
-  auto replay_optimize = server.RunNode(open_lmm::NodeId::kOptimize, Id("agent2"));
+  auto replay_optimize = Execute(server, open_lmm::ExecutionCommand::Node(
+                                             open_lmm::NodeId::kOptimize,
+                                             Id("agent2")));
   Require(replay_optimize.IsOk(), "ordered Optimize replay for follower");
-  const auto replayed = server.SessionSnapshot();
-  Require(replayed && replayed->revision == full_revision + 2,
+  const auto replayed = server.Snapshot();
+  Require(replayed.revision == full_revision + 2,
           "commit one revision per ordered replay node");
-  Require(replayed->descriptor_count == snapshot->descriptor_count,
+  Require(replayed.descriptor_count == snapshot.descriptor_count,
           "ordered replay does not append duplicate descriptors");
 
   const fs::path v1_config = fixture.path() / "v1-config";
@@ -386,11 +456,10 @@ int main() {
     }
     Require(parallel_completed.IsOk(),
             "complete two-agent pipeline with parallel DataLoad");
-    const auto parallel_snapshot = parallel_server.SessionSnapshot();
-    Require(parallel_snapshot &&
-                parallel_snapshot->ordered_agents == snapshot->ordered_agents &&
-                parallel_snapshot->descriptor_count ==
-                    snapshot->descriptor_count,
+    const auto parallel_snapshot = parallel_server.Snapshot();
+    Require(parallel_snapshot.ordered_agents == snapshot.ordered_agents &&
+                parallel_snapshot.descriptor_count ==
+                    snapshot.descriptor_count,
             "parallel DataLoad preserves agent order and descriptor cardinality");
     Require(governor->ReservedMemoryBytes() > 0,
             "committed raw payload keeps resident memory reserved");
@@ -416,20 +485,22 @@ int main() {
   {
     open_lmm::MapServer first_session(
         pressure_config, std::nullopt, pressure_governor);
-    Require(first_session.RunStage(open_lmm::StageId::kDataLoad).IsOk(),
+    Require(Execute(first_session, open_lmm::ExecutionCommand::Stage(
+                                       open_lmm::StageId::kDataLoad)).IsOk(),
             "first session is admitted under resident budget");
-    const auto first_before = first_session.SessionSnapshot();
+    const auto first_before = first_session.Snapshot();
     const uint64_t first_reserved = pressure_governor->ReservedMemoryBytes();
-    Require(first_before && first_reserved == calibrated_resident_bytes,
+    Require(first_before.revision != 0 &&
+                first_reserved == calibrated_resident_bytes,
             "first session owns its calibrated resident reservation");
     open_lmm::MapServer second_session(
         pressure_config, std::nullopt, pressure_governor);
-    auto rejected = second_session.RunStage(open_lmm::StageId::kDataLoad);
+    auto rejected = Execute(second_session, open_lmm::ExecutionCommand::Stage(
+                                                open_lmm::StageId::kDataLoad));
     Require(!rejected,
             "second session fails admission before exceeding resident budget");
-    const auto first_after = first_session.SessionSnapshot();
-    Require(first_after && first_before &&
-                first_after->revision == first_before->revision &&
+    const auto first_after = first_session.Snapshot();
+    Require(first_after.revision == first_before.revision &&
                 pressure_governor->ReservedMemoryBytes() == first_reserved &&
                 pressure_governor->MemoryAdmissionFailures() > 0,
             "failed second session preserves first committed state and budget");

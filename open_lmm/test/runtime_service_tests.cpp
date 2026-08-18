@@ -1,4 +1,5 @@
 #include <open_lmm/server/runtime_service.hpp>
+#include "test_runtime_port.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -44,15 +45,113 @@ void WriteRootConfig(const fs::path& directory, const fs::path& output_root,
          << "}\n";
 }
 
-class IsolatedRunner final : public StageRunner {
+void WriteDefaultRuntimeFixture(const fs::path& config_directory,
+                                const fs::path& data_root,
+                                const fs::path& output_root) {
+  const fs::path agent = data_root / "agent1";
+  fs::create_directories(agent / "Scans");
+  {
+    std::ofstream pose(agent / "poses.txt");
+    pose << "1 0 0 0 0 1 0 0 0 0 1 0\n";
+  }
+  {
+    std::ofstream scan(agent / "Scans/000000.pcd");
+    scan << "# .PCD v0.7\n"
+         << "VERSION 0.7\n"
+         << "FIELDS x y z intensity\n"
+         << "SIZE 4 4 4 4\n"
+         << "TYPE F F F F\n"
+         << "COUNT 1 1 1 1\n"
+         << "WIDTH 1\nHEIGHT 1\n"
+         << "VIEWPOINT 0 0 0 1 0 0 0\n"
+         << "POINTS 1\nDATA ascii\n"
+         << "10 0 0 1\n";
+  }
+  fs::create_directories(config_directory / "server");
+  fs::create_directories(config_directory / "core");
+  {
+    std::ofstream root(config_directory / "config.json");
+    root << "{\n"
+         << "  \"global\": {\n"
+         << "    \"config_map_server\": \"server/map.json\",\n"
+         << "    \"config_data_loader\": \"core/data.json\",\n"
+         << "    \"config_loop_detector\": \"core/loop.json\",\n"
+         << "    \"config_backend_optimizer\": \"core/optimizer.json\",\n"
+         << "    \"config_dynamic_remover\": \"core/remover.json\"\n"
+         << "  },\n"
+         << "  \"directory\": {\n"
+         << "    \"root_dir_path\": \"" << data_root.string() << "\",\n"
+         << "    \"sub_dir_list\": [\"agent1\"],\n"
+         << "    \"root_save_dir\": \"" << output_root.string() << "\"\n"
+         << "  }\n"
+         << "}\n";
+  }
+  {
+    std::ofstream map(config_directory / "server/map.json");
+    map << "{\"map_server\":{"
+        << "\"enable_map_updater\":false,"
+        << "\"anchor_agent_index\":0,"
+        << "\"save_voxel_size\":0.2,"
+        << "\"parallel_data_load\":false,"
+        << "\"parallel_map_update\":false,"
+        << "\"max_parallel_agents\":1}}\n";
+  }
+  {
+    std::ofstream data(config_directory / "core/data.json");
+    data << "{\"data_loader\":{"
+         << "\"data_loader_type\":\"file_based\","
+         << "\"pose_format\":\"kitti\","
+         << "\"pose_file_name\":\"poses.txt\","
+         << "\"extrinsic\":[0,0,0,0,0,0,1],"
+         << "\"scan_type\":\"pcd\","
+         << "\"scan_dir_name\":\"Scans\","
+         << "\"voxel_size\":0.5,"
+         << "\"min_range\":1.0,"
+         << "\"max_range\":60.0,"
+         << "\"delimiter\":\" \"}}\n";
+  }
+  {
+    std::ofstream loop(config_directory / "core/loop.json");
+    loop << "{"
+         << "\"loop_detector\":{\"loop_detector_type\":\"kdtree\","
+         << "\"plugin_abi\":\"auto\",\"model\":\"scan_context\"},"
+         << "\"database\":{\"descriptor_vector_dim\":20,"
+         << "\"distance_threshold\":0.15,\"num_candidates\":3,"
+         << "\"rebuild_threshold\":50},"
+         << "\"alignment\":{\"pcm_translation_threshold\":10.0,"
+         << "\"pcm_rotation_threshold_deg\":20.0,"
+         << "\"pcm_solver\":\"heuristic\",\"pcm_threads\":1,"
+         << "\"pcm_max_candidates\":0}}\n";
+  }
+  {
+    std::ofstream optimizer(config_directory / "core/optimizer.json");
+    optimizer << "{\"backend_optimizer\":{"
+              << "\"backend_optimizer_type\":\"incremental\","
+              << "\"relinearizeThreshold\":0.1,"
+              << "\"relinearizeSkip\":1,"
+              << "\"isam_extra_updates\":1,"
+              << "\"min_loop_frame_gap\":30,"
+              << "\"icp_search_num\":1}}\n";
+  }
+  {
+    std::ofstream remover(config_directory / "core/remover.json");
+    remover << "{\"dynamic_remover\":{"
+            << "\"dynamic_remover_type\":\"offline\","
+            << "\"model\":\"free_dom\"}}\n";
+  }
+}
+
+class IsolatedRunner final : public test::RuntimePortFixture {
  public:
   IsolatedRunner(AgentId agent, bool block)
-      : agent_(std::move(agent)), block_(block) {}
+      : RuntimePortFixture({agent}), block_(block) {}
 
-  void SetCancellationToken(std::shared_ptr<CancellationToken> token) override {
-    cancellation_ = std::move(token);
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext& context) override {
+    cancellation_ = context.cancellation;
+    return Run();
   }
-  Result<void> RunStage(StageId) override {
+  Result<void> Run() {
     entered = true;
     while (block_ && !released.load(std::memory_order_acquire)) {
       if (cancellation_ && cancellation_->IsCancellationRequested()) {
@@ -65,38 +164,24 @@ class IsolatedRunner final : public StageRunner {
     exited = true;
     return Result<void>::Ok();
   }
-  Result<void> RunNode(NodeId, std::optional<AgentId>) override {
-    return RunStage(StageId::kDataLoad);
-  }
-  Result<void> RunOptimizeThrough(const AgentId&) override {
-    return RunStage(StageId::kAlignment);
-  }
-  std::vector<AgentId> AgentIds() const override { return {agent_}; }
 
   std::atomic<bool> entered{false};
   std::atomic<bool> exited{false};
   std::atomic<bool> released{false};
 
  private:
-  AgentId agent_;
   bool block_;
   std::shared_ptr<CancellationToken> cancellation_;
 };
 
-class FatalRunner final : public StageRunner {
+class FatalRunner final : public test::RuntimePortFixture {
  public:
-  void SetCancellationToken(std::shared_ptr<CancellationToken>) override {}
-  Result<void> RunStage(StageId) override {
+  FatalRunner() : RuntimePortFixture({Id("fatal-agent")}) {}
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext&) override {
     return Result<void>::Failure(
         Error::IoError("fatal session fixture").MarkFatalSession());
   }
-  Result<void> RunNode(NodeId, std::optional<AgentId>) override {
-    return RunStage(StageId::kDataLoad);
-  }
-  Result<void> RunOptimizeThrough(const AgentId&) override {
-    return RunStage(StageId::kAlignment);
-  }
-  std::vector<AgentId> AgentIds() const override { return {Id("fatal-agent")}; }
 };
 
 template <typename Predicate>
@@ -122,14 +207,14 @@ void TestMultiSessionIsolationAndLifecycle() {
   std::map<std::string, std::shared_ptr<IsolatedRunner>> runners;
   RuntimeService service(
       2, [&](const BootstrapRequest& request, const fs::path& output)
-             -> Result<std::shared_ptr<StageRunner>> {
+             -> Result<std::shared_ptr<StageRuntimePort>> {
         const bool first = request.label == "one";
         auto runner = std::make_shared<IsolatedRunner>(
             first ? Id("agent1") : Id("agent2"), true);
         std::lock_guard lock(factory_mutex);
         outputs.push_back(output);
         runners.emplace(request.label, runner);
-        return Result<std::shared_ptr<StageRunner>>::Ok(runner);
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(runner);
       });
 
   auto one = service.CreateSession({root / "config-one", "one"});
@@ -240,9 +325,9 @@ void TestShutdownStressCancelsAndJoins() {
   {
     RuntimeService service(
         1, [&](const BootstrapRequest&, const fs::path&)
-               -> Result<std::shared_ptr<StageRunner>> {
+               -> Result<std::shared_ptr<StageRuntimePort>> {
           runner = std::make_shared<IsolatedRunner>(Id("agent1"), true);
-          return Result<std::shared_ptr<StageRunner>>::Ok(runner);
+          return Result<std::shared_ptr<StageRuntimePort>>::Ok(runner);
         });
     auto session = service.CreateSession({root / "config", "shutdown"});
     Check(session && service.Submit(session.Value(), {}),
@@ -262,8 +347,8 @@ void TestFatalStateAndCompletedClose() {
   WriteRootConfig(root / "config", root / "output", "fatal-agent");
   RuntimeService service(
       1, [](const BootstrapRequest&, const fs::path&)
-             -> Result<std::shared_ptr<StageRunner>> {
-        return Result<std::shared_ptr<StageRunner>>::Ok(
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
             std::make_shared<FatalRunner>());
       });
   auto session = service.CreateSession({root / "config", "fatal"});
@@ -283,12 +368,47 @@ void TestFatalStateAndCompletedClose() {
   fs::remove_all(root);
 }
 
+void TestDefaultCloseReleasesResidentReservation() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_service_resident_close_tests";
+  fs::remove_all(root);
+  WriteDefaultRuntimeFixture(root / "config", root / "data", root / "output");
+  RuntimeService service(ResourceBudget{1, 1, 1, 64ULL * 1024ULL * 1024ULL});
+  auto session = service.CreateSession({root / "config", "resident-close"});
+  Check(session.IsOk(), "default RuntimeService session bootstraps");
+  ExecutionRequest request;
+  request.kind = ExecutionRequestKind::kStage;
+  request.stage = StageId::kDataLoad;
+  auto job = service.Submit(session.Value(), request);
+  Check(job.IsOk(), "default RuntimeService DataLoad submitted");
+  WaitUntil(
+      [&] {
+        auto snapshot = service.Snapshot(session.Value());
+        return snapshot && snapshot.Value().state == RuntimeSessionState::kReady &&
+               snapshot.Value().pipeline.job &&
+               snapshot.Value().pipeline.job->state == JobState::kSucceeded;
+      },
+      "default RuntimeService DataLoad completed");
+  Check(service.Governor().ReservedMemoryBytes(
+            MemoryClass::kResidentPayload) > 0,
+        "committed runtime session owns resident memory");
+  Check(service.CloseSession(session.Value(), CloseMode::kRejectIfRunning).IsOk(),
+        "default RuntimeService session closes after DataLoad");
+  Check(service.Governor().ActiveSessions() == 0 &&
+            service.Governor().ReservedMemoryBytes() == 0 &&
+            service.Governor().ReservedMemoryBytes(
+                MemoryClass::kResidentPayload) == 0,
+        "CloseSession releases the default port resident reservation");
+  fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
   TestMultiSessionIsolationAndLifecycle();
   TestShutdownStressCancelsAndJoins();
   TestFatalStateAndCompletedClose();
+  TestDefaultCloseReleasesResidentReservation();
   std::cout << "runtime service multi-session tests passed\n";
   return 0;
 }

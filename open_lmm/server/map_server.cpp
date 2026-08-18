@@ -16,49 +16,47 @@ MapServer::MapServer(
           std::move(resource_governor))) {}
 MapServer::~MapServer() = default;
 
-Result<void> MapServer::process() { return executor_->process(); }
-
-void MapServer::SetCancellationToken(
-    std::shared_ptr<CancellationToken> token) {
-  executor_->SetCancellationToken(std::move(token));
+Result<void> MapServer::process() {
+  auto cancellation = std::make_shared<CancellationToken>(
+      CancellationMetadata());
+  auto feedback = std::make_shared<AlignmentFeedbackBroker>();
+  for (StageId stage : PipelineStages()) {
+    const uint64_t base_revision = Snapshot().revision;
+    auto executed = Execute(ExecutionCommand::Stage(stage),
+                            {cancellation, feedback, base_revision});
+    if (!executed) return Result<void>::Failure(executed.GetError());
+    const auto& receipt = executed.Value();
+    const uint64_t query_revision = Snapshot().revision;
+    if (receipt.base_revision != base_revision ||
+        receipt.committed_revision <= base_revision ||
+        query_revision != receipt.committed_revision) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "batch execution receipt does not match committed session: base=" +
+          std::to_string(base_revision) + " receipt_base=" +
+          std::to_string(receipt.base_revision) + " receipt_committed=" +
+          std::to_string(receipt.committed_revision) + " query=" +
+          std::to_string(query_revision)));
+    }
+  }
+  return Result<void>::Ok();
 }
 
 CancellationCapability MapServer::CancellationMetadata() const {
   return executor_->CancellationMetadata();
 }
 
-void MapServer::SetAlignmentFeedbackBroker(
-    std::shared_ptr<AlignmentFeedbackBroker> broker) {
-  executor_->SetAlignmentFeedbackBroker(std::move(broker));
+Result<ExecutionReceipt> MapServer::Execute(
+    const ExecutionCommand& command, const ExecutionContext& context) {
+  return executor_->Execute(command, context);
 }
 
-Result<void> MapServer::RunStage(StageId stage) {
-  return executor_->RunStage(stage);
+CommittedSessionSnapshot MapServer::Snapshot() const {
+  return executor_->Snapshot();
 }
 
-Result<void> MapServer::RunNode(NodeId node, std::optional<AgentId> agent) {
-  return executor_->RunNode(node, agent);
-}
-
-Result<void> MapServer::RunOptimizeThrough(const AgentId& target_agent) {
-  return executor_->RunOptimizeThrough(target_agent);
-}
-
-Result<void> MapServer::Reconfigure(ConfigDomain domain, uint64_t revision) {
-  return executor_->Reconfigure(domain, revision);
-}
-
-std::vector<AgentId> MapServer::AgentIds() const {
-  return executor_->AgentIds();
-}
-
-std::optional<CommittedSessionSnapshot> MapServer::SessionSnapshot() const {
-  return executor_->SessionSnapshot();
-}
-
-Result<VisualizationSnapshot> MapServer::CreateVisualizationSnapshot(
+Result<VisualizationSnapshot> MapServer::Visualization(
     const AgentId& agent) const {
-  return executor_->CreateVisualizationSnapshot(agent);
+  return executor_->Visualization(agent);
 }
 
 Result<void> MapServer::ValidateReady() { return executor_->ValidateReady(); }

@@ -24,24 +24,34 @@ AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
   std::exit(1);
 }
 
-void Require(const Result<void>& result, const std::string& operation) {
+template <typename T>
+void Require(const Result<T>& result, const std::string& operation) {
   if (!result) Fail(operation + ": " + result.GetError().Message());
 }
 
 CommittedSessionSnapshot RequireSessionSnapshot(const MapServer& server) {
-  const auto snapshot = server.SessionSnapshot();
-  if (!snapshot) Fail("committed session snapshot is unavailable");
-  return *snapshot;
+  const auto snapshot = server.Snapshot();
+  if (snapshot.revision == 0) Fail("committed session snapshot is unavailable");
+  return snapshot;
 }
 
 VisualizationSnapshot RequireVisualizationSnapshot(const MapServer& server,
                                                     const AgentId& agent) {
-  auto snapshot = server.CreateVisualizationSnapshot(agent);
+  auto snapshot = server.Visualization(agent);
   if (!snapshot) {
     Fail("visualization snapshot for agent " + agent.Value() +
          ": " + snapshot.GetError().Message());
   }
   return std::move(snapshot).Value();
+}
+
+Result<ExecutionReceipt> Execute(MapServer& server,
+                                 ExecutionCommand command) {
+  return server.Execute(
+      command,
+      {std::make_shared<CancellationToken>(),
+       std::make_shared<AlignmentFeedbackBroker>(),
+       server.Snapshot().revision});
 }
 
 ArtifactState StateOf(const CommittedSessionSnapshot& snapshot,
@@ -134,11 +144,14 @@ int main(int argc, char** argv) {
   Require(server.ValidateReady(), "validate configuration");
   const AgentId test1 = Id("test1");
   const AgentId test2 = Id("test2");
-  if (server.AgentIds() != std::vector<AgentId>({test1, test2})) {
+  if (server.Snapshot().ordered_agents !=
+      std::vector<AgentId>({test1, test2})) {
     Fail("replay verification requires exactly test1/test2");
   }
-  Require(server.RunStage(StageId::kDataLoad), "DataLoad");
-  Require(server.RunStage(StageId::kAlignment), "full Alignment");
+  Require(Execute(server, ExecutionCommand::Stage(StageId::kDataLoad)),
+          "DataLoad");
+  Require(Execute(server, ExecutionCommand::Stage(StageId::kAlignment)),
+          "full Alignment");
 
   const auto full_state = RequireSessionSnapshot(server);
   const auto full_a = RequireVisualizationSnapshot(server, test1);
@@ -148,7 +161,8 @@ int main(int argc, char** argv) {
     Fail("visualization snapshot must use the committed session revision");
   }
 
-  Require(server.RunNode(NodeId::kLoopDetect, test2), "LoopDetect(test2) replay 1");
+  Require(Execute(server, ExecutionCommand::Node(NodeId::kLoopDetect, test2)),
+          "LoopDetect(test2) replay 1");
   const auto loop_once = RequireSessionSnapshot(server);
   VerifyDescriptorCounts(full_state, loop_once, "LoopDetect(B) replay 1");
   if (loop_once.revision <= full_state.revision ||
@@ -163,14 +177,16 @@ int main(int argc, char** argv) {
     Fail("LoopDetect(B) replay committed inconsistent artifact metadata");
   }
 
-  Require(server.RunNode(NodeId::kLoopDetect, test2), "LoopDetect(test2) replay 2");
+  Require(Execute(server, ExecutionCommand::Node(NodeId::kLoopDetect, test2)),
+          "LoopDetect(test2) replay 2");
   const auto loop_twice = RequireSessionSnapshot(server);
   VerifyDescriptorCounts(loop_once, loop_twice, "LoopDetect(B) replay 2");
   if (loop_twice.revision <= loop_once.revision) {
     Fail("repeated LoopDetect(B) did not advance the session revision");
   }
 
-  Require(server.RunNode(NodeId::kOptimize, test2), "Optimize(test2) replay");
+  Require(Execute(server, ExecutionCommand::Node(NodeId::kOptimize, test2)),
+          "Optimize(test2) replay");
   const auto replay_state = RequireSessionSnapshot(server);
   VerifyDescriptorCounts(full_state, replay_state, "Optimize(B) replay");
   if (replay_state.revision <= loop_twice.revision ||

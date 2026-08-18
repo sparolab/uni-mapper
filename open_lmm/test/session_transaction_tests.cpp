@@ -1,6 +1,8 @@
 #include <open_lmm/server/output_repository.hpp>
 #include <open_lmm/server/session_manager.hpp>
+#include <open_lmm/server/session_payload_builder.hpp>
 #include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/transaction/session_reconfigurer.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -26,10 +28,10 @@ class FakeOptimizer final : public BackendOptimizerBase {
   explicit FakeOptimizer(std::set<AgentId> processed = {})
       : processed_(std::move(processed)) {}
 
-  std::map<AgentId, AgentOptimizedData> Process(
-      const AgentContext&, const AgentRawData&, const LoopPairVec&,
-      const LoopPairVec&, const AgentRawDataMap&) override {
-    return {};
+  Result<BackendOptimizerOutput> Process(
+      const AlgorithmExecutionContext&,
+      const BackendOptimizerInput&) override {
+    return Result<BackendOptimizerOutput>::Ok({});
   }
   void Reset() override { processed_.clear(); }
   bool HasProcessedAgent(const AgentId& agent) const override {
@@ -66,6 +68,8 @@ std::shared_ptr<const SessionState> DataLoadedState() {
   payload->contexts.push_back(std::move(context));
   payload->database = std::move(database);
   payload->optimizer = std::make_shared<FakeOptimizer>();
+  payload->resident_memory_reservations[Id("A")] =
+      std::make_shared<MemoryReservation>();
   auto state = std::make_shared<SessionState>();
   state->revision = 7;
   state->config = TestConfig();
@@ -96,6 +100,8 @@ std::shared_ptr<const SessionState> AlignedState() {
   payload->contexts.push_back(std::move(context));
   payload->database = std::move(database);
   payload->optimizer = std::make_shared<FakeOptimizer>(std::set<AgentId>{Id("A")});
+  payload->resident_memory_reservations =
+      base->payload->resident_memory_reservations;
   auto state = std::make_shared<SessionState>();
   state->revision = 12;
   state->config = base->config;
@@ -272,6 +278,99 @@ void TestPostFinalizeCancellationDoesNotRollbackCommit() {
         "late cancellation leaves the new committed revision active");
 }
 
+void TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow() {
+  auto base = DataLoadedState();
+  SessionManager manager(base);
+  SessionTransaction rejected(base);
+  auto rejected_candidate = std::move(rejected).Finalize(nullptr);
+  bool installed = false;
+  auto file_failure = manager.CommitWithBarrier(
+      base, std::move(rejected_candidate).Value(), [&] {
+        installed = true;
+        return Result<void>::Failure(Error::IoError("injected file failure"));
+      });
+  Check(!file_failure && installed && manager.Snapshot().get() == base.get(),
+        "file barrier failure preserves the committed session state");
+
+  SessionTransaction accepted(base);
+  auto accepted_candidate = std::move(accepted).Finalize(nullptr);
+  Check(manager.Commit(base, std::move(accepted_candidate).Value()).IsOk(),
+        "advance session before stale barrier attempt");
+  installed = false;
+  SessionTransaction stale(base);
+  auto stale_candidate = std::move(stale).Finalize(nullptr);
+  auto conflict = manager.CommitWithBarrier(
+      base, std::move(stale_candidate).Value(), [&] {
+        installed = true;
+        return Result<void>::Ok();
+      });
+  Check(!conflict && !installed,
+        "revision conflict is rejected before file installation");
+}
+
+void TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled() {
+  auto base = DataLoadedState();
+  auto reused = SessionPayloadBuilder(base->payload).Build();
+  Check(reused.IsOk(), "payload builder accepts shared raw ownership");
+  Check(reused.Value()->resident_memory_reservations.at(Id("A")).get() ==
+            base->payload->resident_memory_reservations.at(Id("A")).get(),
+        "shared raw payload keeps the same reservation owner");
+
+  auto replacement = std::make_shared<AgentRawData>();
+  replacement->agent_id = Id("A");
+  replacement->odom_poses.push_back(Eigen::Isometry3d::Identity());
+  auto database = std::make_shared<SharedDatabase>();
+  database->raw_data[Id("A")] = replacement;
+  auto contexts = base->payload->contexts;
+  contexts.front().raw_data = replacement;
+  auto mismatched = SessionPayloadBuilder(base->payload)
+                        .SetContexts(std::move(contexts))
+                        .SetDatabase(std::move(database))
+                        .Build();
+  Check(!mismatched,
+        "replaced raw payload cannot reuse the previous reservation owner");
+
+  auto replacement_database = std::make_shared<SharedDatabase>();
+  replacement_database->raw_data[Id("A")] = replacement;
+  auto replacement_contexts = base->payload->contexts;
+  replacement_contexts.front().raw_data = replacement;
+  auto replaced =
+      SessionPayloadBuilder(base->payload)
+          .SetContexts(std::move(replacement_contexts))
+          .SetDatabase(std::move(replacement_database))
+          .SetResidentReservation(Id("A"),
+                                  std::make_shared<MemoryReservation>())
+          .Build();
+  Check(replaced.IsOk(),
+        "replaced raw payload accepts a distinct reservation owner");
+}
+
+void TestRejectedReconfigurePreservesCommittedResidentOwnership() {
+  const auto base = DataLoadedState();
+  const auto* reservation =
+      base->payload->resident_memory_reservations.at(Id("A")).get();
+  const auto* raw = base->payload->database->raw_data.at(Id("A")).get();
+  const uint64_t revision = base->revision;
+  const auto artifacts = base->artifacts;
+
+  // The fixture intentionally has no canonical config documents, so prepare
+  // must fail before a candidate can be published or committed.
+  const auto rejected = SessionReconfigurer().Prepare(
+      base, ConfigDomain::kOptimizer, base->config->revision + 1);
+  Check(!rejected, "invalid reconfigure snapshot is rejected");
+  Check(base->revision == revision && base->artifacts.size() == artifacts.size() &&
+            base->payload->database->raw_data.at(Id("A")).get() == raw &&
+            base->payload->resident_memory_reservations.at(Id("A")).get() ==
+                reservation,
+        "reconfigure failure preserves revision, artifacts, raw and resident owner");
+  for (std::size_t i = 0; i < artifacts.size(); ++i) {
+    Check(base->artifacts[i].key == artifacts[i].key &&
+              base->artifacts[i].state == artifacts[i].state &&
+              base->artifacts[i].revision == artifacts[i].revision,
+          "reconfigure failure preserves artifact metadata");
+  }
+}
+
 }  // namespace
 }  // namespace open_lmm
 
@@ -282,6 +381,9 @@ int main() {
   open_lmm::TestOutputRepositoryRollbackAndCommit();
   open_lmm::TestSessionManagerRejectsStaleBaseRevision();
   open_lmm::TestPostFinalizeCancellationDoesNotRollbackCommit();
+  open_lmm::TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow();
+  open_lmm::TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled();
+  open_lmm::TestRejectedReconfigurePreservesCommittedResidentOwnership();
   std::cout << "session transaction tests passed\n";
   return 0;
 }

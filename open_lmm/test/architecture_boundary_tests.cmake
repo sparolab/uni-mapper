@@ -41,7 +41,11 @@ foreach(source IN LISTS core_sources)
       "GlobalConfig"
       "load_module_from_so"
       "create_descriptor_kdtree_module"
-      "create_dynamic_remover_module")
+      "create_dynamic_remover_module"
+      "createInstance("
+      "SetCancellationToken("
+      "LoopDetectorInput"
+      "loadRawScanData")
     string(FIND "${contents}" "${pattern}" found)
     if(NOT found EQUAL -1)
       file(RELATIVE_PATH relative_source "${OPEN_LMM_SOURCE_DIR}" "${source}")
@@ -109,12 +113,12 @@ assert_file_excludes(
   "add_compile_options($<$<CONFIG:Release>:-O3>)"
 )
 
-# MapServer is the stable StageRunner API only; mutable session/runtime
-# responsibilities belong to the internal StageExecutor and SessionManager.
+# MapServer is the stable command/query port façade only; mutable
+# session/runtime responsibilities belong to StageExecutor and SessionManager.
 file(READ "${OPEN_LMM_SOURCE_DIR}/server/map_server.hpp" map_server_header)
 foreach(expected
     "std::unique_ptr<StageExecutor> executor_"
-    "class MapServer final : public StageRunner")
+    "class MapServer final : public StageRuntimePort")
   string(FIND "${map_server_header}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "MapServer façade must contain: ${expected}")
@@ -190,14 +194,29 @@ assert_file_excludes(
   ".detach(")
 file(READ "${OPEN_LMM_SOURCE_DIR}/server/stage_executor.cpp"
   stage_executor_source)
-foreach(expected
-    "runParallelDataLoad"
-    "runParallelMapUpdate"
-    "internal_cpu_threads"
-    "parallel MapUpdate requires allowlisted remover 'erasor'")
-  string(FIND "${stage_executor_source}" "${expected}" found)
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/data_load_executor.cpp"
+  data_load_executor_source)
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/map_update_executor.cpp"
+  map_update_executor_source)
+foreach(expected "AgentExecutor" "MemoryClass::kResidentPayload")
+  string(FIND "${data_load_executor_source}" "${expected}" found)
   if(found EQUAL -1)
-    message(FATAL_ERROR "bounded stage execution must contain: ${expected}")
+    message(FATAL_ERROR "bounded DataLoad executor must contain: ${expected}")
+  endif()
+endforeach()
+foreach(expected "AgentExecutor" "internal_cpu_threads"
+                 "kInstanceIsolatedParallel" "AcquireHeavyMemoryPhase")
+  string(FIND "${map_update_executor_source}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "bounded MapUpdate executor must contain: ${expected}")
+  endif()
+endforeach()
+foreach(forbidden "runParallelDataLoad" "runParallelMapUpdate"
+                  "root_config_" "config_map_server_" "output_save_dir_")
+  string(FIND "${stage_executor_source}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "thin StageExecutor must not retain responsibility: ${forbidden}")
   endif()
 endforeach()
 file(READ "${OPEN_LMM_SOURCE_DIR}/core/data_loader/data_loader_base.hpp"
@@ -206,18 +225,9 @@ string(FIND "${data_loader_header}" "VisitRawScanData" raw_scan_streaming)
 if(raw_scan_streaming EQUAL -1)
   message(FATAL_ERROR "MapUpdate raw scans must expose bounded streaming")
 endif()
-string(FIND "${stage_executor_source}"
-  "Result<void> StageExecutor::runAlignmentStage()" alignment_start)
-string(FIND "${stage_executor_source}"
-  "Result<void> StageExecutor::prepareAlignmentArtifacts" alignment_end)
-if(alignment_start EQUAL -1 OR alignment_end EQUAL -1 OR
-   alignment_end LESS_EQUAL alignment_start)
-  message(FATAL_ERROR "could not locate the ordered Alignment stage boundary")
-endif()
-math(EXPR alignment_length "${alignment_end} - ${alignment_start}")
-string(SUBSTRING "${stage_executor_source}" ${alignment_start}
-  ${alignment_length} alignment_stage)
-string(FIND "${alignment_stage}" "AgentExecutor" parallel_alignment)
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/alignment_executor.cpp"
+  alignment_executor_source)
+string(FIND "${alignment_executor_source}" "AgentExecutor" parallel_alignment)
 if(NOT parallel_alignment EQUAL -1)
   message(FATAL_ERROR "Alignment must remain sequential")
 endif()

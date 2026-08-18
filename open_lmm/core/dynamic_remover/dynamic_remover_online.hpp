@@ -12,14 +12,17 @@ class DynamicRemoverOnline : public DynamicRemoverBase {
   DynamicRemoverOnline(const OnlineParams& params,
                        std::shared_ptr<IOnlineRemoverPlugin> model);
   ~DynamicRemoverOnline() override = default;
-  pcl::PointCloud<pcl::PointXYZI>::Ptr process(
-      std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
-      std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) override;
+  Result<PointCloud::Ptr> Process(
+      const AlgorithmExecutionContext& context,
+      DynamicRemoverInput input) override;
 
   static Result<std::shared_ptr<IOnlineRemoverPlugin>> loadModule(
       const std::string& so_name, const std::string& config_json);
 
  private:
+  PointCloud::Ptr ProcessImpl(
+      std::vector<PointCloud::Ptr> scans,
+      std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
   OnlineParams params_;
   std::shared_ptr<IOnlineRemoverPlugin> online_model_;
 

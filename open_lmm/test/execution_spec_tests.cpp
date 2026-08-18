@@ -67,11 +67,12 @@ ArtifactState StateOf(const std::vector<ArtifactMetadata>& artifacts,
 }
 
 void TestExecutionSpecIsSingleOrderedSource() {
-  Check(ExecutionSpecs().size() == 5, "five node specs registered");
+  Check(ExecutionSpecs().size() == 6, "six node specs registered");
   Check(PipelineNodes() ==
             std::vector<NodeId>({NodeId::kDataLoad, NodeId::kLoopDetect,
                                  NodeId::kOptimize, NodeId::kMapUpdate,
-                                 NodeId::kPoseSave}),
+                                 NodeId::kPoseSave,
+                                 NodeId::kFallbackMapSave}),
         "pipeline node order derives from execution spec");
   Check(PipelineStages() ==
             std::vector<StageId>({StageId::kDataLoad, StageId::kAlignment,
@@ -91,6 +92,113 @@ void TestExecutionSpecIsSingleOrderedSource() {
         "optimizer replay invalidates follower loop outputs");
   Check(ProgressTotal(NodeId::kLoopDetect, {Id("A"), Id("B"), Id("C")}, Id("B")) == 2,
         "ordered progress total uses replay prefix");
+  const auto& pose_save = ExecutionSpecFor(NodeId::kPoseSave);
+  Check(pose_save.scope == ExecutionScope::kSession,
+        "PoseSave is a session-scoped file-set operation");
+  const auto& fallback_map = ExecutionSpecFor(NodeId::kFallbackMapSave);
+  Check(fallback_map.scope == ExecutionScope::kSession &&
+            fallback_map.required_artifacts ==
+                std::vector<ArtifactType>({ArtifactType::kRawData,
+                                           ArtifactType::kOptimizedPoses}) &&
+            fallback_map.produces ==
+                std::vector<ArtifactType>({ArtifactType::kGlobalMap,
+                                           ArtifactType::kPcdFile}),
+        "fallback map file-set has an explicit session execution spec");
+  Check(ArtifactExecutionSpecs().size() == 12 &&
+            ArtifactOwnership(ArtifactType::kDescriptorState) ==
+                ExecutionScope::kSession &&
+            ArtifactOwnership(ArtifactType::kPoseFile) ==
+                ExecutionScope::kPerAgent,
+        "artifact ownership is declared by the registry");
+}
+
+void TestArtifactRevisionDiffDefinesAffectedAgents() {
+  ArtifactRepository artifacts;
+  const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
+  artifacts.Reset(agents);
+  CommittedSessionSnapshot before;
+  before.ordered_agents = agents;
+  before.artifacts = artifacts.Snapshot();
+
+  auto after = before;
+  for (auto& artifact : after.artifacts) {
+    if (artifact.key == ArtifactKey{ArtifactType::kRawData, Id("B")}) {
+      ++artifact.revision;
+    }
+  }
+  Check(ArtifactRevisionAffectedAgents(before, after) ==
+            std::vector<AgentId>{Id("B")},
+        "per-agent artifact revision diff reports its exact owner");
+
+  after = before;
+  for (auto& artifact : after.artifacts) {
+    if (artifact.key ==
+        ArtifactKey{ArtifactType::kConfigSnapshot, std::nullopt}) {
+      ++artifact.revision;
+    }
+  }
+  Check(ArtifactRevisionAffectedAgents(before, after) == agents,
+        "session artifact revision diff expands to every ordered agent");
+}
+
+void TestUnorderedPerAgentNodeInvalidatesOnlyItsTarget() {
+  ArtifactRepository artifacts;
+  const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
+  artifacts.Reset(agents);
+  artifacts.BeginStage(StageId::kDataLoad);
+  artifacts.CompleteStage(StageId::kDataLoad);
+  artifacts.CompleteLoopDetectThrough(Id("C"), agents);
+  artifacts.CompleteOptimizeThrough(Id("C"), agents);
+  artifacts.BeginStage(StageId::kMapUpdate);
+  artifacts.CompleteStage(StageId::kMapUpdate);
+  const auto before = artifacts.Snapshot();
+
+  artifacts.BeginNode(NodeId::kMapUpdate, Id("B"));
+  artifacts.CompleteNode(NodeId::kMapUpdate, Id("B"));
+  const auto after = artifacts.Snapshot();
+  CommittedSessionSnapshot before_session;
+  before_session.ordered_agents = agents;
+  before_session.artifacts = before;
+  CommittedSessionSnapshot after_session;
+  after_session.ordered_agents = agents;
+  after_session.artifacts = after;
+  Check(ArtifactRevisionAffectedAgents(before_session, after_session) ==
+            std::vector<AgentId>{Id("B")},
+        "unordered per-agent MapUpdate changes only its requested owner");
+  Check(StateOf(after, ArtifactType::kPcdFile, Id("A")) ==
+                ArtifactState::kReady &&
+            StateOf(after, ArtifactType::kPcdFile, Id("C")) ==
+                ArtifactState::kReady,
+        "unordered MapUpdate preserves neighboring map artifacts");
+}
+
+void TestPoseSaveUsesAllAndOnlyReadyAgents() {
+  ArtifactRepository artifacts;
+  const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
+  artifacts.Reset(agents);
+  artifacts.BeginStage(StageId::kDataLoad);
+  artifacts.CompleteStage(StageId::kDataLoad);
+  artifacts.CompleteLoopDetectThrough(Id("C"), agents);
+  artifacts.CompleteOptimizeThrough(Id("B"), agents);
+
+  auto affected = artifacts.ExecutionAgents(NodeId::kPoseSave, Id("C"));
+  Check(affected && affected.Value() ==
+                        std::vector<AgentId>({Id("A"), Id("B")}),
+        "session PoseSave ignores a target and selects every ready pose agent");
+  Check(static_cast<bool>(
+            artifacts.ValidateNode(NodeId::kPoseSave, std::nullopt)),
+        "session PoseSave does not require a command target");
+
+  artifacts.BeginNode(NodeId::kPoseSave, affected.Value());
+  artifacts.CompleteNode(NodeId::kPoseSave, affected.Value());
+  const auto snapshot = artifacts.Snapshot();
+  Check(StateOf(snapshot, ArtifactType::kPoseFile, Id("A")) ==
+                ArtifactState::kReady &&
+            StateOf(snapshot, ArtifactType::kPoseFile, Id("B")) ==
+                ArtifactState::kReady &&
+            StateOf(snapshot, ArtifactType::kPoseFile, Id("C")) !=
+                ArtifactState::kReady,
+        "PoseSave artifact ownership matches its actual file-set");
 }
 
 void TestOrderedValidationUsesRawAndLoopPrefix() {
@@ -160,6 +268,12 @@ int main() {
   std::cout << "execution spec registry passed\n";
   open_lmm::TestOrderedValidationUsesRawAndLoopPrefix();
   std::cout << "ordered artifact validation passed\n";
+  open_lmm::TestPoseSaveUsesAllAndOnlyReadyAgents();
+  std::cout << "session PoseSave scope passed\n";
+  open_lmm::TestArtifactRevisionDiffDefinesAffectedAgents();
+  std::cout << "artifact revision affected-agent diff passed\n";
+  open_lmm::TestUnorderedPerAgentNodeInvalidatesOnlyItsTarget();
+  std::cout << "unordered per-agent invalidation passed\n";
   open_lmm::TestDescriptorStoreRebuildReplacesRepeatedAgent();
   std::cout << "execution spec tests passed\n";
   return 0;

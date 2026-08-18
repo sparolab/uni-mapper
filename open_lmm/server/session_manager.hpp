@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <mutex>
+#include <functional>
 
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/server/session_state.hpp>
@@ -22,6 +23,10 @@ class SessionManager {
       const std::shared_ptr<const SessionState>& expected) const;
   Result<void> Commit(const std::shared_ptr<const SessionState>& expected,
                       std::shared_ptr<const SessionState> candidate);
+  Result<void> CommitWithBarrier(
+      const std::shared_ptr<const SessionState>& expected,
+      std::shared_ptr<const SessionState> candidate,
+      const std::function<Result<void>()>& commit_side_effects);
 
  private:
   mutable std::mutex mutex_;

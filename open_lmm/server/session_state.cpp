@@ -1,5 +1,7 @@
 #include "session_state.hpp"
 
+#include "session_payload_builder.hpp"
+
 #include <algorithm>
 
 namespace open_lmm {
@@ -46,6 +48,9 @@ Result<void> SessionTransaction::Validate() const {
     return Result<void>::Failure(
         Error::InvalidArgument("session transaction has incomplete ownership"));
   }
+  auto resident_memory = ValidateResidentMemoryOwnership(
+      *working_->payload, base_ ? base_->payload.get() : nullptr);
+  if (!resident_memory) return resident_memory;
   const auto& database = *working_->payload->database;
   for (const auto& artifact : working_->artifacts) {
     if (artifact.state != ArtifactState::kReady) continue;

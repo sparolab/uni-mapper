@@ -66,6 +66,12 @@ class ResourceGovernor {
   Result<MemoryReservation> ReserveMemory(
       uint64_t bytes, MemoryClass memory_class,
       const std::shared_ptr<CancellationToken>& cancellation = {});
+  Result<MemoryReservation> ReserveReplacementMemory(
+      uint64_t bytes, uint64_t replaced_resident_bytes,
+      uint64_t provisional_overlap_bytes,
+      const std::shared_ptr<CancellationToken>& cancellation = {});
+  Result<void> ValidateReplacementMemory(
+      uint64_t replaced_resident_bytes) const;
   Result<void> AcquireHeavyMemoryPhase(
       const std::shared_ptr<CancellationToken>& cancellation);
   void ReleaseHeavyMemoryPhase() noexcept;

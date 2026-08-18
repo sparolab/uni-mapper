@@ -1,13 +1,14 @@
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/common/agent_id.hpp>
-#include <open_lmm/server/stage_runner.hpp>
+#include <open_lmm/server/stage_ports.hpp>
 #include <open_lmm/server/runtime_service.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
 #include <type_traits>
 
 int main() {
-  static_assert(std::is_abstract_v<open_lmm::StageRunner>);
+  static_assert(std::is_abstract_v<open_lmm::StageCommandPort>);
+  static_assert(std::is_abstract_v<open_lmm::SessionQueryPort>);
   const auto root_schema = open_lmm::BuiltinConfigSchemaRegistry().Fragments(
       open_lmm::ConfigDocumentKind::kRoot);
   if (root_schema.empty()) return 2;

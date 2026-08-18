@@ -16,6 +16,10 @@ class LoopDetectNode : public PipelineNodeBase {
 
   explicit LoopDetectNode(DetectorFactory factory)
       : factory_(std::move(factory)) {}
+  LoopDetectNode(DetectorFactory factory,
+                 AlgorithmExecutionContext algorithm_context)
+      : factory_(std::move(factory)),
+        algorithm_context_(std::move(algorithm_context)) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
@@ -25,47 +29,51 @@ class LoopDetectNode : public PipelineNodeBase {
 
     auto detector_result = factory_();
     if (!detector_result) {
-      return Result<ControlFlow>::Failure(detector_result.GetError());
+      AlgorithmExecutionContext algorithm_context = algorithm_context_;
+      algorithm_context.agent = ctx.agent;
+      algorithm_context.cancellation = ctx.cancellation;
+      algorithm_context.feedback = db.alignment_feedback;
+      return Result<ControlFlow>::Failure(WithAlgorithmContext(
+          detector_result.GetError(), algorithm_context));
     }
     auto detector = std::move(detector_result).Value();
 
     const auto stored = db.stored_alignments.find(ctx.agent.id);
-    LoopDetectorInput input{
-        .agent_ctx        = ctx.agent,
+    AlgorithmExecutionContext algorithm_context = algorithm_context_;
+    algorithm_context.agent = ctx.agent;
+    algorithm_context.cancellation = ctx.cancellation;
+    algorithm_context.feedback = db.alignment_feedback;
+    LoopDetectorProcessInput input{
         .current          = *ctx.raw_data,
         .descriptor_store = db.descriptor_store,
         .all_raw_data     = db.raw_data,
         .all_optimized    = db.optimized_data,
-        .alignment_feedback = db.alignment_feedback,
-        .cancellation     = ctx.cancellation,
         .stored_alignment = stored == db.stored_alignments.end()
                                 ? nullptr
                                 : &stored->second,
     };
-    try {
-      auto output = detector->Process(input);
-      if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-        return Result<ControlFlow>::Failure(
-            Error::Cancelled("before LoopDetect commit"));
-      }
-
-      // Mutate only the caller-owned working database. The SessionTransaction
-      // installs this descriptor state and per-agent output together.
-      if (ctx.agent.is_anchor()) {
-        db.descriptor_store.set_anchor_descriptor(ctx.agent.id,
-                                                  output.agent_descriptors);
-      } else {
-        db.descriptor_store.merge_descriptor_db(ctx.agent.id,
-                                                output.agent_descriptors);
-      }
-      ctx.loop_output =
-          std::make_shared<const LoopDetectorOutput>(std::move(output));
-    } catch (const CancellationException& e) {
-      return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
-    } catch (const std::exception& e) {
-      return Result<ControlFlow>::Failure(
-          Error::InvalidArgument("LoopDetect failed: " + std::string(e.what())));
+    auto processed = detector->Process(algorithm_context, input);
+    if (!processed) {
+      return Result<ControlFlow>::Failure(processed.GetError());
     }
+    auto output = std::move(processed).Value();
+    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+      return Result<ControlFlow>::Failure(
+          WithAlgorithmContext(Error::Cancelled("before LoopDetect commit"),
+                               algorithm_context));
+    }
+
+    // Mutate only the caller-owned working database. The SessionTransaction
+    // installs this descriptor state and per-agent output together.
+    if (ctx.agent.is_anchor()) {
+      db.descriptor_store.set_anchor_descriptor(ctx.agent.id,
+                                                output.agent_descriptors);
+    } else {
+      db.descriptor_store.merge_descriptor_db(ctx.agent.id,
+                                              output.agent_descriptors);
+    }
+    ctx.loop_output =
+        std::make_shared<const LoopDetectorOutput>(std::move(output));
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
   }
@@ -74,6 +82,7 @@ class LoopDetectNode : public PipelineNodeBase {
 
  private:
   DetectorFactory factory_;
+  AlgorithmExecutionContext algorithm_context_;
 };
 
 }  // namespace open_lmm

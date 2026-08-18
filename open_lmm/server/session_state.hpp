@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,29 @@ struct SessionRootConfig {
   std::size_t max_parallel_agents = 1;
 };
 
+struct SessionConfigDocument {
+  std::filesystem::path path;
+  std::string canonical_json;
+};
+
+// Canonical source documents and paths are revisioned with the typed config.
+// Reconfiguration must derive its candidate from this snapshot, never from a
+// mutable coordinator-side mirror.
+struct SessionConfigDocuments {
+  SessionConfigDocument root;
+  SessionConfigDocument map_server;
+  SessionConfigDocument data_loader;
+  SessionConfigDocument loop_detector;
+  SessionConfigDocument optimizer;
+  SessionConfigDocument dynamic_remover;
+};
+
+struct AlignmentArtifactMetadata {
+  std::filesystem::path cache_path;
+  std::map<AgentId, std::string> input_fingerprints;
+  std::string session_fingerprint;
+};
+
 // Immutable, validated configuration snapshot owned by one runtime session.
 struct SessionConfig {
   uint64_t revision = 1;
@@ -36,6 +60,8 @@ struct SessionConfig {
   std::shared_ptr<const DynamicRemoverConfig> dynamic_remover;
   std::shared_ptr<const MapSaveConfig> map_save;
   std::string fingerprint;
+  std::shared_ptr<const SessionConfigDocuments> documents;
+  std::shared_ptr<const AlignmentArtifactMetadata> alignment_artifacts;
 };
 
 struct OptimizerStateMetadata {

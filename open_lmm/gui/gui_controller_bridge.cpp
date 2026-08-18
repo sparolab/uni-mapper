@@ -22,7 +22,7 @@ GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controlle
     auto locked = weak.lock();
     return locked ? locked->SubmitStage(stage) : ControllerExpired<uint64_t>();
   };
-  services.submit_node = [weak](NodeId node, AgentId agent) {
+  services.submit_node = [weak](NodeId node, std::optional<AgentId> agent) {
     auto locked = weak.lock();
     return locked ? locked->SubmitNode(node, agent) : ControllerExpired<uint64_t>();
   };

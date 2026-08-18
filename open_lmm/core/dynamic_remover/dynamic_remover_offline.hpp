@@ -12,14 +12,12 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
   DynamicRemoverOffline(const OfflineParams& params,
                         std::shared_ptr<IOfflineRemoverPlugin> model);
   ~DynamicRemoverOffline() override = default;
-  pcl::PointCloud<pcl::PointXYZI>::Ptr process(
-      std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
-      std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) override;
-  Result<PointCloud::Ptr> processStreaming(
-      const RawScanSource& source,
-      const std::vector<std::pair<int, Eigen::Isometry3d>>& optimized_poses,
-      const HeavyPhaseAdmission& heavy_phase_admission)
-      override;
+  Result<PointCloud::Ptr> Process(
+      const AlgorithmExecutionContext& context,
+      DynamicRemoverInput input) override;
+  Result<PointCloud::Ptr> ProcessStreaming(
+      const AlgorithmExecutionContext& context,
+      const DynamicRemoverStreamingInput& input) override;
   pcl::PointCloud<pcl::PointXYZI>::Ptr genRawMap(
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
@@ -28,6 +26,12 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
       const std::string& so_name, const std::string& config_json);
 
  private:
+  PointCloud::Ptr ProcessImpl(
+      std::vector<PointCloud::Ptr> scans,
+      std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
+  Result<PointCloud::Ptr> ProcessStreamingImpl(
+      const AlgorithmExecutionContext& context,
+      const DynamicRemoverStreamingInput& input);
   OfflineParams params_;
   std::shared_ptr<IOfflineRemoverPlugin> offline_model_;
 

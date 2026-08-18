@@ -43,7 +43,7 @@ struct RuntimeService::RuntimeSession {
   std::string label;
   fs::path config_directory;
   fs::path output_directory;
-  std::shared_ptr<StageRunner> runner;
+  std::shared_ptr<StageRuntimePort> port;
   std::shared_ptr<PipelineController> controller;
   mutable std::mutex mutex;
   std::condition_variable idle;
@@ -52,27 +52,28 @@ struct RuntimeService::RuntimeSession {
 };
 
 RuntimeService::RuntimeService(std::size_t maximum_sessions,
-                               RunnerFactory runner_factory)
+                               PortFactory port_factory)
     : RuntimeService(ResourceBudget{maximum_sessions, 2, 2,
                                     4ULL * 1024ULL * 1024ULL * 1024ULL},
-                     std::move(runner_factory)) {}
+                     std::move(port_factory)) {}
 
 RuntimeService::RuntimeService(ResourceBudget budget,
-                               RunnerFactory runner_factory)
+                               PortFactory port_factory)
     : governor_(std::make_shared<ResourceGovernor>(budget)),
-      runner_factory_(std::move(runner_factory)) {
-  if (!runner_factory_) {
-    runner_factory_ = [governor = governor_](
+      port_factory_(std::move(port_factory)) {
+  if (!port_factory_) {
+    port_factory_ = [governor = governor_](
                           const BootstrapRequest& request,
                           const fs::path& output_directory)
-        -> Result<std::shared_ptr<StageRunner>> {
-      auto runner = std::make_shared<MapServer>(request.config_directory,
-                                                output_directory, governor);
-      auto ready = runner->ValidateReady();
+        -> Result<std::shared_ptr<StageRuntimePort>> {
+      auto port = std::make_shared<MapServer>(request.config_directory,
+                                              output_directory, governor);
+      auto ready = port->ValidateReady();
       if (!ready) {
-        return Result<std::shared_ptr<StageRunner>>::Failure(ready.GetError());
+        return Result<std::shared_ptr<StageRuntimePort>>::Failure(
+            ready.GetError());
       }
-      return Result<std::shared_ptr<StageRunner>>::Ok(std::move(runner));
+      return Result<std::shared_ptr<StageRuntimePort>>::Ok(std::move(port));
     };
   }
 }
@@ -138,7 +139,7 @@ Result<SessionId> RuntimeService::CreateSession(
       std::lock_guard lock(registry_mutex_);
       if (sessions_.contains(id)) continue;
     }
-    auto created = runner_factory_(request, output_directory);
+    auto created = port_factory_(request, output_directory);
     if (!created) {
       return Result<SessionId>::Failure(created.GetError());
     }
@@ -146,9 +147,9 @@ Result<SessionId> RuntimeService::CreateSession(
     session->label = request.label;
     session->config_directory = request.config_directory;
     session->output_directory = output_directory;
-    session->runner = std::move(created).Value();
+    session->port = std::move(created).Value();
     session->controller =
-        std::make_shared<PipelineController>(session->runner);
+        std::make_shared<PipelineController>(session->port);
     session->state = RuntimeSessionState::kReady;
     {
       std::lock_guard lock(registry_mutex_);
@@ -238,9 +239,9 @@ Result<JobId> RuntimeService::Submit(const SessionId& session_id,
       }
       break;
     case ExecutionRequestKind::kNode:
-      if (request.node && request.agent) {
-        submitted =
-            session->controller->SubmitNode(*request.node, *request.agent);
+      if (request.node) {
+        submitted = session->controller->SubmitNode(*request.node,
+                                                     request.agent);
       }
       break;
     case ExecutionRequestKind::kOptimizeThrough:

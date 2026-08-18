@@ -1,4 +1,5 @@
 #include <open_lmm/server/pipeline_controller.hpp>
+#include "test_runtime_port.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -32,19 +33,21 @@ AlignmentFeedbackSnapshot FeedbackSnapshot() {
   return snapshot;
 }
 
-class ConcurrencyRunner final : public StageRunner {
+class ConcurrencyRunner final : public test::RuntimePortFixture {
  public:
-  void SetCancellationToken(
-      std::shared_ptr<CancellationToken> value) override {
-    cancellation = std::move(value);
+  ConcurrencyRunner() : RuntimePortFixture({Id("A"), Id("B")}) {}
+
+  Result<void> ExecuteFixture(const ExecutionCommand& command,
+                              const ExecutionContext& context) override {
+    cancellation = context.cancellation;
+    feedback = context.alignment_feedback;
+    if (command.kind == ExecutionCommandKind::kStage) {
+      return RunStage(*command.stage);
+    }
+    return Result<void>::Ok();
   }
 
-  void SetAlignmentFeedbackBroker(
-      std::shared_ptr<AlignmentFeedbackBroker> value) override {
-    feedback = std::move(value);
-  }
-
-  Result<void> RunStage(StageId stage) override {
+  Result<void> RunStage(StageId stage) {
     if (stage != StageId::kAlignment || !request_feedback) {
       return Result<void>::Ok();
     }
@@ -64,18 +67,10 @@ class ConcurrencyRunner final : public StageRunner {
     return Result<void>::Ok();
   }
 
-  Result<void> RunNode(NodeId, std::optional<AgentId>) override {
-    return Result<void>::Ok();
-  }
-
-  Result<void> RunOptimizeThrough(const AgentId&) override {
-    return Result<void>::Ok();
-  }
-
-  std::vector<AgentId> AgentIds() const override {
+  CommittedSessionSnapshot Snapshot() const override {
     std::lock_guard lock(runner_mutex);
     if (agent_ids_hook) agent_ids_hook();
-    return {Id("A"), Id("B")};
+    return RuntimePortFixture::Snapshot();
   }
 
   mutable std::mutex runner_mutex;
@@ -96,7 +91,7 @@ void SnapshotUsesImmutableRunnerState() {
                            [&controller] { return controller.Snapshot(); });
   Check(future.wait_for(std::chrono::milliseconds(500)) ==
             std::future_status::ready,
-        "Snapshot called StageRunner under the controller lock");
+        "Snapshot called the query port under the controller lock");
   Check(future.get().agents == std::vector<AgentId>({Id("A"), Id("B")}),
         "cached agent snapshot mismatch");
 }

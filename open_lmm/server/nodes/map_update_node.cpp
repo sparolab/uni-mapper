@@ -17,13 +17,17 @@ MapUpdateNode::MapUpdateNode(std::unique_ptr<DataLoaderBase> loader,
                              RemoverFactory remover_factory,
                              const std::string& save_dir,
                              double save_voxel_size, bool defer_commit,
-                             HeavyPhaseAdmission heavy_phase_admission)
+                             HeavyPhaseAdmission heavy_phase_admission,
+                             AlgorithmExecutionContext data_loader_context,
+                             AlgorithmExecutionContext remover_context)
     : loader_(std::move(loader)),
       remover_factory_(std::move(remover_factory)),
       save_dir_(save_dir),
       save_voxel_size_(save_voxel_size),
       defer_commit_(defer_commit),
-      heavy_phase_admission_(std::move(heavy_phase_admission)) {}
+      heavy_phase_admission_(std::move(heavy_phase_admission)),
+      data_loader_context_(std::move(data_loader_context)),
+      remover_context_(std::move(remover_context)) {}
 
 MapUpdateNode::~MapUpdateNode() = default;
 
@@ -39,16 +43,28 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
 
   auto remover_result = remover_factory_();
   if (!remover_result) {
-    return Result<ControlFlow>::Failure(remover_result.GetError());
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    remover_context.cancellation = ctx.cancellation;
+    return Result<ControlFlow>::Failure(
+        WithAlgorithmContext(remover_result.GetError(), remover_context));
   }
   auto dynamic_remover = std::move(remover_result).Value();
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map;
   {
     OPEN_LMM_ZONE_N("MapUpdate.RemoverProcess");
-    auto processed = dynamic_remover->processStreaming(
+    AlgorithmExecutionContext data_loader_context = data_loader_context_;
+    data_loader_context.agent = ctx.agent;
+    data_loader_context.cancellation = ctx.cancellation;
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    remover_context.cancellation = ctx.cancellation;
+    auto processed = dynamic_remover->ProcessStreaming(
+        remover_context,
+        DynamicRemoverStreamingInput{
         [&](const DynamicRemoverBase::RawScanVisitor& visitor) {
           return loader_->VisitRawScanData(
-              ctx.data_dir,
+              data_loader_context, ctx.data_dir,
               [&](std::size_t index,
                   const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan) {
                 if (ctx.cancellation &&
@@ -59,20 +75,25 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
                 return visitor(index, scan);
               });
         },
-        it->second->optimized_poses, heavy_phase_admission_);
+        it->second->optimized_poses, heavy_phase_admission_});
     if (!processed) {
       return Result<ControlFlow>::Failure(processed.GetError());
     }
     static_map = std::move(processed).Value();
   }
   if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-    return Result<ControlFlow>::Failure(
-        Error::Cancelled("after dynamic remover"));
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    return Result<ControlFlow>::Failure(WithAlgorithmContext(
+        Error::Cancelled("after dynamic remover"), remover_context));
   }
   if (!static_map || static_map->empty()) {
-    return Result<ControlFlow>::Failure(Error::InvalidArgument(
-        "Dynamic remover produced an empty map for agent " +
-        ctx.agent.id.Value()));
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    return Result<ControlFlow>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument("Dynamic remover produced an empty map for agent " +
+                               ctx.agent.id.Value()),
+        remover_context));
   }
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr ds_map;

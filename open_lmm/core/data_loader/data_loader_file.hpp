@@ -13,21 +13,28 @@ using DataLoaderFileParam = DataLoaderConfig;
 
 class DataLoaderFile : public DataLoaderBase {
  public:
+  using DataLoaderBase::Process;
   explicit DataLoaderFile(DataLoaderConfig config);
   ~DataLoaderFile() override = default;
-  Result<AgentRawData> Process(const AgentContext& ctx,
-                               const fs::path& data_dir) override;
-  Result<PoseVec> loadPoseData(fs::path data_dir_path);
-  Result<ScanVec> loadRawScanData(fs::path data_dir_path) override;
+  Result<AgentRawData> Process(
+      const AlgorithmExecutionContext& context,
+      const DataLoaderInput& input) override;
   Result<std::size_t> VisitRawScanData(
+      const AlgorithmExecutionContext& context,
       const fs::path& data_dir_path,
       const RawScanVisitor& visitor) override;
-  Result<ScanVec> loadFilteredScanData(fs::path data_dir_path);
   std::function<Eigen::Isometry3d(std::vector<double>&)> transformFunctor;
   std::function<pcl::PointCloud<pcl::PointXYZI>::Ptr(std::string)>
       convertScanFunctor;
 
  private:
+  Result<ScanVec> LoadRawScans(fs::path data_dir_path);
+  Result<PoseVec> loadPoseData(const AlgorithmExecutionContext& context,
+                               fs::path data_dir_path);
+  Result<ScanVec> loadFilteredScanData(
+      const AlgorithmExecutionContext& context, fs::path data_dir_path);
+  Result<AgentRawData> Load(const AlgorithmExecutionContext& context,
+                            const fs::path& data_directory);
   DataLoaderFileParam param_;
   std::optional<Error> initialization_error_;
 };

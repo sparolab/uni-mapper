@@ -32,32 +32,63 @@ gtsam::Symbol GraphSymbol(const AgentContext& context, const AgentId& agent,
 }  // namespace
 
 BackendOptimizerIncremental::BackendOptimizerIncremental(OptimizerConfig config)
-    : param_(std::move(config)) {
+    : param_(std::move(config)), lifecycle_(std::make_unique<Lifecycle>()) {
   initNoise();
 }
 
 BackendOptimizerIncremental::~BackendOptimizerIncremental() {}
 
 void BackendOptimizerIncremental::Reset() {
-  accumulated_graph_.resize(0);
-  accumulated_values_.clear();
-  processed_agents_.clear();
+  std::lock_guard lock(execution_mutex_);
+  lifecycle_ = std::make_unique<Lifecycle>();
 }
 
 bool BackendOptimizerIncremental::HasProcessedAgent(const AgentId& agent_id) const {
-  return processed_agents_.contains(agent_id);
+  std::lock_guard lock(execution_mutex_);
+  return lifecycle_->processed_agents.contains(agent_id);
 }
 
 std::size_t BackendOptimizerIncremental::ProcessedAgentCount() const {
-  return processed_agents_.size();
+  std::lock_guard lock(execution_mutex_);
+  return lifecycle_->processed_agents.size();
 }
 
-std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
-    const AgentContext&                 ctx,
-    const AgentRawData&                 raw_data,
-    const LoopPairVec&                  intra_loops,
-    const LoopPairVec&                  inter_loops,
-    const AgentRawDataMap&              all_raw_data) {
+Result<BackendOptimizerOutput> BackendOptimizerIncremental::Process(
+    const AlgorithmExecutionContext& context,
+    const BackendOptimizerInput& input) {
+  AlgorithmExecutionTimer timer(context);
+  auto cancellation = CheckAlgorithmCancellation(context, "before optimization");
+  if (!cancellation) {
+    return Result<BackendOptimizerOutput>::Failure(cancellation.GetError());
+  }
+  std::lock_guard execution(execution_mutex_);
+  cancellation = CheckAlgorithmCancellation(context, "after optimizer lock");
+  if (!cancellation) {
+    return Result<BackendOptimizerOutput>::Failure(cancellation.GetError());
+  }
+  try {
+    return Result<BackendOptimizerOutput>::Ok(
+        processTransactional(context, input));
+  } catch (const CancellationException& error) {
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::Cancelled(error.what()), context));
+  } catch (const std::exception& error) {
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::OptimizationFailed(error.what()), context));
+  } catch (...) {
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::OptimizationFailed("unknown optimizer exception"), context));
+  }
+}
+
+BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
+    const AlgorithmExecutionContext& context,
+    const BackendOptimizerInput& input) {
+  const auto& ctx = context.agent;
+  const auto& raw_data = input.raw_data;
+  const auto& intra_loops = input.intra_loops;
+  const auto& inter_loops = input.inter_loops;
+  const auto& all_raw_data = input.all_raw_data;
   OPEN_LMM_ZONE_N("Optimizer.Process");
   OPEN_LMM_PLOT("optimizer.intra_loop_count", intra_loops.size());
   OPEN_LMM_PLOT("optimizer.inter_loop_count", inter_loops.size());
@@ -74,26 +105,28 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
   if (!valid_loops) {
     throw std::invalid_argument(valid_loops.GetError().Message());
   }
-  if (processed_agents_.contains(ctx.id)) {
+  if (lifecycle_->processed_agents.contains(ctx.id)) {
     throw std::invalid_argument("optimizer agent " + ctx.id.Value() +
                                 " was already processed; call Reset before retry");
   }
-  if (processed_agents_.empty() && !ctx.is_anchor()) {
+  if (lifecycle_->processed_agents.empty() && !ctx.is_anchor()) {
     throw std::invalid_argument("optimizer first agent must be the anchor");
   }
-  if (!processed_agents_.empty() && ctx.is_anchor()) {
+  if (!lifecycle_->processed_agents.empty() && ctx.is_anchor()) {
     throw std::invalid_argument("optimizer anchor can only be processed first");
   }
   for (const auto& loop : inter_loops) {
-    if (!processed_agents_.contains(loop.to.first)) {
+    if (!lifecycle_->processed_agents.contains(loop.to.first)) {
       throw std::invalid_argument(
           "inter-loop target agent must be optimized before the source agent");
     }
   }
 
   // Transactional working state: failures leave the committed lifecycle intact.
-  auto working_graph = accumulated_graph_;
-  auto working_values = accumulated_values_;
+  auto working_graph = lifecycle_->graph;
+  auto working_values = lifecycle_->values;
+  auto working_processed_agents = lifecycle_->processed_agents;
+  working_processed_agents.insert(ctx.id);
 
   gtsam::Pose3 anchor_node = gtsam::Pose3(Eigen::Matrix4d::Identity());
   const auto& anchor_prior = ctx.is_anchor() ? prior_noise_ : large_noise_;
@@ -106,7 +139,7 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
 
   //! 2. odometry
   for (size_t i = 0; i < raw_data.odom_poses.size(); i++) {
-    ThrowIfCancellationRequested(cancellation_, "optimizer odometry");
+    ThrowIfCancellationRequested(context.cancellation, "optimizer odometry");
     gtsam::Symbol node_current = GraphSymbol(ctx, ctx.id, i);
     working_values.insert(node_current,
                                gtsam::Pose3(raw_data.odom_poses[i].matrix()));
@@ -125,7 +158,7 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
   auto T1 = tq::tqdm(intra_loops);
   T1.set_prefix("Intra Backend Optimizer");
   for (auto loop : T1) {
-    ThrowIfCancellationRequested(cancellation_, "optimizer intra loop");
+    ThrowIfCancellationRequested(context.cancellation, "optimizer intra loop");
     if (!FrameGapAtLeast(loop.from.second, loop.to.second,
                          static_cast<size_t>(param_.min_loop_frame_gap))) {
       continue;
@@ -149,7 +182,7 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
     auto T2 = tq::tqdm(inter_loops);
     T2.set_prefix("Inter Backend Optimizer");
     for (auto loop : T2) {
-      ThrowIfCancellationRequested(cancellation_, "optimizer inter loop");
+      ThrowIfCancellationRequested(context.cancellation, "optimizer inter loop");
       gtsam::Symbol node_from = GraphSymbol(ctx, loop.from.first, loop.from.second);
       gtsam::Symbol node_to = GraphSymbol(ctx, loop.to.first, loop.to.second);
       const auto& raw_to = *all_raw_data.at(loop.to.first);
@@ -181,7 +214,7 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
   gtsam::ISAM2 isam_(isam_param);
   isam_.update(working_graph, working_values);
   for (int i = 0; i < param_.isam_extra_updates; ++i) {
-    ThrowIfCancellationRequested(cancellation_, "optimizer update");
+    ThrowIfCancellationRequested(context.cancellation, "optimizer update");
     isam_.update();
   }
   working_values = isam_.calculateBestEstimate();
@@ -250,10 +283,14 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
         "optimizer output agent '" + agent.Value() + "'");
     if (!valid) throw std::invalid_argument(valid.GetError().Message());
   }
-  ThrowIfCancellationRequested(cancellation_, "optimizer commit");
-  accumulated_graph_ = std::move(working_graph);
-  accumulated_values_ = std::move(working_values);
-  processed_agents_.insert(ctx.id);
+  ThrowIfCancellationRequested(context.cancellation, "optimizer commit");
+  // Construct the complete next lifecycle before publication. Pointer swap is
+  // non-throwing, so no failure can expose a partially updated optimizer.
+  auto next = std::make_unique<Lifecycle>();
+  next->graph = std::move(working_graph);
+  next->values = std::move(working_values);
+  next->processed_agents = std::move(working_processed_agents);
+  lifecycle_.swap(next);
   return all_results;
 }
 

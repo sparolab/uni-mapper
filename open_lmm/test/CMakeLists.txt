@@ -14,6 +14,19 @@ target_link_options(open_lmm_safety_regression_tests PRIVATE
 add_test(NAME open_lmm_safety_regression_tests
          COMMAND open_lmm_safety_regression_tests)
 
+add_executable(open_lmm_algorithm_contract_tests
+  algorithm_contract_tests.cpp
+)
+target_link_libraries(open_lmm_algorithm_contract_tests PRIVATE
+  open_lmm_data_loader
+  open_lmm_loop_detector
+  open_lmm_backend_optimizer
+  open_lmm_dynamic_remover
+)
+openlmm_set_global_target_properties(open_lmm_algorithm_contract_tests)
+add_test(NAME open_lmm_algorithm_contract_tests
+         COMMAND open_lmm_algorithm_contract_tests)
+
 add_executable(open_lmm_agent_id_tests agent_id_tests.cpp)
 target_link_libraries(open_lmm_agent_id_tests PRIVATE
   open_lmm_common
@@ -42,6 +55,12 @@ add_test(NAME open_lmm_pipeline_controller_tests
 add_executable(open_lmm_runtime_service_tests runtime_service_tests.cpp)
 target_link_libraries(open_lmm_runtime_service_tests PRIVATE
   open_lmm_map_server)
+if(TARGET create_scan_context)
+  add_dependencies(open_lmm_runtime_service_tests create_scan_context)
+endif()
+if(TARGET create_free_dom)
+  add_dependencies(open_lmm_runtime_service_tests create_free_dom)
+endif()
 openlmm_set_global_target_properties(open_lmm_runtime_service_tests)
 add_test(NAME open_lmm_runtime_service_tests
          COMMAND open_lmm_runtime_service_tests)
@@ -67,6 +86,44 @@ target_link_libraries(open_lmm_session_transaction_tests PRIVATE
 openlmm_set_global_target_properties(open_lmm_session_transaction_tests)
 add_test(NAME open_lmm_session_transaction_tests
          COMMAND open_lmm_session_transaction_tests)
+
+add_executable(open_lmm_stage_executor_fixture_tests
+  stage_executor_fixture_tests.cpp
+)
+target_link_libraries(open_lmm_stage_executor_fixture_tests PRIVATE
+  open_lmm_map_server
+)
+openlmm_set_global_target_properties(open_lmm_stage_executor_fixture_tests)
+add_test(NAME open_lmm_stage_executor_fixture_tests
+         COMMAND open_lmm_stage_executor_fixture_tests)
+
+add_executable(open_lmm_orchestration_executor_fixture_tests
+  orchestration_executor_fixture_tests.cpp
+)
+target_link_libraries(open_lmm_orchestration_executor_fixture_tests PRIVATE
+  open_lmm_map_server
+)
+openlmm_set_global_target_properties(
+  open_lmm_orchestration_executor_fixture_tests)
+add_test(NAME open_lmm_orchestration_executor_fixture_tests
+         COMMAND open_lmm_orchestration_executor_fixture_tests)
+
+add_executable(open_lmm_save_executor_tests save_executor_tests.cpp)
+target_link_libraries(open_lmm_save_executor_tests PRIVATE
+  open_lmm_map_server
+)
+openlmm_set_global_target_properties(open_lmm_save_executor_tests)
+add_test(NAME open_lmm_save_executor_tests COMMAND open_lmm_save_executor_tests)
+
+add_executable(open_lmm_session_bootstrapper_tests
+  session_bootstrapper_tests.cpp
+)
+target_link_libraries(open_lmm_session_bootstrapper_tests PRIVATE
+  open_lmm_map_server
+)
+openlmm_set_global_target_properties(open_lmm_session_bootstrapper_tests)
+add_test(NAME open_lmm_session_bootstrapper_tests
+         COMMAND open_lmm_session_bootstrapper_tests)
 
 add_executable(open_lmm_execution_spec_tests
   execution_spec_tests.cpp
@@ -274,6 +331,9 @@ if(OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT AND
     self_contained_e2e_tests.cpp)
   target_link_libraries(open_lmm_self_contained_e2e_tests PRIVATE
     open_lmm_map_server)
+  add_dependencies(open_lmm_self_contained_e2e_tests
+    create_scan_context
+    create_free_dom)
   openlmm_set_global_target_properties(open_lmm_self_contained_e2e_tests)
   add_test(NAME open_lmm_self_contained_e2e_tests
            COMMAND open_lmm_self_contained_e2e_tests)

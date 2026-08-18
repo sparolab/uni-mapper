@@ -2,6 +2,7 @@
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/server/pipeline_controller.hpp>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace open_lmm {
@@ -9,7 +10,7 @@ struct GuiServices {
   std::string config_file_path;
   std::function<Result<uint64_t>()> submit_run_all;
   std::function<Result<uint64_t>(StageId)> submit_stage;
-  std::function<Result<uint64_t>(NodeId, AgentId)> submit_node;
+  std::function<Result<uint64_t>(NodeId, std::optional<AgentId>)> submit_node;
   std::function<Result<uint64_t>(AgentId)> submit_optimize_through;
   std::function<Result<void>(uint64_t)> cancel_job;
   std::function<Result<void>(ConfigDomain, uint64_t)> apply_config;

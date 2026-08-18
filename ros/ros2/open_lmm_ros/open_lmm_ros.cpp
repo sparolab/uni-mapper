@@ -242,7 +242,7 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
         open_lmm::GlobalConfig::reload(previous_directory);
       return ready;
     }
-    auto replaced = controller->ReplaceRunner(runner);
+    auto replaced = controller->ReplacePorts(runner, runner);
     if (!replaced && !previous_directory.empty())
       open_lmm::GlobalConfig::reload(previous_directory);
     return replaced;

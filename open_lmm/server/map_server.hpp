@@ -4,7 +4,7 @@
 #include <memory>
 #include <optional>
 
-#include <open_lmm/server/stage_runner.hpp>
+#include <open_lmm/server/stage_ports.hpp>
 
 namespace open_lmm {
 
@@ -14,7 +14,7 @@ class ResourceGovernor;
 // Public runtime façade. Session ownership, transaction commits, algorithm
 // assembly, output persistence and visualization snapshots live in the
 // internal StageExecutor component.
-class MapServer final : public StageRunner {
+class MapServer final : public StageRuntimePort {
  public:
   MapServer();
   explicit MapServer(
@@ -27,18 +27,12 @@ class MapServer final : public StageRunner {
   MapServer& operator=(const MapServer&) = delete;
 
   Result<void> process();
-  void SetCancellationToken(std::shared_ptr<CancellationToken> token) override;
   [[nodiscard]] CancellationCapability CancellationMetadata() const override;
-  void SetAlignmentFeedbackBroker(
-      std::shared_ptr<AlignmentFeedbackBroker> broker) override;
-  Result<void> RunStage(StageId stage) override;
-  Result<void> RunNode(NodeId node, std::optional<AgentId> agent) override;
-  Result<void> RunOptimizeThrough(const AgentId& target_agent) override;
-  Result<void> Reconfigure(ConfigDomain domain, uint64_t revision) override;
-  [[nodiscard]] std::vector<AgentId> AgentIds() const override;
-  [[nodiscard]] std::optional<CommittedSessionSnapshot>
-  SessionSnapshot() const override;
-  [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
+  Result<ExecutionReceipt> Execute(
+      const ExecutionCommand& command,
+      const ExecutionContext& context) override;
+  [[nodiscard]] CommittedSessionSnapshot Snapshot() const override;
+  [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const override;
   Result<void> ValidateReady();
 

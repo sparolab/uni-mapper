@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -184,6 +185,72 @@ Result<MemoryReservation> ResourceGovernor::ReserveMemory(
       reserved_memory_bytes_, reserved_memory_by_class_[class_index],
       memory_admission_failures_, budget_.soft_memory_bytes, bytes,
       memory_class));
+}
+
+Result<MemoryReservation> ResourceGovernor::ReserveReplacementMemory(
+    uint64_t bytes, uint64_t replaced_resident_bytes,
+    uint64_t provisional_overlap_bytes,
+    const std::shared_ptr<CancellationToken>& cancellation) {
+  if (cancellation && cancellation->IsCancellationRequested()) {
+    return Result<MemoryReservation>::Failure(
+        Error::Cancelled("before replacement memory reservation"));
+  }
+  const uint64_t resident =
+      ReservedMemoryBytes(MemoryClass::kResidentPayload);
+  if (replaced_resident_bytes > resident) {
+    return Result<MemoryReservation>::Failure(Error::InvalidArgument(
+        "replacement memory credit exceeds resident ownership"));
+  }
+  uint64_t limit = budget_.soft_memory_bytes;
+  for (const uint64_t allowance : {replaced_resident_bytes,
+                                   provisional_overlap_bytes}) {
+    limit = allowance > std::numeric_limits<uint64_t>::max() - limit
+                ? std::numeric_limits<uint64_t>::max()
+                : limit + allowance;
+  }
+  uint64_t current = reserved_memory_bytes_->load(std::memory_order_acquire);
+  for (;;) {
+    if (current > limit || bytes > limit - current) {
+      memory_admission_failures_->fetch_add(1, std::memory_order_relaxed);
+      return Result<MemoryReservation>::Failure(Error::InvalidArgument(
+          "replacement memory budget exceeded"));
+    }
+    if (reserved_memory_bytes_->compare_exchange_weak(
+            current, current + bytes, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      break;
+    }
+  }
+  reserved_memory_by_class_[static_cast<std::size_t>(
+      MemoryClass::kResidentPayload)]->fetch_add(bytes,
+                                                 std::memory_order_acq_rel);
+  return Result<MemoryReservation>::Ok(MemoryReservation(
+      reserved_memory_bytes_,
+      reserved_memory_by_class_[static_cast<std::size_t>(
+          MemoryClass::kResidentPayload)],
+      memory_admission_failures_, limit, bytes,
+      MemoryClass::kResidentPayload));
+}
+
+Result<void> ResourceGovernor::ValidateReplacementMemory(
+    uint64_t replaced_resident_bytes) const {
+  const uint64_t resident =
+      ReservedMemoryBytes(MemoryClass::kResidentPayload);
+  if (replaced_resident_bytes > resident) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "replacement memory credit exceeds resident ownership"));
+  }
+  const uint64_t committed_limit =
+      replaced_resident_bytes >
+              std::numeric_limits<uint64_t>::max() -
+                  budget_.soft_memory_bytes
+          ? std::numeric_limits<uint64_t>::max()
+          : budget_.soft_memory_bytes + replaced_resident_bytes;
+  if (ReservedMemoryBytes() > committed_limit) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "replacement resident result exceeds the soft memory budget"));
+  }
+  return Result<void>::Ok();
 }
 
 uint64_t ResourceGovernor::ReservedMemoryBytes(

@@ -18,7 +18,7 @@ namespace open_lmm {
 
 enum class StageId : uint8_t { kDataLoad, kAlignment, kMapUpdate, kSave };
 enum class NodeId : uint8_t {
-  kDataLoad, kLoopDetect, kOptimize, kMapUpdate, kPoseSave
+  kDataLoad, kLoopDetect, kOptimize, kMapUpdate, kPoseSave, kFallbackMapSave
 };
 enum class ArtifactType : uint8_t {
   kConfigSnapshot, kAgentInput, kRawData, kDescriptorState,
@@ -58,6 +58,11 @@ struct CommittedSessionSnapshot {
 
 enum class ExecutionScope : uint8_t { kPerAgent, kSession };
 
+struct ArtifactExecutionSpec {
+  ArtifactType type;
+  ExecutionScope ownership;
+};
+
 struct NodeExecutionSpec {
   NodeId id;
   std::string_view name;
@@ -74,6 +79,7 @@ struct NodeDescriptor {
   NodeId id;
   std::string_view name;
   StageId stage;
+  ExecutionScope scope;
   std::vector<ArtifactType> required_artifacts;
   std::vector<ArtifactType> produced_artifacts;
   bool ordered = false;
@@ -81,7 +87,9 @@ struct NodeDescriptor {
 };
 
 [[nodiscard]] const std::vector<NodeExecutionSpec>& ExecutionSpecs();
+[[nodiscard]] const std::vector<ArtifactExecutionSpec>& ArtifactExecutionSpecs();
 [[nodiscard]] const NodeExecutionSpec& ExecutionSpecFor(NodeId node);
+[[nodiscard]] ExecutionScope ArtifactOwnership(ArtifactType artifact);
 [[nodiscard]] const NodeDescriptor& DescribeNode(NodeId node);
 [[nodiscard]] const std::vector<NodeId>& PipelineNodes();
 [[nodiscard]] const std::vector<StageId>& PipelineStages();
@@ -95,35 +103,8 @@ struct NodeDescriptor {
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(NodeId node);
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(StageId stage);
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(ConfigDomain domain);
-
-class StageRunner {
- public:
-  virtual ~StageRunner() = default;
-  virtual void SetCancellationToken(std::shared_ptr<CancellationToken> token) = 0;
-  [[nodiscard]] virtual CancellationCapability CancellationMetadata() const {
-    return {};
-  }
-  virtual void SetAlignmentFeedbackBroker(
-      std::shared_ptr<AlignmentFeedbackBroker>) {}
-  virtual Result<void> RunStage(StageId stage) = 0;
-  virtual Result<void> RunNode(NodeId node, std::optional<AgentId> agent) = 0;
-  virtual Result<void> RunOptimizeThrough(const AgentId& target_agent) = 0;
-  virtual Result<void> Reconfigure(ConfigDomain domain,
-                                   uint64_t revision = 0) {
-    (void)domain;
-    (void)revision;
-    return Result<void>::Ok();
-  }
-  [[nodiscard]] virtual std::vector<AgentId> AgentIds() const = 0;
-  [[nodiscard]] virtual std::optional<CommittedSessionSnapshot>
-  SessionSnapshot() const {
-    return std::nullopt;
-  }
-  [[nodiscard]] virtual Result<VisualizationSnapshot>
-  CreateVisualizationSnapshot(const AgentId&) const {
-    return Result<VisualizationSnapshot>::Failure(
-        Error::InvalidArgument("visualization snapshots are not supported"));
-  }
-};
+[[nodiscard]] std::vector<AgentId> ArtifactRevisionAffectedAgents(
+    const CommittedSessionSnapshot& before,
+    const CommittedSessionSnapshot& after);
 
 }  // namespace open_lmm

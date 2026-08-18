@@ -474,16 +474,25 @@ void TestOptimizerLifecycle() {
   raw_a.agent_id = Id("A");
   raw_a.odom_poses.push_back(Eigen::Isometry3d::Identity());
   raw_a.filtered_scans.push_back(OnePointScan());
-  (void)optimizer.Process(anchor, raw_a, {}, {}, {});
+  auto context = open_lmm::AlgorithmExecutionContext{};
+  context.agent = anchor;
+  context.cancellation = std::make_shared<open_lmm::CancellationToken>();
+  context.operation = "optimizer.lifecycle";
+  open_lmm::LoopPairVec no_intra;
+  open_lmm::LoopPairVec no_inter;
+  open_lmm::AgentRawDataMap no_other_raw;
+  auto first = optimizer.Process(
+      context, {raw_a, no_intra, no_inter, no_other_raw});
+  Expect(first.IsOk(), "successful optimizer call must return Result success");
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              optimizer.HasProcessedAgent(Id("A")),
          "successful optimizer call must commit its agent");
 
-  try {
-    (void)optimizer.Process(anchor, raw_a, {}, {}, {});
-    Expect(false, "duplicate optimizer agent must fail");
-  } catch (const std::invalid_argument&) {
-  }
+  auto duplicate = optimizer.Process(
+      context, {raw_a, no_intra, no_inter, no_other_raw});
+  Expect(!duplicate &&
+             duplicate.GetError().code == Error::Code::kOptimizationFailed,
+         "duplicate optimizer agent must return failure");
   Expect(optimizer.ProcessedAgentCount() == 1,
          "duplicate failure must not mutate optimizer lifecycle");
 
@@ -498,20 +507,19 @@ void TestOptimizerLifecycle() {
       .to = {Id("A"), 0},
       .from = {Id("B"), 0},
       .init_rel_pose = Eigen::Isometry3d::Identity()};
-  try {
-    (void)optimizer.Process(follower, raw_b, {}, {inter_loop}, {});
-    Expect(false, "optimizer task exception must fail");
-  } catch (const std::invalid_argument&) {
-  }
+  context.agent = follower;
+  open_lmm::LoopPairVec inter_loops{inter_loop};
+  auto invalid_target = optimizer.Process(
+      context, {raw_b, no_intra, inter_loops, no_other_raw});
+  Expect(!invalid_target, "invalid optimizer input must return failure");
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              !optimizer.HasProcessedAgent(Id("B")),
          "failed optimizer transaction must preserve committed state");
 
-  try {
-    (void)optimizer.Process(follower, raw_b, {}, {}, {});
-    Expect(false, "follower without a refined inter-agent loop must fail");
-  } catch (const std::runtime_error&) {
-  }
+  auto zero_factor = optimizer.Process(
+      context, {raw_b, no_intra, no_inter, no_other_raw});
+  Expect(!zero_factor,
+         "follower without a refined inter-agent loop must return failure");
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              !optimizer.HasProcessedAgent(Id("B")),
          "zero-factor rejection must preserve optimizer transaction");
@@ -522,12 +530,12 @@ void TestOptimizerLifecycle() {
 
   auto cancellation = std::make_shared<open_lmm::CancellationToken>();
   cancellation->Request();
-  optimizer.SetCancellationToken(cancellation);
-  try {
-    (void)optimizer.Process(anchor, raw_a, {}, {}, {});
-    Expect(false, "cancelled optimizer must not return a result");
-  } catch (const open_lmm::CancellationException&) {
-  }
+  context.agent = anchor;
+  context.cancellation = cancellation;
+  auto cancelled = optimizer.Process(
+      context, {raw_a, no_intra, no_inter, no_other_raw});
+  Expect(!cancelled && cancelled.GetError().code == Error::Code::kCancelled,
+         "cancelled optimizer must return Cancelled");
   Expect(optimizer.ProcessedAgentCount() == 0,
          "cancelled optimizer must not commit lifecycle state");
   std::remove(config_path.c_str());
@@ -751,20 +759,21 @@ void TestRemoverFrameIdentityAndDownsample() {
   pose1.translation().x() = 20.0;
   const std::vector<std::pair<int, Eigen::Isometry3d>> shuffled{
       {1, pose1}, {0, pose0}};
-  auto map = remover.process({OnePointScan(), OnePointScan()}, shuffled);
+  open_lmm::AlgorithmExecutionContext context;
+  context.operation = "safety.dynamic_remover";
+  auto processed = remover.Process(
+      context, {{OnePointScan(), OnePointScan()}, shuffled});
   Expect(plugin->translations == std::vector<double>({10.0, 20.0}),
          "dynamic remover must join scan index to exact optimized frame ID");
-  Expect(map && map->size() == 1,
+  Expect(processed.IsOk() && processed.Value()->size() == 1,
          "online remover must return the downsampled map value");
 
   auto invalid_plugin = std::make_shared<RecordingOnlineRemover>();
   open_lmm::DynamicRemoverOnline invalid_remover(config, invalid_plugin);
-  try {
-    (void)invalid_remover.process({OnePointScan(), OnePointScan()},
-                                  {{0, pose0}, {0, pose1}});
-    Expect(false, "duplicate remover frame IDs must fail");
-  } catch (const std::invalid_argument&) {
-  }
+  auto invalid = invalid_remover.Process(
+      context, {{OnePointScan(), OnePointScan()},
+                {{0, pose0}, {0, pose1}}});
+  Expect(!invalid, "duplicate remover frame IDs must fail through Result");
   Expect(invalid_plugin->translations.empty(),
          "invalid remover frame IDs must fail before plugin invocation");
 }
@@ -798,12 +807,44 @@ void TestOfflineStreamingFrameIdentity() {
     }
     return Result<std::size_t>::Ok(visited);
   };
-  auto result = remover.processStreaming(stateful_source, poses, {});
+  open_lmm::AlgorithmExecutionContext context;
+  context.operation = "safety.dynamic_remover.streaming";
+  auto result = remover.ProcessStreaming(
+      context, {stateful_source, poses, {}});
   Expect(result.IsOk() && traversals == 1,
          "offline remover must consume a stateful source exactly once");
   Expect(plugin->scan_x == std::vector<float>({0.0F, 1.0F}) &&
              plugin->translations == std::vector<double>({10.0, 20.0}),
          "offline remover must process cached scans by exact frame ID");
+
+  auto cancelled_context = context;
+  cancelled_context.cancellation =
+      std::make_shared<open_lmm::CancellationToken>();
+  cancelled_context.cancellation->Request();
+  int cancelled_traversals = 0;
+  open_lmm::DynamicRemoverBase::RawScanSource cancelled_source =
+      [&](const open_lmm::DynamicRemoverBase::RawScanVisitor&) {
+        ++cancelled_traversals;
+        return Result<std::size_t>::Ok(0);
+      };
+  auto cancelled = remover.ProcessStreaming(
+      cancelled_context, {cancelled_source, poses, {}});
+  Expect(!cancelled && cancelled.GetError().code == Error::Code::kCancelled &&
+             cancelled.GetError().context.node ==
+                 "safety.dynamic_remover.streaming" &&
+             cancelled_traversals == 0,
+         "pre-cancelled streaming removal must preserve context and skip input");
+
+  open_lmm::DynamicRemoverBase::RawScanSource throwing_source =
+      [](const open_lmm::DynamicRemoverBase::RawScanVisitor&)
+      -> Result<std::size_t> {
+        throw std::runtime_error("stream source fault");
+      };
+  auto thrown = remover.ProcessStreaming(
+      context, {throwing_source, poses, {}});
+  Expect(!thrown && thrown.GetError().context.node ==
+                         "safety.dynamic_remover.streaming",
+         "stream source exceptions must become contextual Result failures");
 
   const auto expect_rejected_before_plugin = [&](const auto& entries,
                                                   const char* message) {
@@ -818,7 +859,8 @@ void TestOfflineStreamingFrameIdentity() {
       }
       return Result<std::size_t>::Ok(visited);
     };
-    auto invalid = invalid_remover.processStreaming(source, poses, {});
+    auto invalid = invalid_remover.ProcessStreaming(
+        context, {source, poses, {}});
     Expect(!invalid && invalid_plugin->scan_x.empty(), message);
   };
   using IndexedScan =

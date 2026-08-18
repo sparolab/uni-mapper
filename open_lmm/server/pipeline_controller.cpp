@@ -21,16 +21,16 @@ std::string StageName(StageId stage) {
 }
 
 Error AddExecutionContext(
-    Error error, const std::shared_ptr<StageRunner>& runner, StageId stage,
+    Error error, const std::shared_ptr<SessionQueryPort>& query_port,
+    StageId stage,
     std::optional<NodeId> node = std::nullopt,
     std::optional<AgentId> agent = std::nullopt) {
   std::string node_name;
   if (node) node_name = std::string(DescribeNode(*node).name);
   error.WithExecution(StageName(stage), std::move(node_name), agent);
   try {
-    if (runner) {
-      auto session = runner->SessionSnapshot();
-      if (session) error.WithSessionRevision(session->revision);
+    if (query_port) {
+      error.WithSessionRevision(query_port->Snapshot().revision);
     }
   } catch (...) {
     // Preserve the original execution error if diagnostic snapshotting fails.
@@ -92,8 +92,14 @@ void ExecutionEventSubscription::Reset() {
   unsubscribe();
 }
 
-PipelineController::PipelineController(std::shared_ptr<StageRunner> runner)
-    : runner_(std::move(runner)),
+PipelineController::PipelineController(std::shared_ptr<StageRuntimePort> port)
+    : PipelineController(port, port) {}
+
+PipelineController::PipelineController(
+    std::shared_ptr<StageCommandPort> command_port,
+    std::shared_ptr<SessionQueryPort> query_port)
+    : command_port_(std::move(command_port)),
+      query_port_(std::move(query_port)),
       event_subscribers_(std::make_shared<ExecutionEventSubscriberRegistry>()),
       alignment_feedback_(std::make_shared<AlignmentFeedbackBroker>()) {
   alignment_feedback_->SetNotification(
@@ -110,32 +116,88 @@ PipelineController::PipelineController(std::shared_ptr<StageRunner> runner)
               StageId::kAlignment, "map alignment feedback requested", 0,
               NodeId::kLoopDetect, snapshot.proposal.source_agent});
       });
-  if (runner_) {
-    cancellation_capability_ = runner_->CancellationMetadata();
-    runner_->SetAlignmentFeedbackBroker(alignment_feedback_);
-    agents_ = runner_->AgentIds();
-    artifacts_.RegisterAgents(agents_);
-    synchronizeCommittedSession(runner_);
+  if (command_port_ && query_port_) {
+    cancellation_capability_ = command_port_->CancellationMetadata();
+    synchronizeCommittedSession(query_port_);
   }
 }
 
-bool PipelineController::synchronizeCommittedSession(
-    const std::shared_ptr<StageRunner>& runner) {
-  if (!runner) return false;
-  auto session = runner->SessionSnapshot();
-  if (!session) {
-    runner_manages_artifacts_ = false;
-    return false;
+void PipelineController::synchronizeCommittedSession(
+    const std::shared_ptr<SessionQueryPort>& query_port) {
+  if (!query_port) return;
+  CommittedSessionSnapshot session;
+  try {
+    session = query_port->Snapshot();
+  } catch (const std::exception&) {
+    return;
+  } catch (...) {
+    return;
   }
-  artifacts_.Reset(session->ordered_agents);
-  artifacts_.Restore(session->artifacts);
   {
     std::lock_guard lock(mutex_);
-    agents_ = session->ordered_agents;
-    config_revision_ = session->config_revision;
+    committed_session_ = session;
+    agents_ = session.ordered_agents;
+    config_revision_ = session.config_revision;
+    committed_session_revision_ = session.revision;
   }
-  runner_manages_artifacts_ = true;
-  return true;
+}
+
+Result<void> PipelineController::acceptExecutionReceipt(
+    const ExecutionReceipt& receipt, uint64_t sent_base_revision,
+    const std::shared_ptr<SessionQueryPort>& query_port) {
+  auto fail_protocol = [this](std::string message,
+                              std::optional<uint64_t> observed_revision =
+                                  std::nullopt) {
+    Error error = Error::InvalidArgument(std::move(message));
+    error.MarkFatalSession();
+    if (observed_revision) error.WithSessionRevision(*observed_revision);
+    {
+      std::lock_guard lock(mutex_);
+      protocol_failure_ = error;
+    }
+    return Result<void>::Failure(std::move(error));
+  };
+  if (!query_port) {
+    return fail_protocol(
+        "session query port is unavailable after successful execution");
+  }
+  CommittedSessionSnapshot session;
+  try {
+    session = query_port->Snapshot();
+  } catch (const std::exception& error) {
+    return fail_protocol(std::string(
+        "session query snapshot failed after successful execution: ") +
+                         error.what());
+  } catch (...) {
+    return fail_protocol(
+        "session query snapshot failed after successful execution");
+  }
+  // Snapshot publication is the committed authority.  Publish it locally even
+  // when the receipt is malformed so a post-commit protocol failure cannot
+  // leave the controller displaying the pre-command artifacts/config.
+  {
+    std::lock_guard lock(mutex_);
+    committed_session_ = session;
+    agents_ = session.ordered_agents;
+    config_revision_ = session.config_revision;
+    committed_session_revision_ = session.revision;
+  }
+  if (receipt.base_revision != sent_base_revision) {
+    return fail_protocol(
+        "execution receipt base revision does not match the command context",
+        session.revision);
+  }
+  if (receipt.committed_revision <= receipt.base_revision) {
+    return fail_protocol(
+        "successful execution did not advance the committed revision",
+        session.revision);
+  }
+  if (session.revision != receipt.committed_revision) {
+    return fail_protocol(
+        "query snapshot revision does not match the execution receipt",
+        session.revision);
+  }
+  return Result<void>::Ok();
 }
 
 PipelineController::~PipelineController() {
@@ -151,15 +213,18 @@ Result<uint64_t> PipelineController::submit(Work work) {
         "cannot submit a pipeline job from its event callback"));
   }
   std::thread finished_worker;
-  std::shared_ptr<StageRunner> runner;
   uint64_t id;
   std::shared_ptr<CancellationToken> cancellation;
+  ExecutionContext execution_context;
   {
     std::lock_guard command_lock(command_mutex_);
     std::lock_guard state_lock(mutex_);
-    if (!runner_) {
+    if (!command_port_ || !query_port_) {
       return Result<uint64_t>::Failure(
-          Error::InvalidArgument("pipeline stage runner is null"));
+          Error::InvalidArgument("pipeline execution ports are unavailable"));
+    }
+    if (protocol_failure_) {
+      return Result<uint64_t>::Failure(*protocol_failure_);
     }
     if (maintenance_in_progress_) {
       return Result<uint64_t>::Failure(
@@ -173,7 +238,6 @@ Result<uint64_t> PipelineController::submit(Work work) {
           Error::InvalidArgument("another pipeline job is already running"));
     }
     if (worker_.joinable()) finished_worker = std::move(worker_);
-    runner = runner_;
     id = next_job_id_++;
     cancellation =
         std::make_shared<CancellationToken>(cancellation_capability_);
@@ -182,32 +246,19 @@ Result<uint64_t> PipelineController::submit(Work work) {
     terminal_event_completed_job_id_ = 0;
     cancel_requested_ = false;
     cancellation_ = cancellation;
+    execution_context = {
+        cancellation, alignment_feedback_, committed_session_revision_};
   }
 
-  // Joining and StageRunner calls are deliberately outside both controller
-  // mutexes. The queued job reserves the runner against replacement while the
-  // external calls are in flight.
+  // Joining is deliberately outside both controller mutexes. The queued job
+  // reserves the ports against replacement while the external call is active.
   if (finished_worker.joinable()) finished_worker.join();
-  Result<void> setup = Result<void>::Ok();
-  try {
-    runner->SetCancellationToken(cancellation);
-    runner->SetAlignmentFeedbackBroker(alignment_feedback_);
-  } catch (const std::exception& error) {
-    setup = Result<void>::Failure(Error::InvalidArgument(error.what()));
-  } catch (...) {
-    setup = Result<void>::Failure(
-        Error::InvalidArgument("unknown runner setup exception"));
-  }
-  if (!setup) {
-    commitTerminal(id, setup);
-    return Result<uint64_t>::Failure(setup.GetError());
-  }
   emit({id, EventType::kJobQueued, std::nullopt, {}});
   auto start_worker = std::make_shared<std::atomic<bool>>(false);
   auto work_result = std::make_shared<std::optional<Result<void>>>();
   std::thread execution_worker(
       [this, id, work = std::move(work), start_worker, cancellation,
-       work_result]() mutable {
+       execution_context = std::move(execution_context), work_result]() mutable {
     while (!start_worker->load(std::memory_order_acquire)) {
       std::this_thread::yield();
     }
@@ -223,7 +274,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
     emit({id, EventType::kJobStarted, std::nullopt, {}});
     Result<void> result = Result<void>::Ok();
     try {
-      result = work(id);
+      result = work(id, execution_context);
     } catch (const std::exception& e) {
       result = Result<void>::Failure(Error::InvalidArgument(e.what()));
     } catch (...) {
@@ -258,13 +309,13 @@ Result<uint64_t> PipelineController::submit(Work work) {
 }
 
 Result<uint64_t> PipelineController::SubmitRunAll() {
-  return submit([this](uint64_t id) {
+  return submit([this](uint64_t id, const ExecutionContext& context) {
     for (StageId stage : PipelineStages()) {
       if (cancellationRequested()) {
         return Result<void>::Failure(
             Error::Cancelled("stopped at a stage boundary"));
       }
-      auto result = runOneStage(id, stage);
+      auto result = runOneStage(id, stage, context);
       if (!result) return result;
     }
     return Result<void>::Ok();
@@ -272,55 +323,61 @@ Result<uint64_t> PipelineController::SubmitRunAll() {
 }
 
 Result<uint64_t> PipelineController::SubmitStage(StageId stage) {
-  return submit([this, stage](uint64_t id) {
+  return submit([this, stage](uint64_t id,
+                             const ExecutionContext& context) {
     if (cancellationRequested()) {
       return Result<void>::Failure(Error::Cancelled("before stage start"));
     }
-    return runOneStage(id, stage);
+    return runOneStage(id, stage, context);
   });
 }
 
-Result<uint64_t> PipelineController::SubmitNode(NodeId node, AgentId agent) {
-  auto valid = artifacts_.ValidateNode(node, agent);
-  if (!valid) return Result<uint64_t>::Failure(valid.GetError());
-  return submit([this, node, agent](uint64_t id) {
+Result<uint64_t> PipelineController::SubmitNode(
+    NodeId node, std::optional<AgentId> agent) {
+  return submit([this, node, agent](uint64_t id,
+                                   const ExecutionContext& context) {
     if (cancellationRequested()) {
       return Result<void>::Failure(Error::Cancelled("before node start"));
     }
     const auto& descriptor = DescribeNode(node);
-    const bool managed = runner_manages_artifacts_.load();
-    const auto artifact_checkpoint = artifacts_.Snapshot();
-    if (!managed) artifacts_.BeginNode(node, agent);
     emit({id, EventType::kNodeStarted, descriptor.stage, {}, 0, node, agent});
-    auto result = runner_->RunNode(node, agent);
+    ExecutionContext command_context = context;
+    {
+      std::lock_guard lock(mutex_);
+      command_context.base_revision = committed_session_.revision;
+    }
+    auto result = command_port_->Execute(
+        ExecutionCommand::Node(node, agent), command_context);
     if (result && cancellationRequested()) {
-      result = Result<void>::Failure(
+      return Result<void>::Failure(
           Error::Cancelled("after node runner returned"));
     }
     if (!result) {
       const Error error = AddExecutionContext(
-          result.GetError(), runner_, descriptor.stage, node, agent);
-      result = Result<void>::Failure(error);
-      if (result.GetError().code == Error::Code::kCancelled) {
-        if (!managed) artifacts_.Restore(artifact_checkpoint);
-        return result;
-      }
-      if (!managed) {
-        artifacts_.FailNode(node, agent, result.GetError().Message());
-      }
+          result.GetError(), query_port_, descriptor.stage, node, agent);
       emit(FailureEvent(id, EventType::kNodeFailed, descriptor.stage,
-                        result.GetError(), node, agent));
-      return result;
+                        error, node, agent));
+      return Result<void>::Failure(error);
     }
-    if (managed) {
-      synchronizeCommittedSession(runner_);
-    } else {
-      artifacts_.CompleteNode(node, agent);
+    auto accepted = acceptExecutionReceipt(
+        result.Value(), command_context.base_revision, query_port_);
+    if (!accepted) {
+      const Error error = AddExecutionContext(
+          accepted.GetError(), query_port_, descriptor.stage, node, agent);
+      emit(FailureEvent(id, EventType::kNodeFailed, descriptor.stage,
+                        error, node, agent));
+      return Result<void>::Failure(error);
     }
-    emit({id, EventType::kArtifactInvalidated, descriptor.stage,
-          "downstream artifacts invalidated", 0, node, agent});
-    emit({id, EventType::kArtifactCommitted, descriptor.stage, {},
-          0, node, agent});
+    ExecutionEvent invalidated{
+        id, EventType::kArtifactInvalidated, descriptor.stage,
+        "downstream artifacts invalidated", 0, node, agent};
+    invalidated.affected_agents = result.Value().affected_agents;
+    emit(std::move(invalidated));
+    ExecutionEvent committed{
+        id, EventType::kArtifactCommitted, descriptor.stage, {},
+        0, node, agent};
+    committed.affected_agents = result.Value().affected_agents;
+    emit(std::move(committed));
     const auto total = ProgressTotal(node, agents_, agent);
     emit({id, EventType::kProgressUpdated, descriptor.stage, {},
           0, node, agent, total, total});
@@ -330,13 +387,18 @@ Result<uint64_t> PipelineController::SubmitNode(NodeId node, AgentId agent) {
 
 Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
                                              uint64_t revision) {
-  std::shared_ptr<StageRunner> runner;
+  std::shared_ptr<StageCommandPort> command_port;
+  std::shared_ptr<SessionQueryPort> query_port;
+  uint64_t base_revision = 0;
   {
     std::lock_guard command_lock(command_mutex_);
     std::lock_guard lock(mutex_);
     if (maintenance_in_progress_) {
       return Result<void>::Failure(
           Error::InvalidArgument("pipeline maintenance is in progress"));
+    }
+    if (protocol_failure_) {
+      return Result<void>::Failure(*protocol_failure_);
     }
     if (job_ && (job_->state == JobState::kQueued ||
                  job_->state == JobState::kRunning ||
@@ -350,42 +412,55 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
           Error::InvalidArgument("config revision must increase"));
     }
     maintenance_in_progress_ = true;
-    runner = runner_;
+    command_port = command_port_;
+    query_port = query_port_;
+    base_revision = committed_session_revision_;
   }
-  Result<void> reconfigured = Result<void>::Failure(
-      Error::InvalidArgument("pipeline stage runner is null"));
+  Result<ExecutionReceipt> reconfigured =
+      Result<ExecutionReceipt>::Failure(
+          Error::InvalidArgument("pipeline execution ports are unavailable"));
   try {
-    if (runner) reconfigured = runner->Reconfigure(domain, revision);
+    if (command_port && query_port) {
+      reconfigured = command_port->Execute(
+          ExecutionCommand::Reconfigure(domain, revision),
+          {std::make_shared<CancellationToken>(), alignment_feedback_,
+           base_revision});
+    }
   } catch (const std::exception& error) {
-    reconfigured = Result<void>::Failure(Error::InvalidArgument(error.what()));
+    reconfigured = Result<ExecutionReceipt>::Failure(
+        Error::InvalidArgument(error.what()));
   } catch (...) {
-    reconfigured = Result<void>::Failure(
-        Error::InvalidArgument("unknown runner reconfigure exception"));
+    reconfigured = Result<ExecutionReceipt>::Failure(
+        Error::InvalidArgument("unknown command-port reconfigure exception"));
   }
+  if (!reconfigured) {
+    std::lock_guard lock(mutex_);
+    maintenance_in_progress_ = false;
+    return Result<void>::Failure(reconfigured.GetError());
+  }
+  auto accepted = acceptExecutionReceipt(
+      reconfigured.Value(), base_revision, query_port);
   {
     std::lock_guard lock(mutex_);
     maintenance_in_progress_ = false;
-    if (reconfigured) config_revision_ = revision;
   }
-  if (!reconfigured) return reconfigured;
-  if (runner_manages_artifacts_.load()) {
-    synchronizeCommittedSession(runner);
-  } else {
-    artifacts_.ApplyConfig(domain, revision);
-  }
+  if (!accepted) return accepted;
   emit({0, EventType::kArtifactInvalidated, std::nullopt,
         "config applied"});
   return Result<void>::Ok();
 }
 
-Result<void> PipelineController::ReplaceRunner(
-    std::shared_ptr<StageRunner> runner) {
+Result<void> PipelineController::ReplacePorts(
+    std::shared_ptr<StageCommandPort> command_port,
+    std::shared_ptr<SessionQueryPort> query_port) {
   if (IsInEventCallback()) {
     return Result<void>::Failure(Error::InvalidArgument(
-        "cannot replace the pipeline runner from its event callback"));
+        "cannot replace pipeline ports from an event callback"));
   }
-  if (!runner) return Result<void>::Failure(
-      Error::InvalidArgument("pipeline stage runner is null"));
+  if (!command_port || !query_port) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("pipeline execution ports are unavailable"));
+  }
   std::thread finished_worker;
   {
     std::lock_guard command_lock(command_mutex_);
@@ -405,14 +480,11 @@ Result<void> PipelineController::ReplaceRunner(
     if (worker_.joinable()) finished_worker = std::move(worker_);
   }
   if (finished_worker.joinable()) finished_worker.join();
-  std::vector<AgentId> agents;
-  std::optional<CommittedSessionSnapshot> session;
+  CommittedSessionSnapshot session;
   CancellationCapability cancellation_capability;
   try {
-    agents = runner->AgentIds();
-    cancellation_capability = runner->CancellationMetadata();
-    runner->SetAlignmentFeedbackBroker(alignment_feedback_);
-    session = runner->SessionSnapshot();
+    cancellation_capability = command_port->CancellationMetadata();
+    session = query_port->Snapshot();
   } catch (const std::exception& error) {
     std::lock_guard lock(mutex_);
     maintenance_in_progress_ = false;
@@ -421,31 +493,23 @@ Result<void> PipelineController::ReplaceRunner(
     std::lock_guard lock(mutex_);
     maintenance_in_progress_ = false;
     return Result<void>::Failure(
-        Error::InvalidArgument("unknown runner replacement exception"));
+        Error::InvalidArgument("unknown port replacement exception"));
   }
   {
     std::lock_guard lock(mutex_);
-    runner_ = std::move(runner);
-    agents_ = agents;
+    command_port_ = std::move(command_port);
+    query_port_ = std::move(query_port);
+    agents_ = session.ordered_agents;
     cancellation_capability_ = std::move(cancellation_capability);
     job_.reset();
     terminal_event_completed_job_id_ = 0;
     cancellation_.reset();
     cancel_requested_ = false;
-    ++config_revision_;
+    config_revision_ = session.config_revision;
+    committed_session_revision_ = session.revision;
+    committed_session_ = session;
+    protocol_failure_.reset();
     maintenance_in_progress_ = false;
-  }
-  artifacts_.Reset(agents);
-  if (session) {
-    artifacts_.Restore(session->artifacts);
-    {
-      std::lock_guard lock(mutex_);
-      agents_ = session->ordered_agents;
-      config_revision_ = session->config_revision;
-    }
-    runner_manages_artifacts_ = true;
-  } else {
-    runner_manages_artifacts_ = false;
   }
   emit({0, EventType::kArtifactInvalidated, std::nullopt,
         "new pipeline session created"});
@@ -462,89 +526,90 @@ std::vector<NodeDescriptor> PipelineController::NodeDescriptors() const {
 }
 
 Result<uint64_t> PipelineController::SubmitOptimizeThrough(AgentId target_agent) {
-  return submit([this, target_agent](uint64_t id) {
-    const bool managed = runner_manages_artifacts_.load();
-    const auto artifact_checkpoint = artifacts_.Snapshot();
+  return submit([this, target_agent](uint64_t id,
+                                     const ExecutionContext& context) {
     {
       std::lock_guard lock(mutex_);
       job_->active_stage = StageId::kAlignment;
     }
     emit({id, EventType::kStageStarted, StageId::kAlignment,
           "optimizer replay"});
-    auto result = runner_->RunOptimizeThrough(target_agent);
+    ExecutionContext command_context = context;
+    {
+      std::lock_guard lock(mutex_);
+      command_context.base_revision = committed_session_.revision;
+    }
+    auto result = command_port_->Execute(
+        ExecutionCommand::OptimizeThrough(target_agent), command_context);
     if (result && cancellationRequested()) {
-      result = Result<void>::Failure(
+      return Result<void>::Failure(
           Error::Cancelled("after optimizer replay returned"));
     }
     if (!result) {
       const Error error = AddExecutionContext(
-          result.GetError(), runner_, StageId::kAlignment,
+          result.GetError(), query_port_, StageId::kAlignment,
           NodeId::kOptimize, target_agent);
-      result = Result<void>::Failure(error);
-      if (result.GetError().code == Error::Code::kCancelled) {
-        if (!managed) artifacts_.Restore(artifact_checkpoint);
-        return result;
-      }
-      if (!managed) {
-        artifacts_.FailStage(StageId::kAlignment, result.GetError().Message());
-      }
       emit(FailureEvent(id, EventType::kStageFailed, StageId::kAlignment,
-                        result.GetError(), NodeId::kOptimize, target_agent));
-      return result;
+                        error, NodeId::kOptimize, target_agent));
+      return Result<void>::Failure(error);
     }
-    std::vector<AgentId> agents;
-    {
-      std::lock_guard lock(mutex_);
-      agents = agents_;
+    auto accepted = acceptExecutionReceipt(
+        result.Value(), command_context.base_revision, query_port_);
+    if (!accepted) {
+      const Error error = AddExecutionContext(
+          accepted.GetError(), query_port_, StageId::kAlignment,
+          NodeId::kOptimize, target_agent);
+      emit(FailureEvent(id, EventType::kStageFailed, StageId::kAlignment,
+                        error, NodeId::kOptimize, target_agent));
+      return Result<void>::Failure(error);
     }
-    if (managed) {
-      synchronizeCommittedSession(runner_);
-    } else {
-      artifacts_.CompleteOptimizeThrough(target_agent, agents);
-    }
-    emit({id, EventType::kStageCompleted, StageId::kAlignment,
-          "optimizer replay"});
+    ExecutionEvent completed{id, EventType::kStageCompleted,
+                             StageId::kAlignment, "optimizer replay"};
+    completed.affected_agents = result.Value().affected_agents;
+    emit(std::move(completed));
     return Result<void>::Ok();
   });
 }
 
-Result<void> PipelineController::runOneStage(uint64_t job_id, StageId stage) {
+Result<void> PipelineController::runOneStage(
+    uint64_t job_id, StageId stage, const ExecutionContext& context) {
   OPEN_LMM_ZONE_N("PipelineController.Stage");
   OPEN_LMM_PLOT("job.id", job_id);
   OPEN_LMM_PLOT("stage.id", static_cast<int>(stage));
-  const auto artifact_checkpoint = artifacts_.Snapshot();
-  const bool managed = runner_manages_artifacts_.load();
-  if (!managed) artifacts_.BeginStage(stage);
   {
     std::lock_guard lock(mutex_);
     job_->active_stage = stage;
   }
   emit({job_id, EventType::kStageStarted, stage, {}});
-  auto result = runner_->RunStage(stage);
+  ExecutionContext command_context = context;
+  {
+    std::lock_guard lock(mutex_);
+    command_context.base_revision = committed_session_.revision;
+  }
+  auto result = command_port_->Execute(ExecutionCommand::Stage(stage),
+                                       command_context);
   if (result && cancellationRequested()) {
-    result = Result<void>::Failure(
+    return Result<void>::Failure(
         Error::Cancelled("after stage runner returned"));
   }
   if (!result) {
-    const Error error = AddExecutionContext(result.GetError(), runner_, stage);
-    result = Result<void>::Failure(error);
-    if (result.GetError().code == Error::Code::kCancelled) {
-      if (!managed) artifacts_.Restore(artifact_checkpoint);
-      return result;
-    }
-    if (!managed) {
-      artifacts_.FailStage(stage, result.GetError().Message());
-    }
+    const Error error = AddExecutionContext(
+        result.GetError(), query_port_, stage);
     emit(FailureEvent(job_id, EventType::kStageFailed, stage,
-                      result.GetError()));
-    return result;
+                      error));
+    return Result<void>::Failure(error);
   }
-  if (managed) {
-    synchronizeCommittedSession(runner_);
-  } else {
-    artifacts_.CompleteStage(stage);
+  auto accepted = acceptExecutionReceipt(
+      result.Value(), command_context.base_revision, query_port_);
+  if (!accepted) {
+    const Error error = AddExecutionContext(
+        accepted.GetError(), query_port_, stage);
+    emit(FailureEvent(job_id, EventType::kStageFailed, stage, error));
+    return Result<void>::Failure(error);
   }
-  emit({job_id, EventType::kStageCompleted, stage, {}});
+  ExecutionEvent completed{job_id, EventType::kStageCompleted, stage, {}};
+  completed.affected_agents = result.Value().affected_agents;
+  emit(std::move(completed));
   return Result<void>::Ok();
 }
 
@@ -703,29 +768,29 @@ PipelineSnapshot PipelineController::Snapshot() const {
     std::lock_guard lock(mutex_);
     snapshot.job = job_;
     cancellation = cancellation_;
-    snapshot.config_revision = config_revision_;
-    snapshot.agents = agents_;
+    snapshot.config_revision = committed_session_.config_revision;
+    snapshot.agents = committed_session_.ordered_agents;
+    snapshot.artifacts = committed_session_.artifacts;
     snapshot.recent_events = recent_events_;
   }
   if (snapshot.job && cancellation) {
     snapshot.job->cancellation = cancellation->Telemetry();
   }
-  snapshot.artifacts = artifacts_.Snapshot();
   return snapshot;
 }
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     const AgentId& agent) const {
-  std::shared_ptr<StageRunner> runner;
+  std::shared_ptr<SessionQueryPort> query_port;
   {
     std::lock_guard lock(mutex_);
-    runner = runner_;
+    query_port = query_port_;
   }
-  if (!runner) {
+  if (!query_port) {
     return Result<VisualizationSnapshot>::Failure(
-        Error::InvalidArgument("stage runner is not available"));
+        Error::InvalidArgument("session query port is not available"));
   }
-  auto result = runner->CreateVisualizationSnapshot(agent);
+  auto result = query_port->Visualization(agent);
   if (!result) return result;
   return result;
 }

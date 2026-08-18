@@ -41,11 +41,44 @@ const std::vector<NodeExecutionSpec>& ExecutionSpecs() {
        {ArtifactType::kGlobalMap, ArtifactType::kPcdFile},
        {ArtifactType::kGlobalMap, ArtifactType::kPcdFile}},
       {NodeId::kPoseSave, "pose_save", StageId::kSave,
-       ExecutionScope::kPerAgent, false, true,
+       ExecutionScope::kSession, false, true,
        {ArtifactType::kOptimizedPoses}, {ArtifactType::kPoseFile},
        {ArtifactType::kPoseFile}},
+      {NodeId::kFallbackMapSave, "fallback_map_save", StageId::kSave,
+       ExecutionScope::kSession, false, true,
+       {ArtifactType::kRawData, ArtifactType::kOptimizedPoses},
+       {ArtifactType::kGlobalMap, ArtifactType::kPcdFile},
+       {ArtifactType::kGlobalMap, ArtifactType::kPcdFile}},
   };
   return specs;
+}
+
+const std::vector<ArtifactExecutionSpec>& ArtifactExecutionSpecs() {
+  static const std::vector<ArtifactExecutionSpec> specs{
+      {ArtifactType::kConfigSnapshot, ExecutionScope::kSession},
+      {ArtifactType::kAgentInput, ExecutionScope::kPerAgent},
+      {ArtifactType::kRawData, ExecutionScope::kPerAgent},
+      {ArtifactType::kDescriptorState, ExecutionScope::kSession},
+      {ArtifactType::kLoopCandidates, ExecutionScope::kPerAgent},
+      {ArtifactType::kMapAlignment, ExecutionScope::kPerAgent},
+      {ArtifactType::kOptimizerState, ExecutionScope::kSession},
+      {ArtifactType::kOptimizedPoses, ExecutionScope::kPerAgent},
+      {ArtifactType::kGlobalMap, ExecutionScope::kPerAgent},
+      {ArtifactType::kPoseFile, ExecutionScope::kPerAgent},
+      {ArtifactType::kPcdFile, ExecutionScope::kPerAgent},
+      {ArtifactType::kProfileRecord, ExecutionScope::kPerAgent},
+  };
+  return specs;
+}
+
+ExecutionScope ArtifactOwnership(ArtifactType artifact) {
+  const auto& specs = ArtifactExecutionSpecs();
+  const auto found = std::find_if(
+      specs.begin(), specs.end(), [artifact](const auto& spec) {
+        return spec.type == artifact;
+      });
+  if (found == specs.end()) throw std::out_of_range("unknown artifact type");
+  return found->ownership;
 }
 
 const NodeExecutionSpec& ExecutionSpecFor(NodeId node) {
@@ -63,8 +96,8 @@ const NodeDescriptor& DescribeNode(NodeId node) {
     std::vector<NodeDescriptor> result;
     result.reserve(ExecutionSpecs().size());
     for (const auto& spec : ExecutionSpecs()) {
-      result.push_back({spec.id, spec.name, spec.stage, spec.required_artifacts,
-                        spec.produces, spec.ordered,
+      result.push_back({spec.id, spec.name, spec.stage, spec.scope,
+                        spec.required_artifacts, spec.produces, spec.ordered,
                         spec.supports_cancellation});
     }
     return result;
@@ -198,6 +231,48 @@ std::vector<ArtifactType> AffectedArtifacts(ConfigDomain domain) {
           {ArtifactType::kGlobalMap, ArtifactType::kPcdFile}, true);
   }
   return {};
+}
+
+std::vector<AgentId> ArtifactRevisionAffectedAgents(
+    const CommittedSessionSnapshot& before,
+    const CommittedSessionSnapshot& after) {
+  std::map<ArtifactKey, uint64_t> before_revisions;
+  std::map<ArtifactKey, uint64_t> after_revisions;
+  for (const auto& artifact : before.artifacts) {
+    before_revisions[artifact.key] = artifact.revision;
+  }
+  for (const auto& artifact : after.artifacts) {
+    after_revisions[artifact.key] = artifact.revision;
+  }
+
+  bool session_artifact_changed = false;
+  std::set<AgentId> changed_agents;
+  const auto record_change = [&](const ArtifactKey& key) {
+    if (key.agent) {
+      changed_agents.insert(*key.agent);
+    } else {
+      session_artifact_changed = true;
+    }
+  };
+  for (const auto& [key, revision] : after_revisions) {
+    const auto previous = before_revisions.find(key);
+    if (previous == before_revisions.end() || previous->second != revision) {
+      record_change(key);
+    }
+  }
+  for (const auto& [key, revision] : before_revisions) {
+    (void)revision;
+    if (!after_revisions.contains(key)) record_change(key);
+  }
+
+  if (session_artifact_changed) return after.ordered_agents;
+  std::vector<AgentId> result;
+  result.reserve(changed_agents.size());
+  for (const AgentId& agent : after.ordered_agents) {
+    if (changed_agents.erase(agent) != 0) result.push_back(agent);
+  }
+  result.insert(result.end(), changed_agents.begin(), changed_agents.end());
+  return result;
 }
 
 }  // namespace open_lmm

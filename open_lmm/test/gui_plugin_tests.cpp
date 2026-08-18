@@ -5,7 +5,7 @@
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/gui/visualization_repository.hpp>
 #include <open_lmm/gui/visualization_snapshot_worker.hpp>
-#include <open_lmm/server/stage_runner.hpp>
+#include "test_runtime_port.hpp"
 #include <cstdlib>
 #include <atomic>
 #include <chrono>
@@ -29,23 +29,16 @@ class FakeGui final : public open_lmm::GuiPlugin {
   bool started = false, requested_stop = false, joined = false, open = false;
 };
 
-class NoopRunner final : public open_lmm::StageRunner {
+class NoopRunner final : public open_lmm::test::RuntimePortFixture {
  public:
-  void SetCancellationToken(
-      std::shared_ptr<open_lmm::CancellationToken>) override {}
-  open_lmm::Result<void> RunStage(open_lmm::StageId) override {
+  NoopRunner() : RuntimePortFixture({Id("A")}) {}
+  open_lmm::Result<void> ExecuteFixture(
+      const open_lmm::ExecutionCommand&,
+      const open_lmm::ExecutionContext&) override {
     return open_lmm::Result<void>::Ok();
   }
-  open_lmm::Result<void> RunNode(
-      open_lmm::NodeId, std::optional<open_lmm::AgentId>) override {
-    return open_lmm::Result<void>::Ok();
-  }
-  open_lmm::Result<void> RunOptimizeThrough(const open_lmm::AgentId&) override {
-    return open_lmm::Result<void>::Ok();
-  }
-  std::vector<open_lmm::AgentId> AgentIds() const override { return {Id("A")}; }
   open_lmm::Result<open_lmm::VisualizationSnapshot>
-  CreateVisualizationSnapshot(const open_lmm::AgentId& agent) const override {
+  CreateVisualization(const open_lmm::AgentId& agent) const override {
     open_lmm::VisualizationSnapshot snapshot;
     snapshot.agent = agent;
     snapshot.poses.push_back({});
@@ -196,7 +189,7 @@ int main() {
           "command bridge applies config revision");
   Require(services.snapshot().config_revision == 2,
           "applied config revision is visible in snapshot");
-  Require(services.node_descriptors().size() == 5,
+  Require(services.node_descriptors().size() == 6,
           "node descriptors are exposed to GUI controls");
   auto visualization = services.visualization_snapshot(Id("A"));
   Require(visualization.IsOk() && visualization.Value().agent == Id("A"),
@@ -215,6 +208,10 @@ int main() {
             "bridged callbacks drain before subscriber inspection");
     Require(subscriber_one > 0 && subscriber_two > 0,
             "multiple subscribers receive events");
+    auto session_node =
+        services.submit_node(open_lmm::NodeId::kPoseSave, std::nullopt);
+    Require(session_node && controller->Wait(session_node.Value()).IsOk(),
+            "GUI bridge submits a session node without an agent target");
   }
   const int stopped_count = subscriber_two;
   auto second_job = services.submit_run_all();
