@@ -49,16 +49,21 @@ FreeDomParams::FreeDomParams(const open_lmm::Config& config) {
 
   enable_raycast_enhancement = config.param_cast<bool>("dynamic_remover", "enable_raycast_enhancement");
 
-  constexpr double kDegreesToRadians = std::numbers::pi_v<double> / 180.0;
+  const auto fov_projection_mode = config.param_cast<std::string>(
+      "dynamic_remover", "fov_projection_mode");
+  const double fov_scale =
+      fov_projection_mode == "legacy"
+          ? 1.0
+          : std::numbers::pi_v<double> / 180.0;
   lidar_horizon_fov_rad =
       config.param_cast<double>("dynamic_remover", "lidar_horizon_fov_degree") *
-      kDegreesToRadians;
+      fov_scale;
   lidar_vertical_fov_upper_rad =
       config.param_cast<double>("dynamic_remover", "lidar_vertical_fov_upper_degree") *
-      kDegreesToRadians;
+      fov_scale;
   lidar_vertical_fov_lower_rad =
       config.param_cast<double>("dynamic_remover", "lidar_vertical_fov_lower_degree") *
-      kDegreesToRadians;
+      fov_scale;
   depth_image_vertical_lines =
       unsigned_value("depth_image_vertical_lines");
 

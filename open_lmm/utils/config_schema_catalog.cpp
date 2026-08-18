@@ -462,6 +462,8 @@ SchemaFragment FreeDomSchema() {
       Path("/dynamic_remover/fov_mask_path", false, ""),
       Path("/dynamic_remover/fov_mask_name", false),
       UInt("/dynamic_remover/num_threads", 8, 1),
+      Choice("/dynamic_remover/fov_projection_mode", "legacy",
+             {"legacy", "physical"}),
   };
   fragment.fields[35].deprecation =
       {true, "/dynamic_remover/fov_mask_path", 1};

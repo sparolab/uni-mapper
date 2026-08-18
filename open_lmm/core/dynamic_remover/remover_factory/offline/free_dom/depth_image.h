@@ -33,7 +33,7 @@ public:
         unsigned int num_threads;
     };
 
-    DepthImage(){}
+    DepthImage() : learn_fov(false), enable_fov_mask(false) {}
 
     void set_params(const DepthImageConfig& config);
 

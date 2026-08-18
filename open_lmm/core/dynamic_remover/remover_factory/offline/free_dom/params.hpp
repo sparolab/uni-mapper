@@ -46,7 +46,9 @@ struct FreeDomParams {
 
   bool enable_raycast_enhancement;
 
-  // Config is degrees; FreeDomParams is the one degree-to-radian boundary.
+  // Legacy mode preserves the historical degree-as-radian projection.
+  // Physical mode performs the mathematically correct degree-to-radian
+  // conversion at this single boundary.
   double lidar_horizon_fov_rad;
   double lidar_vertical_fov_upper_rad;
   double lidar_vertical_fov_lower_rad;

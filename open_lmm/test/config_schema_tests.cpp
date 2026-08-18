@@ -198,6 +198,11 @@ int main() {
       R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"free_dom","voxel_depth":0}})");
   Expect(!invalid_free_dom_depth,
          "FreeDOM positive depth constraint must be owned by the schema");
+  auto invalid_free_dom_fov_mode = registry.ParseAndValidate(
+      ConfigDocumentKind::kDynamicRemover,
+      R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"free_dom","fov_projection_mode":"unknown"}})");
+  Expect(!invalid_free_dom_fov_mode,
+         "FreeDOM unknown FOV projection mode must fail");
 
   auto unknown = registry.ParseAndValidate(
       ConfigDocumentKind::kMapServer,
