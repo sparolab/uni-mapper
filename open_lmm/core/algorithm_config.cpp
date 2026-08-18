@@ -112,9 +112,12 @@ Result<DataLoaderConfig> ParseDataLoaderConfig(const Config& source) {
           "file names, positive voxel size, valid range, and one-character "
           "delimiter are required");
     }
-    if (config.pose_format != "kitti" && config.pose_format != "tum" &&
-        config.pose_format != "custom") {
-      throw std::invalid_argument("unsupported pose_format");
+    if (config.pose_format == "custom") {
+      throw std::invalid_argument(
+          "pose_format 'custom' is declared but not implemented");
+    }
+    if (config.pose_format != "kitti" && config.pose_format != "tum") {
+      throw std::invalid_argument("unsupported pose_format; expected kitti or tum");
     }
     if (config.scan_type != "pcd" && config.scan_type != "bin") {
       throw std::invalid_argument("unsupported scan_type");

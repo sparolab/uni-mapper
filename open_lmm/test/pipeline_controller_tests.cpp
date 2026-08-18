@@ -345,6 +345,8 @@ void TestNodeCommandsAndMetadata() {
   Check(loop && controller.Wait(loop.Value()), "agent LoopDetect node");
   auto optimize = controller.SubmitNode(NodeId::kOptimize, Id("A"));
   Check(optimize && controller.Wait(optimize.Value()), "agent Optimize node");
+  Check(controller.WaitForEventCallbacks().IsOk(),
+        "node event callbacks drain before inspecting subscriber state");
   for (std::size_t i = 1; i < sequences.size(); ++i) {
     Check(sequences[i] > sequences[i - 1], "event sequence monotonic");
   }
@@ -492,6 +494,8 @@ void TestCancellationTelemetryAndJoinOrdering() {
             *telemetry.cancel_observed_at_unix_ns <=
                 *telemetry.cancel_completed_at_unix_ns,
         "cancellation timestamps are complete and ordered");
+  Check(controller.WaitForEventCallbacks().IsOk(),
+        "cancellation callbacks drain before subscriber inspection");
   Check(terminal_events.load() == 1 && terminal_after_worker_exit.load(),
         "terminal cancellation is emitted once after worker join");
   bool artifacts_preserved = completed.artifacts.size() == committed.size();
@@ -598,6 +602,44 @@ void TestAlignmentFeedbackAcceptAndStaleResponse() {
         "stale alignment response rejected");
 }
 
+void TestAlignmentFeedbackCanRespondFromRequestCallback() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->request_alignment_feedback = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  std::mutex sequences_mutex;
+  std::vector<uint64_t> sequences;
+  std::atomic<bool> synchronous_response_ok{false};
+  auto subscription = controller.SubscribeEvents(
+      [&](const ExecutionEvent& event) {
+        {
+          std::lock_guard lock(sequences_mutex);
+          sequences.push_back(event.sequence);
+        }
+        if (event.type != EventType::kAlignmentFeedbackRequested) return;
+        const auto request = controller.GetAlignmentFeedbackSnapshot();
+        synchronous_response_ok = request &&
+            controller.RespondToAlignment(
+                event.job_id,
+                {request->proposal.request_id, AlignmentDecision::kAccept,
+                 std::nullopt}).IsOk();
+      });
+
+  const auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job && controller.Wait(job.Value()),
+        "synchronous alignment callback did not complete the job");
+  Check(synchronous_response_ok.load(),
+        "request callback could not inspect and answer published feedback");
+  {
+    std::lock_guard lock(sequences_mutex);
+    Check(std::adjacent_find(
+              sequences.begin(), sequences.end(),
+              [](uint64_t lhs, uint64_t rhs) { return lhs >= rhs; }) ==
+              sequences.end(),
+          "reentrant event callback reversed subscriber sequence");
+  }
+}
+
 void TestAlignmentFeedbackCancellation() {
   auto runner = std::make_shared<FakeRunner>();
   runner->request_alignment_feedback = true;
@@ -689,6 +731,85 @@ void TestEventCallbackCanUnsubscribeReenterAndThrow() {
         "self-unsubscribe prevents later callbacks without deadlock");
 }
 
+void TestTerminalCommitPrecedesWaitAndReentrantCallback() {
+  auto runner = std::make_shared<FakeRunner>();
+  PipelineController controller(runner);
+  std::promise<Result<void>> callback_wait_promise;
+  auto callback_wait = callback_wait_promise.get_future();
+  std::atomic<int> terminal_callbacks{0};
+  std::atomic<bool> terminal_visible_in_snapshot{false};
+  auto subscription = controller.SubscribeEvents(
+      [&](const ExecutionEvent& event) {
+        if (event.type != EventType::kJobCompleted &&
+            event.type != EventType::kJobCancelled) {
+          return;
+        }
+        if (terminal_callbacks.fetch_add(1) != 0) return;
+        const auto snapshot = controller.Snapshot();
+        terminal_visible_in_snapshot = std::count_if(
+            snapshot.recent_events.begin(), snapshot.recent_events.end(),
+            [&](const ExecutionEvent& candidate) {
+              return candidate.job_id == event.job_id &&
+                     (candidate.type == EventType::kJobCompleted ||
+                      candidate.type == EventType::kJobCancelled);
+            }) == 1;
+        callback_wait_promise.set_value(controller.Wait(event.job_id));
+      });
+
+  const auto job = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+  Check(job && controller.Wait(job.Value()),
+        "terminal journal commit did not release Wait");
+  Check(callback_wait.wait_for(std::chrono::milliseconds(500)) ==
+            std::future_status::ready &&
+            callback_wait.get().IsOk(),
+        "terminal callback could not re-enter Wait");
+  Check(terminal_callbacks.load() == 1 &&
+            terminal_visible_in_snapshot.load(),
+        "terminal callback did not observe exactly one committed event");
+
+  const auto snapshot = controller.Snapshot();
+  const auto terminal_events = std::count_if(
+      snapshot.recent_events.begin(), snapshot.recent_events.end(),
+      [&](const ExecutionEvent& event) {
+        return event.job_id == job.Value() &&
+               (event.type == EventType::kJobCompleted ||
+                event.type == EventType::kJobCancelled);
+      });
+  Check(terminal_events == 1,
+        "successful job journal contains duplicate terminal events");
+}
+
+void TestTerminalCallbackRejectsWorkerLifecycleCommands() {
+  auto runner = std::make_shared<FakeRunner>();
+  PipelineController controller(runner);
+  std::promise<bool> callback_result_promise;
+  auto callback_result = callback_result_promise.get_future();
+  std::atomic<bool> handled{false};
+  auto subscription = controller.SubscribeEvents(
+      [&](const ExecutionEvent& event) {
+        if (event.type != EventType::kJobCompleted || handled.exchange(true)) {
+          return;
+        }
+        const auto submitted = controller.SubmitStage(StageId::kDataLoad);
+        const auto replaced = controller.ReplaceRunner(
+            std::make_shared<FakeRunner>());
+        callback_result_promise.set_value(
+            !submitted && !replaced &&
+            submitted.GetError().Message().find("event callback") !=
+                std::string::npos &&
+            replaced.GetError().Message().find("event callback") !=
+                std::string::npos);
+      });
+
+  const auto job = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+  Check(job && controller.Wait(job.Value()),
+        "terminal callback rejection fixture did not complete");
+  Check(callback_result.wait_for(std::chrono::milliseconds(500)) ==
+            std::future_status::ready &&
+            callback_result.get(),
+        "worker lifecycle command was not safely rejected in callback");
+}
+
 void TestControllerCoordinatorFullFallbackIntegration() {
   auto runner = std::make_shared<FakeRunner>();
   runner->coordinate_alignment = true;
@@ -767,10 +888,13 @@ int main() {
   TestManagedSessionMetadataIsAuthoritative();
   TestSessionRunnerReplacement();
   TestAlignmentFeedbackAcceptAndStaleResponse();
+  TestAlignmentFeedbackCanRespondFromRequestCallback();
   TestAlignmentFeedbackCancellation();
   TestSnapshotDoesNotInvokeRunnerWhileControllerLocked();
   TestSnapshotDuringFeedbackNotificationDoesNotDeadlock();
   TestEventCallbackCanUnsubscribeReenterAndThrow();
+  TestTerminalCommitPrecedesWaitAndReentrantCallback();
+  TestTerminalCallbackRejectsWorkerLifecycleCommands();
   TestControllerCoordinatorFullFallbackIntegration();
   TestControllerCoordinatorTimeoutIntegration();
   std::cout << "pipeline controller tests passed\n";

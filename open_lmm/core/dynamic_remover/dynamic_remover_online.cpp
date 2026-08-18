@@ -5,6 +5,7 @@
 #include <tqdmcpp/tqdmcpp.hpp>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
+#include <open_lmm/core/algorithm_invariants.hpp>
 #include <open_lmm/utils/logging.hpp>
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
@@ -19,6 +20,17 @@ DynamicRemoverOnline::DynamicRemoverOnline(
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
     std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) {
+  auto ordered_result = OrderOptimizedPosesByFrameId(
+      optimized_poses, scans.size(), "online dynamic remover");
+  if (!ordered_result) {
+    throw std::invalid_argument(ordered_result.GetError().Message());
+  }
+  PoseVec ordered_poses = std::move(ordered_result).Value();
+  for (std::size_t index = 0; index < scans.size(); ++index) {
+    auto valid = ValidatePointCloud(
+        scans[index], "online dynamic remover scan " + std::to_string(index));
+    if (!valid) throw std::invalid_argument(valid.GetError().Message());
+  }
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_scan(
       new pcl::PointCloud<pcl::PointXYZI>);
 
@@ -26,7 +38,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
   T.set_prefix("Dynamic Remover");
   int idx = 0;
   for (auto scan : T) {
-    static_scan = online_model_->run(scans[idx], optimized_poses[idx].second);
+    static_scan = online_model_->run(scans[idx], ordered_poses[idx]);
     idx++;
   }
   T.finish();
@@ -37,7 +49,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
       online_model_->getStaticMap();
 
   // TODO(gil) : hardcoded voxel leaf size
-  downsampleWithRangeFilter(static_map, 0.2, 0, 0, false);
+  static_map = downsampleWithRangeFilter(static_map, 0.2F, 0.0F, 0.0F, false);
 
   return static_map;
 }

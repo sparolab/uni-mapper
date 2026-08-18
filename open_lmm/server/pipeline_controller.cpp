@@ -65,6 +65,7 @@ struct ExecutionEventSubscriberRegistry {
 
 thread_local const ExecutionEventSubscriberSlot* active_event_subscriber =
     nullptr;
+thread_local const PipelineController* active_event_controller = nullptr;
 
 ExecutionEventSubscription::ExecutionEventSubscription(
     std::function<void()> unsubscribe)
@@ -145,6 +146,10 @@ PipelineController::~PipelineController() {
 }
 
 Result<uint64_t> PipelineController::submit(Work work) {
+  if (IsInEventCallback()) {
+    return Result<uint64_t>::Failure(Error::InvalidArgument(
+        "cannot submit a pipeline job from its event callback"));
+  }
   std::thread finished_worker;
   std::shared_ptr<StageRunner> runner;
   uint64_t id;
@@ -183,22 +188,19 @@ Result<uint64_t> PipelineController::submit(Work work) {
   // mutexes. The queued job reserves the runner against replacement while the
   // external calls are in flight.
   if (finished_worker.joinable()) finished_worker.join();
+  Result<void> setup = Result<void>::Ok();
   try {
     runner->SetCancellationToken(cancellation);
     runner->SetAlignmentFeedbackBroker(alignment_feedback_);
   } catch (const std::exception& error) {
-    std::lock_guard lock(mutex_);
-    job_->state = JobState::kFailed;
-    job_->message = error.what();
-    completed_.notify_all();
-    return Result<uint64_t>::Failure(Error::InvalidArgument(error.what()));
+    setup = Result<void>::Failure(Error::InvalidArgument(error.what()));
   } catch (...) {
-    std::lock_guard lock(mutex_);
-    job_->state = JobState::kFailed;
-    job_->message = "unknown runner setup exception";
-    completed_.notify_all();
-    return Result<uint64_t>::Failure(
+    setup = Result<void>::Failure(
         Error::InvalidArgument("unknown runner setup exception"));
+  }
+  if (!setup) {
+    commitTerminal(id, setup);
+    return Result<uint64_t>::Failure(setup.GetError());
   }
   emit({id, EventType::kJobQueued, std::nullopt, {}});
   auto start_worker = std::make_shared<std::atomic<bool>>(false);
@@ -245,7 +247,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
             job_->cancellation = cancellation->Telemetry();
           }
         }
-        finish(id, **work_result);
+        commitTerminal(id, **work_result);
       });
   {
     std::lock_guard command_lock(command_mutex_);
@@ -378,6 +380,10 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
 
 Result<void> PipelineController::ReplaceRunner(
     std::shared_ptr<StageRunner> runner) {
+  if (IsInEventCallback()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "cannot replace the pipeline runner from its event callback"));
+  }
   if (!runner) return Result<void>::Failure(
       Error::InvalidArgument("pipeline stage runner is null"));
   std::thread finished_worker;
@@ -545,32 +551,47 @@ Result<void> PipelineController::runOneStage(uint64_t job_id, StageId stage) {
 Result<void> PipelineController::Cancel(uint64_t job_id) {
   std::shared_ptr<CancellationToken> cancellation;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
-  {
-    std::lock_guard lock(mutex_);
-    if (!job_ || job_->id != job_id) {
-      return Result<void>::Failure(Error::InvalidArgument("unknown job id"));
-    }
-    if (job_->state != JobState::kQueued &&
-        job_->state != JobState::kRunning &&
-        job_->state != JobState::kWaitingForDependency &&
-        job_->state != JobState::kWaitingForAlignmentFeedback) {
-      return Result<void>::Failure(Error::InvalidArgument("job is not running"));
-    }
-    cancel_requested_ = true;
-    job_->state = JobState::kCancelling;
-    cancellation = cancellation_;
-    alignment_feedback = alignment_feedback_;
-    if (cancellation) {
-      cancellation->Request();
-      job_->cancellation = cancellation->Telemetry();
-    }
-  }
-  if (alignment_feedback) alignment_feedback->Cancel();
   ExecutionEvent requested{
       job_id, EventType::kCancellationRequested, std::nullopt,
       "cancellation requested; waiting for the next safe point"};
-  if (cancellation) requested.cancellation = cancellation->Telemetry();
-  emit(std::move(requested));
+  bool drain_callbacks = false;
+  {
+    std::lock_guard dispatch_lock(event_dispatch_mutex_);
+    {
+      std::lock_guard lock(mutex_);
+      if (!job_ || job_->id != job_id) {
+        return Result<void>::Failure(Error::InvalidArgument("unknown job id"));
+      }
+      if (job_->state != JobState::kQueued &&
+          job_->state != JobState::kRunning &&
+          job_->state != JobState::kWaitingForDependency &&
+          job_->state != JobState::kWaitingForAlignmentFeedback) {
+        return Result<void>::Failure(
+            Error::InvalidArgument("job is not running"));
+      }
+      cancel_requested_ = true;
+      job_->state = JobState::kCancelling;
+      cancellation = cancellation_;
+      alignment_feedback = alignment_feedback_;
+      if (cancellation) {
+        cancellation->Request();
+        job_->cancellation = cancellation->Telemetry();
+        requested.cancellation = job_->cancellation;
+      }
+      requested.sequence = next_event_sequence_++;
+      recent_events_.push_back(requested);
+      if (recent_events_.size() > 256) {
+        recent_events_.erase(recent_events_.begin());
+      }
+    }
+    pending_event_callbacks_.push_back(requested);
+    if (!dispatching_events_) {
+      dispatching_events_ = true;
+      drain_callbacks = true;
+    }
+  }
+  if (alignment_feedback) alignment_feedback->Cancel();
+  if (drain_callbacks) drainEventCallbacks();
   return Result<void>::Ok();
 }
 
@@ -584,7 +605,8 @@ bool PipelineController::cancellationRequested() const {
   return !cancellation || cancellation->IsCancellationRequested();
 }
 
-void PipelineController::finish(uint64_t job_id, const Result<void>& result) {
+void PipelineController::commitTerminal(uint64_t job_id,
+                                        const Result<void>& result) {
   JobState state = JobState::kSucceeded;
   std::string message;
   if (!result) {
@@ -592,32 +614,48 @@ void PipelineController::finish(uint64_t job_id, const Result<void>& result) {
     state = result.GetError().code == Error::Code::kCancelled
                 ? JobState::kCancelled : JobState::kFailed;
   }
-  {
-    std::lock_guard lock(mutex_);
-    job_->state = state;
-    job_->active_stage.reset();
-    job_->message = message;
-    if (cancellation_) job_->cancellation = cancellation_->Telemetry();
-  }
   ExecutionEvent terminal{
       job_id, state == JobState::kCancelled ? EventType::kJobCancelled
                                              : EventType::kJobCompleted,
       std::nullopt, message};
   if (!result) terminal.error = result.GetError();
+  bool drain_callbacks = false;
   {
-    std::lock_guard lock(mutex_);
-    if (job_ && job_->id == job_id) {
+    std::lock_guard dispatch_lock(event_dispatch_mutex_);
+    {
+      std::lock_guard lock(mutex_);
+      if (!job_ || job_->id != job_id ||
+          terminal_event_completed_job_id_ == job_id) {
+        return;
+      }
       terminal.cancellation = job_->cancellation;
-    }
-  }
-  emit(std::move(terminal));
-  {
-    std::lock_guard lock(mutex_);
-    if (job_ && job_->id == job_id) {
+      if (cancellation_) {
+        terminal.cancellation = cancellation_->Telemetry();
+      }
+
+      // The journal entry is committed before terminal state/watermark. A
+      // waiter or callback can therefore never observe terminal state without
+      // the corresponding event already being present in the snapshot.
+      terminal.sequence = next_event_sequence_++;
+      recent_events_.push_back(terminal);
+      if (recent_events_.size() > 256) {
+        recent_events_.erase(recent_events_.begin());
+      }
+
+      job_->state = state;
+      job_->active_stage.reset();
+      job_->message = message;
+      if (terminal.cancellation) job_->cancellation = *terminal.cancellation;
       terminal_event_completed_job_id_ = job_id;
+    }
+    pending_event_callbacks_.push_back(terminal);
+    if (!dispatching_events_) {
+      dispatching_events_ = true;
+      drain_callbacks = true;
     }
   }
   completed_.notify_all();
+  if (drain_callbacks) drainEventCallbacks();
 }
 
 Result<void> PipelineController::Wait(uint64_t job_id) {
@@ -640,6 +678,22 @@ Result<void> PipelineController::Wait(uint64_t job_id) {
     return Result<void>::Failure(Error::Cancelled(job_->message));
   }
   return Result<void>::Failure(Error::InvalidArgument(job_->message));
+}
+
+Result<void> PipelineController::WaitForEventCallbacks() {
+  if (IsInEventCallback()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "cannot wait for event callbacks from an event callback"));
+  }
+  std::unique_lock lock(event_dispatch_mutex_);
+  event_callbacks_idle_.wait(lock, [this] {
+    return !dispatching_events_ && pending_event_callbacks_.empty();
+  });
+  return Result<void>::Ok();
+}
+
+bool PipelineController::IsInEventCallback() const noexcept {
+  return active_event_controller == this;
 }
 
 PipelineSnapshot PipelineController::Snapshot() const {
@@ -678,6 +732,12 @@ Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
 
 std::optional<AlignmentFeedbackSnapshot>
 PipelineController::GetAlignmentFeedbackSnapshot() const {
+  {
+    std::lock_guard lock(mutex_);
+    if (!job_ || job_->state != JobState::kWaitingForAlignmentFeedback) {
+      return std::nullopt;
+    }
+  }
   return alignment_feedback_ ? alignment_feedback_->Snapshot() : std::nullopt;
 }
 
@@ -748,42 +808,76 @@ ExecutionEventSubscription PipelineController::SubscribeEvents(
 }
 
 void PipelineController::emit(ExecutionEvent event) {
-  std::vector<std::shared_ptr<ExecutionEventSubscriberSlot>> subscribers;
+  bool drain_callbacks = false;
   {
-    std::lock_guard lock(mutex_);
-    event.sequence = next_event_sequence_++;
-    recent_events_.push_back(event);
-    if (recent_events_.size() > 256) recent_events_.erase(recent_events_.begin());
-  }
-  {
-    std::lock_guard lock(event_subscribers_->mutex);
-    subscribers.reserve(event_subscribers_->callbacks.size());
-    for (const auto& [id, subscriber] : event_subscribers_->callbacks) {
-      (void)id;
-      subscribers.push_back(subscriber);
-    }
-  }
-  for (const auto& subscriber : subscribers) {
-    std::function<void(const ExecutionEvent&)> callback;
+    std::lock_guard dispatch_lock(event_dispatch_mutex_);
     {
-      std::lock_guard lock(subscriber->mutex);
-      if (!subscriber->active) continue;
-      ++subscriber->callbacks_in_flight;
-      callback = subscriber->callback;
+      std::lock_guard lock(mutex_);
+      event.sequence = next_event_sequence_++;
+      recent_events_.push_back(event);
+      if (recent_events_.size() > 256) {
+        recent_events_.erase(recent_events_.begin());
+      }
     }
-    const auto* previous = active_event_subscriber;
-    active_event_subscriber = subscriber.get();
-    try {
-      callback(event);
-    } catch (...) {
-      // Event observers are isolated from the pipeline worker. Errors in an
-      // observer must not change the committed execution result.
+    pending_event_callbacks_.push_back(std::move(event));
+    if (!dispatching_events_) {
+      dispatching_events_ = true;
+      drain_callbacks = true;
     }
-    active_event_subscriber = previous;
+  }
+  if (drain_callbacks) drainEventCallbacks();
+}
+
+void PipelineController::drainEventCallbacks() {
+  for (;;) {
+    ExecutionEvent event;
     {
-      std::lock_guard lock(subscriber->mutex);
-      --subscriber->callbacks_in_flight;
-      if (subscriber->callbacks_in_flight == 0) subscriber->idle.notify_all();
+      std::lock_guard lock(event_dispatch_mutex_);
+      if (pending_event_callbacks_.empty()) {
+        dispatching_events_ = false;
+        event_callbacks_idle_.notify_all();
+        return;
+      }
+      event = std::move(pending_event_callbacks_.front());
+      pending_event_callbacks_.pop_front();
+    }
+
+    std::vector<std::shared_ptr<ExecutionEventSubscriberSlot>> subscribers;
+    {
+      std::lock_guard lock(event_subscribers_->mutex);
+      subscribers.reserve(event_subscribers_->callbacks.size());
+      for (const auto& [id, subscriber] : event_subscribers_->callbacks) {
+        (void)id;
+        subscribers.push_back(subscriber);
+      }
+    }
+    for (const auto& subscriber : subscribers) {
+      std::function<void(const ExecutionEvent&)> callback;
+      {
+        std::lock_guard lock(subscriber->mutex);
+        if (!subscriber->active) continue;
+        ++subscriber->callbacks_in_flight;
+        callback = subscriber->callback;
+      }
+      const auto* previous = active_event_subscriber;
+      const auto* previous_controller = active_event_controller;
+      active_event_subscriber = subscriber.get();
+      active_event_controller = this;
+      try {
+        callback(event);
+      } catch (...) {
+        // Event observers are isolated from the pipeline worker. Errors in an
+        // observer must not change the committed execution result.
+      }
+      active_event_subscriber = previous;
+      active_event_controller = previous_controller;
+      {
+        std::lock_guard lock(subscriber->mutex);
+        --subscriber->callbacks_in_flight;
+        if (subscriber->callbacks_in_flight == 0) {
+          subscriber->idle.notify_all();
+        }
+      }
     }
   }
 }

@@ -124,13 +124,26 @@ void EraseValue(nlohmann::json& document,
   if (parent->is_object()) parent->erase(tokens.back());
 }
 
-std::size_t JsonDepth(const nlohmann::json& value) {
-  if (!value.is_array() && !value.is_object()) return 1;
-  std::size_t depth = 1;
-  for (const auto& child : value) {
-    depth = std::max(depth, 1 + JsonDepth(child));
+std::optional<std::size_t> DepthLimitViolation(const nlohmann::json& value,
+                                               std::size_t maximum_depth) {
+  // Configuration is untrusted input.  Do not mirror its nesting on the C++
+  // stack: a document may be constructed programmatically and validation must
+  // remain bounded even when it is far deeper than the configured limit.
+  struct Pending {
+    const nlohmann::json* value;
+    std::size_t depth;
+  };
+  std::vector<Pending> pending{{&value, 1}};
+  while (!pending.empty()) {
+    const Pending current = pending.back();
+    pending.pop_back();
+    if (current.depth > maximum_depth) return current.depth;
+    if (!current.value->is_array() && !current.value->is_object()) continue;
+    for (const auto& child : *current.value) {
+      pending.push_back({&child, current.depth + 1});
+    }
   }
-  return depth;
+  return std::nullopt;
 }
 
 std::string ActualTypeName(const nlohmann::json& value) {
@@ -617,11 +630,13 @@ Result<ValidatedConfigDocument> SchemaRegistry::Validate(
   }
   const std::size_t maximum_depth = std::min(
       limits_.maximum_document_depth, options.limits.maximum_document_depth);
-  if (JsonDepth(source_document) > maximum_depth) {
+  const auto depth_violation =
+      DepthLimitViolation(source_document, maximum_depth);
+  if (depth_violation) {
     return Result<ValidatedConfigDocument>::Failure(SchemaError(
         Error::Code::kInvalidArgument, "config document depth limit exceeded",
         source_name, "", "depth <= " + std::to_string(maximum_depth),
-        std::to_string(JsonDepth(source_document)), 1));
+        std::to_string(*depth_violation), 1));
   }
   if (source_document.dump().size() >
       std::min(limits_.maximum_document_bytes,

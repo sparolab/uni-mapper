@@ -75,6 +75,27 @@ int main(int argc, char** argv) {
         std::string(pose_only.Value().begin(), pose_only.Value().end()) !=
             "pose-ok")
       return Fail("pose-only view call failed");
+    open_lmm::PluginV2Call byte_limited{"chunks", nullptr, 0};
+    byte_limited.result_limits = {8, 8, 8};
+    auto bytes_exceeded = loaded.Call(byte_limited);
+    if (bytes_exceeded ||
+        bytes_exceeded.GetError().context.plugin != "c_echo_v2")
+      return Fail("total result byte limit was not enforced");
+    open_lmm::PluginV2Call chunk_limited{"chunks", nullptr, 0};
+    chunk_limited.result_limits = {64, 3, 8};
+    if (loaded.Call(chunk_limited))
+      return Fail("individual result chunk limit was not enforced");
+    open_lmm::PluginV2Call count_limited{"chunks", nullptr, 0};
+    count_limited.result_limits = {64, 8, 2};
+    if (loaded.Call(count_limited))
+      return Fail("result chunk count limit was not enforced");
+    open_lmm::PluginV2Call invalid_limits{"echo", input.data(), input.size()};
+    invalid_limits.result_limits = {4, 8, 1};
+    auto invalid_limit_result = loaded.Call(invalid_limits);
+    if (invalid_limit_result ||
+        invalid_limit_result.GetError().code !=
+            open_lmm::Error::Code::kInvalidArgument)
+      return Fail("invalid host result limits were accepted");
     auto malformed_view = view_call;
     malformed_view.points->stride_bytes = sizeof(float) * 2;
     if (loaded.Call(malformed_view))

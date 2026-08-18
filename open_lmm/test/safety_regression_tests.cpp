@@ -4,6 +4,7 @@
 #include <fstream>
 #include <memory>
 #include <random>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,9 @@
 #include <open_lmm/common/rigid_transform.hpp>
 #include <open_lmm/core/data_loader/data_loader_file.hpp>
 #include <open_lmm/core/backend_optimizer/backend_optimizer_incremental.hpp>
+#include <open_lmm/core/algorithm_invariants.hpp>
+#include <open_lmm/core/dynamic_remover/dynamic_remover_online.hpp>
+#include <open_lmm/core/dynamic_remover/dynamic_remover_offline.hpp>
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/utils/load_module.hpp>
 #include <open_lmm/utils/config.hpp>
@@ -46,6 +50,52 @@ void Expect(bool condition, const std::string& message) {
   }
 }
 
+open_lmm::ScanVec::value_type OnePointScan(float x = 0.0F) {
+  auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  scan->emplace_back(x, 0.0F, 0.0F, 1.0F);
+  return scan;
+}
+
+class RecordingOnlineRemover final : public IOnlineRemoverPlugin {
+ public:
+  pcl::PointCloud<pcl::PointXYZI>::Ptr run(
+      pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
+      Eigen::Isometry3d& optimized_pose) override {
+    (void)scan;
+    translations.push_back(optimized_pose.translation().x());
+    return static_map;
+  }
+
+  pcl::PointCloud<pcl::PointXYZI>::Ptr getStaticMap() override {
+    return static_map;
+  }
+
+  std::vector<double> translations;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr static_map = [] {
+    auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    cloud->emplace_back(0.0F, 0.0F, 0.0F, 1.0F);
+    cloud->emplace_back(0.01F, 0.0F, 0.0F, 1.0F);
+    return cloud;
+  }();
+};
+
+class RecordingOfflineRemover final : public IOfflineRemoverPlugin {
+ public:
+  void run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
+           Eigen::Isometry3d& optimized_pose) override {
+    scan_x.push_back(scan->front().x);
+    translations.push_back(optimized_pose.translation().x());
+  }
+  bool needsRawMap() const override { return false; }
+  void setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr&) override {}
+  pcl::PointCloud<pcl::PointXYZI>::Ptr getStaticMap() override {
+    return OnePointScan();
+  }
+
+  std::vector<float> scan_x;
+  std::vector<double> translations;
+};
+
 class StubNode final : public PipelineNodeBase {
  public:
   StubNode(ControlFlow flow, int& calls) : flow_(flow), calls_(calls) {}
@@ -72,6 +122,25 @@ class FailingNode final : public PipelineNodeBase {
 
  private:
   int& calls_;
+};
+
+class UnknownThrowingNode final : public PipelineNodeBase {
+ public:
+  Result<ControlFlow> Process(AgentPipelineCtx&, SharedDatabase&) override {
+    throw 42;
+  }
+  const char* Name() const override { return "UnknownThrowing"; }
+};
+
+class EmptyNestedConfigNode final : public PipelineNodeBase {
+ public:
+  Result<ControlFlow> Process(AgentPipelineCtx&, SharedDatabase&) override {
+    auto config = open_lmm::Config::FromJson(
+        R"({"outer":{"value":1}})", "nested-pipeline-fixture");
+    (void)config.param_nested<int>({}, "value");
+    return Result<ControlFlow>::Ok(ControlFlow::kContinue);
+  }
+  const char* Name() const override { return "EmptyNestedConfig"; }
 };
 
 std::vector<AgentPipelineCtx> OneContext() {
@@ -112,6 +181,87 @@ void TestFileSetCommitRollsBackPartialReplacement() {
   restored >> contents;
   Expect(contents == "original",
          "file-set commit must restore a replaced destination");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
+}
+
+void TestFileSetCleanupFailureRequiresRecovery() {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() /
+      ("open_lmm_file_recovery_" + std::to_string(std::random_device{}()));
+  fs::create_directories(root);
+  const fs::path destination = root / "map.pcd";
+  const fs::path temporary = root / "map.pcd.tmp";
+  // A non-empty destination directory deterministically exercises an OS-level
+  // backup cleanup failure, including when tests run as root.
+  fs::create_directories(destination);
+  std::ofstream(destination / "original") << "original";
+  std::ofstream(temporary) << "replacement";
+
+  const auto result = open_lmm::CommitFileSet({{temporary, destination}});
+  Expect(!result, "backup cleanup failure must fail the transaction");
+  if (!result) {
+    Expect(result.GetError().severity == Error::Severity::kFatalSession &&
+               result.GetError().context.node == "recovery_required",
+           "cleanup failure must be a structured recovery-required error");
+  }
+  Expect(fs::exists(destination.string() + ".open_lmm_backup/original"),
+         "cleanup failure must preserve the original in its backup");
+  bool found_manifest = false;
+  for (const auto& item : fs::directory_iterator(root)) {
+    const std::string name = item.path().filename().string();
+    if (name.starts_with(".open_lmm_recovery_") &&
+        item.path().extension() == ".json") {
+      found_manifest = true;
+      break;
+    }
+  }
+  Expect(found_manifest, "cleanup failure must leave a recovery manifest");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
+}
+
+void TestFileSetRollbackMissingBackupRequiresRecovery() {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() /
+      ("open_lmm_file_rollback_recovery_" +
+       std::to_string(std::random_device{}()));
+  fs::create_directories(root);
+  const fs::path first_final = root / "first.pcd";
+  const fs::path first_temp = root / "first.tmp";
+  const fs::path second_temp = root / "second.tmp";
+  const fs::path third_temp = root / "third.tmp";
+  std::ofstream(first_final) << "original";
+  std::ofstream(first_temp) << "candidate-one";
+  std::ofstream(second_temp) << "candidate-two";
+  std::ofstream(third_temp) << "candidate-three";
+
+  // The second replacement consumes the first entry's backup. The third then
+  // fails, so rollback must detect that an acknowledged original no longer has
+  // a backup instead of reporting a successful rollback.
+  const auto result = open_lmm::CommitFileSet({
+      {first_temp, first_final},
+      {second_temp, first_final.string() + ".open_lmm_backup"},
+      {third_temp, root / "missing" / "third.pcd"},
+  });
+  Expect(!result, "missing rollback backup must fail the transaction");
+  if (!result) {
+    Expect(result.GetError().severity == Error::Severity::kFatalSession &&
+               result.GetError().context.node == "recovery_required" &&
+               result.GetError().message.find("backup is missing") !=
+                   std::string::npos,
+           "missing rollback backup must require manual recovery");
+  }
+  bool found_manifest = false;
+  for (const auto& item : fs::directory_iterator(root)) {
+    if (item.path().filename().string().starts_with(
+            ".open_lmm_recovery_")) {
+      found_manifest = true;
+      break;
+    }
+  }
+  Expect(found_manifest,
+         "rollback backup loss must leave a recovery manifest");
   std::error_code ignored;
   fs::remove_all(root, ignored);
 }
@@ -261,6 +411,35 @@ void TestPipelineControlFlow() {
     Expect(result.IsOk() && first == 1 && second == 1,
            "minimal pipeline integration must run all continuing nodes");
   }
+  {
+    auto contexts = OneContext();
+    open_lmm::Pipeline pipeline;
+    pipeline.AddNode(std::make_unique<UnknownThrowingNode>());
+    auto result = pipeline.Run(contexts, db);
+    Expect(!result, "unknown node exceptions must become pipeline failures");
+    if (!result) {
+      Expect(result.GetError().code == Error::Code::kInvalidArgument &&
+                 result.GetError().context.stage == "pipeline" &&
+                 result.GetError().context.node == "UnknownThrowing" &&
+                 result.GetError().context.agent == Id("A"),
+             "unknown pipeline exceptions must retain structured context");
+    }
+  }
+  {
+    auto contexts = OneContext();
+    open_lmm::Pipeline pipeline;
+    pipeline.AddNode(std::make_unique<EmptyNestedConfigNode>());
+    auto result = pipeline.Run(contexts, db);
+    Expect(!result, "empty nested paths must become pipeline failures");
+    if (!result) {
+      Expect(result.GetError().code == Error::Code::kInvalidArgument &&
+                 result.GetError().context.stage == "pipeline" &&
+                 result.GetError().context.node == "EmptyNestedConfig" &&
+                 result.GetError().message.find("nested path") !=
+                     std::string::npos,
+             "empty nested paths must return structured InvalidArgument");
+    }
+  }
 }
 
 void TestPluginFailurePropagation() {
@@ -294,6 +473,7 @@ void TestOptimizerLifecycle() {
   open_lmm::AgentRawData raw_a;
   raw_a.agent_id = Id("A");
   raw_a.odom_poses.push_back(Eigen::Isometry3d::Identity());
+  raw_a.filtered_scans.push_back(OnePointScan());
   (void)optimizer.Process(anchor, raw_a, {}, {}, {});
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              optimizer.HasProcessedAgent(Id("A")),
@@ -313,6 +493,7 @@ void TestOptimizerLifecycle() {
   open_lmm::AgentRawData raw_b;
   raw_b.agent_id = Id("B");
   raw_b.odom_poses.push_back(Eigen::Isometry3d::Identity());
+  raw_b.filtered_scans.push_back(OnePointScan());
   open_lmm::LoopPair inter_loop{
       .to = {Id("A"), 0},
       .from = {Id("B"), 0},
@@ -320,7 +501,7 @@ void TestOptimizerLifecycle() {
   try {
     (void)optimizer.Process(follower, raw_b, {}, {inter_loop}, {});
     Expect(false, "optimizer task exception must fail");
-  } catch (const std::out_of_range&) {
+  } catch (const std::invalid_argument&) {
   }
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              !optimizer.HasProcessedAgent(Id("B")),
@@ -399,11 +580,32 @@ void TestConfigContractValidation() {
   }
   std::remove(range_path.c_str());
 
+  const std::string custom_path = "/tmp/open_lmm_custom_pose_config.json";
+  {
+    std::ofstream output(custom_path);
+    output << R"({"data_loader":{"data_loader_type":"file_based","pose_format":"custom","scan_type":"pcd","scan_dir_name":"Scans","pose_file_name":"poses.txt","voxel_size":0.2,"min_range":0.0,"max_range":100.0,"delimiter":" "}})";
+  }
+  auto custom = open_lmm::ParseDataLoaderConfig(open_lmm::Config(custom_path));
+  Expect(!custom.IsOk(),
+         "declared but unimplemented custom pose format must fail at bootstrap");
+  std::remove(custom_path.c_str());
+
   try {
     open_lmm::Config empty_config("");
     empty_config.save("/tmp/open_lmm_missing_dir/config.json");
     Expect(false, "config save to missing directory must throw");
   } catch (const std::exception&) {
+  }
+
+  open_lmm::Config memory_config =
+      open_lmm::Config::FromJson(R"({"outer":{"value":1}})",
+                                 "nested-fixture");
+  try {
+    (void)memory_config.param_nested<int>({}, "value");
+    Expect(false, "empty nested config path must fail");
+  } catch (const std::invalid_argument& error) {
+    Expect(std::string(error.what()).find("nested path") != std::string::npos,
+           "empty nested config path must produce a contextual error");
   }
 }
 
@@ -429,11 +631,217 @@ void TestPointCloudInputValidation() {
   std::remove(truncated_path.c_str());
 }
 
+void TestAlgorithmInvariants() {
+  open_lmm::AgentRawData raw;
+  raw.agent_id = Id("A");
+  raw.odom_poses = {Eigen::Isometry3d::Identity(),
+                    Eigen::Isometry3d::Identity()};
+  raw.filtered_scans = {OnePointScan(), OnePointScan(1.0F)};
+  Expect(open_lmm::ValidateAgentRawData(raw, "fixture").IsOk(),
+         "valid raw algorithm input must pass");
+
+  auto null_scan = raw;
+  null_scan.filtered_scans[1].reset();
+  Expect(!open_lmm::ValidateAgentRawData(null_scan, "fixture").IsOk(),
+         "null raw scan must fail before algorithm entry");
+
+  auto nonfinite_pose = raw;
+  nonfinite_pose.odom_poses[0].translation().x() =
+      std::numeric_limits<double>::quiet_NaN();
+  Expect(!open_lmm::ValidateAgentRawData(nonfinite_pose, "fixture").IsOk(),
+         "non-finite raw pose must fail before algorithm entry");
+
+  Eigen::Isometry3d quantized_pose = Eigen::Isometry3d::Identity();
+  // Real test1 frame 19: a proper rotation rounded to six decimal places.
+  quantized_pose.matrix().topRows<3>() <<
+      0.985941, 0.152187, -0.0689935, 14.2673,
+      -0.149647, 0.987905, 0.0406254, -1.93745,
+      0.0743416, -0.0297296, 0.99679, 0.81812;
+  Expect(open_lmm::ValidateFiniteRigidPose(quantized_pose,
+                                           "six-digit pose").IsOk(),
+         "six-digit KITTI rotation quantization must remain valid");
+
+  Eigen::Isometry3d sheared_pose = quantized_pose;
+  sheared_pose.matrix()(0, 0) += 1e-3;
+  Expect(!open_lmm::ValidateFiniteRigidPose(sheared_pose,
+                                            "sheared pose").IsOk(),
+         "materially non-orthonormal rotation must still fail");
+
+  Eigen::Isometry3d reflected_pose = Eigen::Isometry3d::Identity();
+  reflected_pose.matrix()(0, 0) = -1.0;
+  Expect(!open_lmm::ValidateFiniteRigidPose(reflected_pose,
+                                            "reflected pose").IsOk(),
+         "orthonormal reflection must fail the proper-rotation check");
+
+  open_lmm::LoopPair invalid_intra{
+      .to = {Id("A"), 0},
+      .from = {Id("B"), 1},
+      .init_rel_pose = Eigen::Isometry3d::Identity()};
+  Expect(!open_lmm::ValidateLoopPairs(raw, {invalid_intra}, {}, {},
+                                      "fixture").IsOk(),
+         "misclassified intra loop must fail");
+
+  open_lmm::LoopPair invalid_frame{
+      .to = {Id("A"), 0},
+      .from = {Id("A"), 2},
+      .init_rel_pose = Eigen::Isometry3d::Identity()};
+  Expect(!open_lmm::ValidateLoopPairs(raw, {invalid_frame}, {}, {},
+                                      "fixture").IsOk(),
+         "out-of-range loop frame must fail");
+
+  open_lmm::LoopPair inter{
+      .to = {Id("B"), 0},
+      .from = {Id("A"), 0},
+      .init_rel_pose = Eigen::Isometry3d::Identity()};
+  auto malformed_target = std::make_shared<open_lmm::AgentRawData>();
+  malformed_target->agent_id = Id("B");
+  malformed_target->odom_poses.push_back(Eigen::Isometry3d::Identity());
+  malformed_target->filtered_scans.push_back(nullptr);
+  open_lmm::AgentRawDataMap target_map{{Id("B"), malformed_target}};
+  Expect(!open_lmm::ValidateLoopPairs(raw, {}, {inter}, target_map,
+                                      "fixture").IsOk(),
+         "inter-agent target null scan must fail before registration");
+  malformed_target->filtered_scans[0] = OnePointScan();
+  malformed_target->odom_poses[0].translation().x() =
+      std::numeric_limits<double>::quiet_NaN();
+  Expect(!open_lmm::ValidateLoopPairs(raw, {}, {inter}, target_map,
+                                      "fixture").IsOk(),
+         "inter-agent target non-finite pose must fail before registration");
+  Expect(!open_lmm::FrameGapAtLeast(2, 5, 4) &&
+             open_lmm::FrameGapAtLeast(5, 2, 3),
+         "frame gap must be symmetric without unsigned underflow");
+
+  open_lmm::AgentOptimizedData optimized;
+  optimized.agent_id = Id("A");
+  optimized.optimized_poses = {
+      {1, Eigen::Isometry3d::Identity()},
+      {0, Eigen::Isometry3d::Identity()},
+  };
+  optimized.kdtree_poses.push_back(pcl::PointXYZ(0.0F, 0.0F, 0.0F));
+  optimized.kdtree_poses.push_back(pcl::PointXYZ(0.0F, 0.0F, 0.0F));
+  Expect(open_lmm::ValidateOptimizedData(optimized, raw, "fixture").IsOk(),
+         "shuffled optimized frames with complete IDs must pass");
+  auto ordered = open_lmm::OrderOptimizedPosesByFrameId(
+      optimized.optimized_poses, 2, "fixture");
+  Expect(ordered.IsOk() && ordered.Value().size() == 2,
+         "remover pose join must key by frame ID instead of vector position");
+
+  optimized.optimized_poses[1].first = 1;
+  Expect(!open_lmm::ValidateOptimizedData(optimized, raw, "fixture").IsOk(),
+         "duplicate/missing optimized frame IDs must fail");
+
+  auto invalid_cloud = OnePointScan();
+  invalid_cloud->front().x = std::numeric_limits<float>::infinity();
+  Expect(!open_lmm::ValidateVoxelizationInput(
+              invalid_cloud, 0.2F, 0.0F, 0.0F, false, "fixture").IsOk(),
+         "non-finite voxel input must fail");
+  Expect(!open_lmm::ValidateVoxelizationInput(
+              OnePointScan(), std::numeric_limits<float>::quiet_NaN(),
+              0.0F, 0.0F, false, "fixture").IsOk(),
+         "non-finite voxel size must fail");
+}
+
+void TestRemoverFrameIdentityAndDownsample() {
+  auto plugin = std::make_shared<RecordingOnlineRemover>();
+  open_lmm::DynamicRemoverConfig config;
+  open_lmm::DynamicRemoverOnline remover(config, plugin);
+  auto pose0 = Eigen::Isometry3d::Identity();
+  pose0.translation().x() = 10.0;
+  auto pose1 = Eigen::Isometry3d::Identity();
+  pose1.translation().x() = 20.0;
+  const std::vector<std::pair<int, Eigen::Isometry3d>> shuffled{
+      {1, pose1}, {0, pose0}};
+  auto map = remover.process({OnePointScan(), OnePointScan()}, shuffled);
+  Expect(plugin->translations == std::vector<double>({10.0, 20.0}),
+         "dynamic remover must join scan index to exact optimized frame ID");
+  Expect(map && map->size() == 1,
+         "online remover must return the downsampled map value");
+
+  auto invalid_plugin = std::make_shared<RecordingOnlineRemover>();
+  open_lmm::DynamicRemoverOnline invalid_remover(config, invalid_plugin);
+  try {
+    (void)invalid_remover.process({OnePointScan(), OnePointScan()},
+                                  {{0, pose0}, {0, pose1}});
+    Expect(false, "duplicate remover frame IDs must fail");
+  } catch (const std::invalid_argument&) {
+  }
+  Expect(invalid_plugin->translations.empty(),
+         "invalid remover frame IDs must fail before plugin invocation");
+}
+
+void TestOfflineStreamingFrameIdentity() {
+  auto pose0 = Eigen::Isometry3d::Identity();
+  pose0.translation().x() = 10.0;
+  auto pose1 = Eigen::Isometry3d::Identity();
+  pose1.translation().x() = 20.0;
+  const std::vector<std::pair<int, Eigen::Isometry3d>> poses{
+      {1, pose1}, {0, pose0}};
+
+  auto plugin = std::make_shared<RecordingOfflineRemover>();
+  open_lmm::DynamicRemoverConfig config;
+  open_lmm::DynamicRemoverOffline remover(config, plugin);
+  int traversals = 0;
+  auto stateful_source = [&](const open_lmm::DynamicRemoverBase::RawScanVisitor& visitor) {
+    ++traversals;
+    // A second traversal deliberately changes IDs. Correct code never asks.
+    const std::vector<std::pair<std::size_t, open_lmm::ScanVec::value_type>> entries =
+        traversals == 1
+            ? std::vector<std::pair<std::size_t, open_lmm::ScanVec::value_type>>{
+                  {1, OnePointScan(1.0F)}, {0, OnePointScan(0.0F)}}
+            : std::vector<std::pair<std::size_t, open_lmm::ScanVec::value_type>>{
+                  {0, OnePointScan(99.0F)}, {0, OnePointScan(98.0F)}};
+    std::size_t visited = 0;
+    for (const auto& [frame, scan] : entries) {
+      auto result = visitor(frame, scan);
+      if (!result) return Result<std::size_t>::Failure(result.GetError());
+      ++visited;
+    }
+    return Result<std::size_t>::Ok(visited);
+  };
+  auto result = remover.processStreaming(stateful_source, poses, {});
+  Expect(result.IsOk() && traversals == 1,
+         "offline remover must consume a stateful source exactly once");
+  Expect(plugin->scan_x == std::vector<float>({0.0F, 1.0F}) &&
+             plugin->translations == std::vector<double>({10.0, 20.0}),
+         "offline remover must process cached scans by exact frame ID");
+
+  const auto expect_rejected_before_plugin = [&](const auto& entries,
+                                                  const char* message) {
+    auto invalid_plugin = std::make_shared<RecordingOfflineRemover>();
+    open_lmm::DynamicRemoverOffline invalid_remover(config, invalid_plugin);
+    auto source = [&](const open_lmm::DynamicRemoverBase::RawScanVisitor& visitor) {
+      std::size_t visited = 0;
+      for (const auto& [frame, scan] : entries) {
+        auto item = visitor(frame, scan);
+        if (!item) return Result<std::size_t>::Failure(item.GetError());
+        ++visited;
+      }
+      return Result<std::size_t>::Ok(visited);
+    };
+    auto invalid = invalid_remover.processStreaming(source, poses, {});
+    Expect(!invalid && invalid_plugin->scan_x.empty(), message);
+  };
+  using IndexedScan =
+      std::pair<std::size_t, open_lmm::ScanVec::value_type>;
+  expect_rejected_before_plugin(
+      std::vector<IndexedScan>{{0, OnePointScan()}, {0, OnePointScan()}},
+      "duplicate source frames must fail before offline plugin invocation");
+  expect_rejected_before_plugin(
+      std::vector<IndexedScan>{{1, OnePointScan()}},
+      "missing source frames must fail before offline plugin invocation");
+  expect_rejected_before_plugin(
+      std::vector<IndexedScan>{{0, OnePointScan()}, {1, OnePointScan()},
+                               {2, OnePointScan()}},
+      "extra source frames must fail before offline plugin invocation");
+}
+
 }  // namespace
 
 int main() {
   TestAgentContext();
   TestFileSetCommitRollsBackPartialReplacement();
+  TestFileSetCleanupFailureRequiresRecovery();
+  TestFileSetRollbackMissingBackupRequiresRecovery();
   TestRigidTransformInverse();
   TestGlobalAlignmentLoopConvention();
   TestAlignedMapRebuildUsesLatestTransform();
@@ -444,6 +852,9 @@ int main() {
   TestConfigFailurePropagation();
   TestConfigContractValidation();
   TestPointCloudInputValidation();
+  TestAlgorithmInvariants();
+  TestRemoverFrameIdentityAndDownsample();
+  TestOfflineStreamingFrameIdentity();
   if (failures != 0) {
     std::cerr << failures << " safety regression test(s) failed\n";
     return 1;

@@ -37,7 +37,14 @@ Result<void> Pipeline::Run(std::vector<AgentPipelineCtx>& contexts,
         } catch (const std::exception& error) {
           return Result<ControlFlow>::Failure(Error::InvalidArgument(
               "agent " + ctx.agent.id.Value() + ", module " +
-              node->Name() + ": " + error.what()));
+              node->Name() + ": " + error.what())
+                                                  .WithExecution(
+                                                      "pipeline", node->Name(),
+                                                      ctx.agent.id));
+        } catch (...) {
+          return Result<ControlFlow>::Failure(
+              Error::InvalidArgument("unknown pipeline node exception")
+                  .WithExecution("pipeline", node->Name(), ctx.agent.id));
         }
       }();
 #if OPEN_LMM_ENABLE_TIMING_LOG

@@ -6,6 +6,7 @@
 #include <memory>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/shared_data.hpp>
+#include <open_lmm/common/validation.hpp>
 #include <vector>
 
 namespace open_lmm {
@@ -44,6 +45,10 @@ std::vector<Eigen::Vector3f> transformEigenPoints(
 pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan, const float voxel_size,
     const float min_range, const float max_range, const bool use_range_filter) {
+  auto valid = ValidateVoxelizationInput(p_scan, voxel_size, min_range,
+                                         max_range, use_range_filter,
+                                         "point-cloud downsample");
+  if (!valid) throw std::invalid_argument(valid.GetError().Message());
   if (voxel_size < 0.01f) return p_scan;
 
   std::unordered_map<VOXEL_LOC, M_POINT> voxel_map;

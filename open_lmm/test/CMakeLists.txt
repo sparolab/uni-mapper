@@ -5,6 +5,7 @@ target_link_libraries(open_lmm_safety_regression_tests PRIVATE
   open_lmm_map_server
   open_lmm_data_loader
   open_lmm_backend_optimizer
+  open_lmm_dynamic_remover
 )
 openlmm_set_global_target_properties(open_lmm_safety_regression_tests)
 target_link_options(open_lmm_safety_regression_tests PRIVATE

@@ -151,6 +151,32 @@ int main() {
   Require(queue.Stats().coalesced_progress == 1,
           "progress coalescing is counted");
 
+  open_lmm::GuiEventQueue ordered_queue(8);
+  progress.sequence = 10;
+  Require(ordered_queue.Push(progress), "ordered progress is queued");
+  open_lmm::ExecutionEvent intervening;
+  intervening.job_id = 7;
+  intervening.sequence = 11;
+  intervening.type = open_lmm::EventType::kStageStarted;
+  Require(ordered_queue.Push(intervening),
+          "intervening lifecycle event is queued");
+  progress.sequence = 12;
+  progress.progress_current = 10;
+  Require(ordered_queue.Push(progress),
+          "non-tail progress stream is retained in sequence order");
+  auto ordered = ordered_queue.Drain(8);
+  Require(ordered.size() == 3 && ordered[0].sequence == 10 &&
+              ordered[1].sequence == 11 && ordered[2].sequence == 12,
+          "progress coalescing never reverses event sequence");
+
+  progress.sequence = 13;
+  Require(ordered_queue.Push(progress), "tail progress starts stream");
+  progress.sequence = 14;
+  Require(ordered_queue.Push(progress), "adjacent progress is coalesced");
+  ordered = ordered_queue.Drain(8);
+  Require(ordered.size() == 1 && ordered[0].sequence == 14,
+          "tail coalescing retains the newest sequence");
+
   open_lmm::ExecutionEvent first;
   first.type = open_lmm::EventType::kJobStarted;
   open_lmm::ExecutionEvent second;
@@ -185,6 +211,8 @@ int main() {
     auto job = services.submit_run_all();
     Require(job.IsOk(), "command bridge submits RunAll");
     Require(controller->Wait(job.Value()).IsOk(), "bridged RunAll completes");
+    Require(controller->WaitForEventCallbacks().IsOk(),
+            "bridged callbacks drain before subscriber inspection");
     Require(subscriber_one > 0 && subscriber_two > 0,
             "multiple subscribers receive events");
   }
@@ -192,6 +220,8 @@ int main() {
   auto second_job = services.submit_run_all();
   Require(second_job.IsOk(), "second bridged RunAll submits");
   Require(controller->Wait(second_job.Value()).IsOk(), "second RunAll completes");
+  Require(controller->WaitForEventCallbacks().IsOk(),
+          "second bridged callback batch drains");
   Require(subscriber_one > 0 && subscriber_two == stopped_count,
           "RAII subscription stops callbacks");
   controller.reset();

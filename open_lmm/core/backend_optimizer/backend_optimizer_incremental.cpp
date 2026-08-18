@@ -12,6 +12,7 @@
 
 #include <open_lmm/common/registration.hpp>
 #include <open_lmm/common/profiling.hpp>
+#include <open_lmm/core/algorithm_invariants.hpp>
 
 #include "BetweenFactorWithAnchoring.h"
 
@@ -63,6 +64,15 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
 
   if (raw_data.agent_id != ctx.id) {
     throw std::invalid_argument("optimizer agent context/raw data ID mismatch");
+  }
+  auto valid_raw = ValidateAgentRawData(
+      raw_data, "optimizer input agent '" + ctx.id.Value() + "'");
+  if (!valid_raw) throw std::invalid_argument(valid_raw.GetError().Message());
+  auto valid_loops = ValidateLoopPairs(
+      raw_data, intra_loops, inter_loops, all_raw_data,
+      "optimizer input agent '" + ctx.id.Value() + "'");
+  if (!valid_loops) {
+    throw std::invalid_argument(valid_loops.GetError().Message());
   }
   if (processed_agents_.contains(ctx.id)) {
     throw std::invalid_argument("optimizer agent " + ctx.id.Value() +
@@ -116,8 +126,10 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
   T1.set_prefix("Intra Backend Optimizer");
   for (auto loop : T1) {
     ThrowIfCancellationRequested(cancellation_, "optimizer intra loop");
-    if (loop.from.second - loop.to.second <
-        static_cast<size_t>(param_.min_loop_frame_gap)) continue;
+    if (!FrameGapAtLeast(loop.from.second, loop.to.second,
+                         static_cast<size_t>(param_.min_loop_frame_gap))) {
+      continue;
+    }
     gtsam::Symbol node_from = GraphSymbol(ctx, loop.from.first, loop.from.second);
     gtsam::Symbol node_to = GraphSymbol(ctx, loop.to.first, loop.to.second);
     auto refined = registerPointCloud(
@@ -217,6 +229,26 @@ std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
                                                 p.translation().z()));
     }
     all_results[agent] = std::move(opt);
+  }
+  for (const auto& [agent, optimized] : all_results) {
+    const AgentRawData* corresponding_raw = nullptr;
+    if (agent == raw_data.agent_id) {
+      corresponding_raw = &raw_data;
+    } else {
+      const auto found = all_raw_data.find(agent);
+      if (found != all_raw_data.end() && found->second) {
+        corresponding_raw = found->second.get();
+      }
+    }
+    if (!corresponding_raw) {
+      throw std::invalid_argument(
+          "optimizer output references raw data for unknown agent '" +
+          agent.Value() + "'");
+    }
+    auto valid = ValidateOptimizedData(
+        optimized, *corresponding_raw,
+        "optimizer output agent '" + agent.Value() + "'");
+    if (!valid) throw std::invalid_argument(valid.GetError().Message());
   }
   ThrowIfCancellationRequested(cancellation_, "optimizer commit");
   accumulated_graph_ = std::move(working_graph);

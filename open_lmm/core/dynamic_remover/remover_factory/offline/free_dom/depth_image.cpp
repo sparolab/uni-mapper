@@ -3,10 +3,11 @@
 // namespace freedom{
 void DepthImage::set_params(const DepthImageConfig& config)
 {
-    lidar_horizon_fov = config.lidar_horizon_fov;
-    lidar_vertical_fov_upper = config.lidar_vertical_fov_upper;
-    lidar_vertical_fov_lower = config.lidar_vertical_fov_lower;
-    lidar_vertical_fov = lidar_vertical_fov_upper - lidar_vertical_fov_lower;
+    lidar_horizon_fov_rad = config.lidar_horizon_fov_rad;
+    lidar_vertical_fov_upper_rad = config.lidar_vertical_fov_upper_rad;
+    lidar_vertical_fov_lower_rad = config.lidar_vertical_fov_lower_rad;
+    lidar_vertical_fov_rad =
+        lidar_vertical_fov_upper_rad - lidar_vertical_fov_lower_rad;
     rows = config.depth_image_vertical_lines;
     
     depth_image_min_range = config.depth_image_min_range;
@@ -20,17 +21,20 @@ void DepthImage::set_params(const DepthImageConfig& config)
     depth_unit = max_raycast_enhancement_range/255.0;  // depthImage为CV_8UC1型，取值为0到255
     depth_unit_inv = 255.0/max_raycast_enhancement_range;
 
-    vertical_res = lidar_vertical_fov / (rows - 1);
-    vertical_res_half = vertical_res / 2.0;
-    vertical_res_inv = 1.0 / vertical_res;
-    vertical_fov = vertical_res * rows;
-    vertical_fov_upper = lidar_vertical_fov_upper + vertical_res_half;
-    vertical_fov_lower = lidar_vertical_fov_lower - vertical_res_half;
+    vertical_res_rad = lidar_vertical_fov_rad / (rows - 1);
+    vertical_res_half_rad = vertical_res_rad / 2.0;
+    vertical_res_inv_rad = 1.0 / vertical_res_rad;
+    vertical_fov_rad = vertical_res_rad * rows;
+    vertical_fov_upper_rad =
+        lidar_vertical_fov_upper_rad + vertical_res_half_rad;
+    vertical_fov_lower_rad =
+        lidar_vertical_fov_lower_rad - vertical_res_half_rad;
 
-    cols = static_cast<unsigned int>(std::ceil(lidar_horizon_fov / vertical_res));
-    horizon_res = lidar_horizon_fov / cols;
-    horizon_res_half = horizon_res / 2.0;
-    horizon_res_inv = 1.0 / horizon_res;
+    cols = static_cast<unsigned int>(
+        std::ceil(lidar_horizon_fov_rad / vertical_res_rad));
+    horizon_res_rad = lidar_horizon_fov_rad / cols;
+    horizon_res_half_rad = horizon_res_rad / 2.0;
+    horizon_res_inv_rad = 1.0 / horizon_res_rad;
 
     raycast_enhancement_depth_margin = static_cast<unsigned int>(std::ceil(config.raycast_enhancement_depth_margin * depth_unit_inv));
 
@@ -41,7 +45,7 @@ void DepthImage::set_params(const DepthImageConfig& config)
                                                 cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
                                                 cv::Point(erosion_size, erosion_size));
 
-    is_panorama = (lidar_horizon_fov < CV_2PI)? false : true;
+    is_panorama = (lidar_horizon_fov_rad < CV_2PI)? false : true;
     col_margin = is_panorama? erosion_size + inpaint_size : 0;
     cols_w_margin  = cols + col_margin * 2;     // 此为加上补偿边的列数
     image_col_min = col_margin;                 // image的列下标从image_col_min到image_col_max-1
@@ -212,8 +216,11 @@ bool DepthImage::point2idx(const pcl::PointXYZI& point, unsigned int& row, unsig
     double row_angle = std::atan2(point.z, std::sqrt(point.x*point.x + point.y*point.y));
     double col_angle = std::atan2(point.y, point.x);
 
-    int row_ = std::floor((vertical_fov_upper - row_angle)/vertical_res);
-    int col_ = std::floor((lidar_horizon_fov/2.0 - col_angle)/horizon_res) + col_margin;    // 此为全景图列数
+    int row_ = std::floor(
+        (vertical_fov_upper_rad - row_angle) / vertical_res_rad);
+    int col_ = std::floor(
+        (lidar_horizon_fov_rad / 2.0 - col_angle) / horizon_res_rad) +
+        col_margin;    // 此为全景图列数
 
     if( row_ < 0 ||
         row_ >= static_cast<int>(rows) ||
@@ -236,8 +243,11 @@ bool DepthImage::point2idx(const pcl::PointXYZI& point, unsigned int& row, unsig
 
 void DepthImage::idx2point(unsigned int row, unsigned int col,unsigned int depth,Point& point) const
 {
-    double row_angle = vertical_fov_upper - row * vertical_res - vertical_res_half;
-    double col_angle = lidar_horizon_fov/2.0 - (col - col_margin) * horizon_res - horizon_res_half;
+    double row_angle = vertical_fov_upper_rad - row * vertical_res_rad -
+                       vertical_res_half_rad;
+    double col_angle = lidar_horizon_fov_rad / 2.0 -
+                       (col - col_margin) * horizon_res_rad -
+                       horizon_res_half_rad;
 
     double point_depth = (  depth > raycast_enhancement_depth_margin?
                                 depth - raycast_enhancement_depth_margin : 0)  * depth_unit;

@@ -5,6 +5,7 @@
 
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/common/profiling.hpp>
+#include <open_lmm/core/algorithm_invariants.hpp>
 
 namespace fs = std::filesystem;
 namespace open_lmm {
@@ -31,11 +32,12 @@ DataLoaderFile::DataLoaderFile(DataLoaderConfig config)
   } else if (param_.pose_format == "tum") {
     transformFunctor = tumPoseToIsometry3d;
   } else if (param_.pose_format == "custom") {
-    transformFunctor = customPoseToIsometry3d;
+    initialization_error_ = Error::InvalidArgument(
+        "pose format 'custom' is not implemented");
   } else {
     initialization_error_ = Error::InvalidArgument(
         "Unsupported pose format: '" + param_.pose_format +
-        "'. Supported: kitti, tum, custom");
+        "'. Supported: kitti, tum");
   }
 
   if (param_.scan_type == "pcd") {
@@ -88,12 +90,18 @@ Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
   pclToEigen(*map_ds, map_points);
   }
 
-  return Result<AgentRawData>::Ok(AgentRawData{
+  AgentRawData output{
       .agent_id       = ctx.id,
       .odom_poses     = std::move(poses),
       .filtered_scans = std::move(filtered_scans),
       .map_points     = std::move(map_points),
-  });
+  };
+  auto valid_output = ValidateAgentRawData(
+      output, "DataLoader agent '" + ctx.id.Value() + "'");
+  if (!valid_output) {
+    return Result<AgentRawData>::Failure(valid_output.GetError());
+  }
+  return Result<AgentRawData>::Ok(std::move(output));
 }
 
 Result<PoseVec> DataLoaderFile::loadPoseData(

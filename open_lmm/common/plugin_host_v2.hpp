@@ -36,12 +36,19 @@ struct PluginPoseView {
   open_lmm_endian_v2 endian = OPEN_LMM_ENDIAN_LITTLE_V2;
 };
 
+struct PluginV2ResultLimits {
+  uint64_t maximum_result_bytes = 64U * 1024U * 1024U;
+  uint64_t maximum_chunk_bytes = 8U * 1024U * 1024U;
+  uint64_t maximum_chunk_count = 1024;
+};
+
 struct PluginV2Call {
   std::string_view operation;
   const void* request_data = nullptr;
   uint64_t request_size = 0;
   std::optional<PluginPointView> points;
   std::optional<PluginPoseView> poses;
+  PluginV2ResultLimits result_limits;
 };
 
 class PluginV2 {

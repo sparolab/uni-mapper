@@ -100,6 +100,9 @@ Result<Function> Resolve(void* library, const char* symbol,
 struct SinkContext {
   std::vector<uint8_t> bytes;
   bool malformed = false;
+  bool limit_exceeded = false;
+  uint64_t chunk_count = 0;
+  PluginV2ResultLimits limits;
 };
 
 open_lmm_status_code_v2 OPEN_LMM_PLUGIN_CALL_V2 WriteResult(
@@ -114,6 +117,13 @@ open_lmm_status_code_v2 OPEN_LMM_PLUGIN_CALL_V2 WriteResult(
                         std::numeric_limits<std::ptrdiff_t>::max()) ||
       chunk->size > std::numeric_limits<std::size_t>::max() - sink->bytes.size()) {
     if (sink) sink->malformed = true;
+    return OPEN_LMM_STATUS_HOST_ERROR_V2;
+  }
+  ++sink->chunk_count;
+  if (chunk->size > sink->limits.maximum_chunk_bytes ||
+      sink->chunk_count > sink->limits.maximum_chunk_count ||
+      chunk->size > sink->limits.maximum_result_bytes - sink->bytes.size()) {
+    sink->limit_exceeded = true;
     return OPEN_LMM_STATUS_HOST_ERROR_V2;
   }
   const auto* first = static_cast<const uint8_t*>(chunk->data);
@@ -161,6 +171,14 @@ Result<std::vector<uint8_t>> PluginV2::Call(const PluginV2Call& request) {
       (request.request_size != 0 && request.request_data == nullptr)) {
     return Result<std::vector<uint8_t>>::Failure(
         Error::InvalidArgument("invalid ABI-v2 plugin call"));
+  }
+  if (request.result_limits.maximum_result_bytes == 0 ||
+      request.result_limits.maximum_chunk_bytes == 0 ||
+      request.result_limits.maximum_chunk_count == 0 ||
+      request.result_limits.maximum_chunk_bytes >
+          request.result_limits.maximum_result_bytes) {
+    return Result<std::vector<uint8_t>>::Failure(
+        Error::InvalidArgument("invalid ABI-v2 plugin result limits"));
   }
   if (request.points) {
     if ((impl_->metadata.capability_bits &
@@ -214,6 +232,7 @@ Result<std::vector<uint8_t>> PluginV2::Call(const PluginV2Call& request) {
     call.poses.endian = request.poses->endian;
   }
   SinkContext context;
+  context.limits = request.result_limits;
   auto sink = Header<open_lmm_result_sink_v2>();
   sink.host_context = &context;
   sink.write = &WriteResult;
@@ -231,6 +250,11 @@ Result<std::vector<uint8_t>> PluginV2::Call(const PluginV2Call& request) {
     return Result<std::vector<uint8_t>>::Failure(Error::PluginLoadFailed(
         "ABI-v2 plugin wrote a malformed result chunk")
                                                      .WithPlugin(impl_->metadata.name));
+  }
+  if (context.limit_exceeded) {
+    return Result<std::vector<uint8_t>>::Failure(
+        Error::PluginLoadFailed("ABI-v2 plugin result exceeded host limits")
+            .WithPlugin(impl_->metadata.name));
   }
   if (status.code != OPEN_LMM_STATUS_OK_V2) {
     if (status.code == OPEN_LMM_STATUS_CANCELLED_V2) {

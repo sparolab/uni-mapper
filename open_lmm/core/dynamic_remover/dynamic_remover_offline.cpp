@@ -4,6 +4,12 @@
 #include <pcl/io/pcd_io.h>
 #include <tqdmcpp/tqdmcpp.hpp>
 
+#include <open_lmm/common/validation.hpp>
+#include <open_lmm/core/algorithm_invariants.hpp>
+
+#include <algorithm>
+#include <set>
+
 namespace open_lmm {
 
 DynamicRemoverOffline::DynamicRemoverOffline(
@@ -13,15 +19,24 @@ DynamicRemoverOffline::DynamicRemoverOffline(
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::genRawMap(
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
     std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) {
+  auto ordered_result = OrderOptimizedPosesByFrameId(
+      optimized_poses, scans.size(), "offline raw-map generation");
+  if (!ordered_result) {
+    throw std::invalid_argument(ordered_result.GetError().Message());
+  }
+  PoseVec ordered_poses = std::move(ordered_result).Value();
   pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map =
       pcl::PointCloud<pcl::PointXYZI>::Ptr(
           new pcl::PointCloud<pcl::PointXYZI>());
-  for (int i = 0; i < scans.size(); i++) {
+  for (std::size_t i = 0; i < scans.size(); ++i) {
+    auto valid = ValidatePointCloud(
+        scans[i], "offline raw-map scan " + std::to_string(i));
+    if (!valid) throw std::invalid_argument(valid.GetError().Message());
     pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan =
         pcl::PointCloud<pcl::PointXYZI>::Ptr(
             new pcl::PointCloud<pcl::PointXYZI>());
     pcl::transformPointCloud(*scans[i], *transformed_scan,
-                             optimized_poses[i].second.matrix());
+                             ordered_poses[i].matrix());
     *raw_map += *transformed_scan;
   }
 
@@ -31,6 +46,18 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::genRawMap(
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::process(
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
     std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) {
+  auto ordered_result = OrderOptimizedPosesByFrameId(
+      optimized_poses, scans.size(), "offline dynamic remover");
+  if (!ordered_result) {
+    throw std::invalid_argument(ordered_result.GetError().Message());
+  }
+  PoseVec ordered_poses = std::move(ordered_result).Value();
+  for (std::size_t index = 0; index < scans.size(); ++index) {
+    auto valid = ValidatePointCloud(
+        scans[index], "offline dynamic remover scan " +
+                          std::to_string(index));
+    if (!valid) throw std::invalid_argument(valid.GetError().Message());
+  }
   if (offline_model_->needsRawMap()) {
     pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map =
         genRawMap(scans, optimized_poses);
@@ -46,13 +73,18 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::process(
     //         new pcl::PointCloud<pcl::PointXYZI>());
     // pcl::transformPointCloud(*scan, *transformed_scan,
     //                          optimized_poses[idx].second.matrix());
-    offline_model_->run(scan, optimized_poses[idx].second);
+    offline_model_->run(scan, ordered_poses[idx]);
     idx++;
   }
   T.finish();
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map =
       offline_model_->getStaticMap();
+
+  auto valid_map = ValidatePointCloud(static_map, "offline remover output");
+  if (!valid_map) {
+    throw std::invalid_argument(valid_map.GetError().Message());
+  }
 
   return static_map;
 }
@@ -62,6 +94,52 @@ DynamicRemoverOffline::processStreaming(
     const RawScanSource& source,
     const std::vector<std::pair<int, Eigen::Isometry3d>>& optimized_poses,
     const HeavyPhaseAdmission& heavy_phase_admission) {
+  // Read a potentially stateful source exactly once.  Keeping the validated
+  // indexed snapshot prevents a later traversal from changing frame identity
+  // after validation but before plugin invocation.
+  std::vector<std::pair<std::size_t, PointCloud::Ptr>> indexed_scans;
+  std::set<std::size_t> frame_ids;
+  auto loaded = source([&](std::size_t index, const PointCloud::Ptr& scan) {
+    if (!frame_ids.insert(index).second) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "offline dynamic remover source returned duplicate frame " +
+          std::to_string(index)));
+    }
+    auto valid = ValidatePointCloud(
+        scan, "offline dynamic remover source frame " +
+                  std::to_string(index));
+    if (!valid) return valid;
+    indexed_scans.emplace_back(index, scan);
+    return Result<void>::Ok();
+  });
+  if (!loaded) {
+    return Result<PointCloud::Ptr>::Failure(loaded.GetError());
+  }
+  if (loaded.Value() != indexed_scans.size()) {
+    return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
+        "offline dynamic remover source count differs from visited scan count"));
+  }
+  std::sort(indexed_scans.begin(), indexed_scans.end(),
+            [](const auto& lhs, const auto& rhs) {
+              return lhs.first < rhs.first;
+            });
+  ScanVec scans;
+  scans.reserve(indexed_scans.size());
+  for (std::size_t expected = 0; expected < indexed_scans.size(); ++expected) {
+    if (indexed_scans[expected].first != expected) {
+      return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
+          "offline dynamic remover source is missing frame " +
+          std::to_string(expected)));
+    }
+    scans.push_back(std::move(indexed_scans[expected].second));
+  }
+  auto ordered_result = OrderOptimizedPosesByFrameId(
+      optimized_poses, scans.size(), "offline dynamic remover");
+  if (!ordered_result) {
+    return Result<PointCloud::Ptr>::Failure(ordered_result.GetError());
+  }
+  PoseVec ordered_poses = std::move(ordered_result).Value();
+
   if (offline_model_->needsRawMap()) {
     std::shared_ptr<void> heavy_phase;
     if (heavy_phase_admission) {
@@ -72,44 +150,27 @@ DynamicRemoverOffline::processStreaming(
       heavy_phase = std::move(admitted).Value();
     }
     auto raw_map = std::make_shared<PointCloud>();
-    auto loaded = source([&](std::size_t index, const PointCloud::Ptr& scan) {
-      if (index >= optimized_poses.size()) {
-        return Result<void>::Failure(Error::InvalidArgument(
-            "raw scan count exceeds optimized pose count"));
-      }
+    for (std::size_t index = 0; index < scans.size(); ++index) {
       PointCloud transformed_scan;
-      pcl::transformPointCloud(*scan, transformed_scan,
-                               optimized_poses[index].second.matrix());
+      pcl::transformPointCloud(*scans[index], transformed_scan,
+                               ordered_poses[index].matrix());
       *raw_map += transformed_scan;
-      return Result<void>::Ok();
-    });
-    if (!loaded) return Result<PointCloud::Ptr>::Failure(loaded.GetError());
-    if (loaded.Value() != optimized_poses.size()) {
-      return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
-          "raw scan and optimized pose counts differ"));
     }
     offline_model_->setRawMap(raw_map);
     heavy_phase.reset();
   }
 
-  auto processed = source([&](std::size_t index, const PointCloud::Ptr& scan) {
-    if (index >= optimized_poses.size()) {
-      return Result<void>::Failure(Error::InvalidArgument(
-          "raw scan count exceeds optimized pose count"));
-    }
-    PointCloud::Ptr mutable_scan = scan;
-    Eigen::Isometry3d pose = optimized_poses[index].second;
+  for (std::size_t index = 0; index < scans.size(); ++index) {
+    PointCloud::Ptr mutable_scan = scans[index];
+    Eigen::Isometry3d pose = ordered_poses[index];
     offline_model_->run(mutable_scan, pose);
-    return Result<void>::Ok();
-  });
-  if (!processed) {
-    return Result<PointCloud::Ptr>::Failure(processed.GetError());
   }
-  if (processed.Value() != optimized_poses.size()) {
-    return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
-        "raw scan and optimized pose counts differ"));
+  auto static_map = offline_model_->getStaticMap();
+  auto valid_map = ValidatePointCloud(static_map, "offline remover output");
+  if (!valid_map) {
+    return Result<PointCloud::Ptr>::Failure(valid_map.GetError());
   }
-  return Result<PointCloud::Ptr>::Ok(offline_model_->getStaticMap());
+  return Result<PointCloud::Ptr>::Ok(std::move(static_map));
 }
 
 Result<std::shared_ptr<IOfflineRemoverPlugin>> DynamicRemoverOffline::loadModule(

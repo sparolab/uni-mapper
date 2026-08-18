@@ -50,9 +50,9 @@ void FreeDom::setParams() {
 
   if (params_.enable_raycast_enhancement) {
     DepthImage::DepthImageConfig depth_image_config{
-        params_.lidar_horizon_fov,
-        params_.lidar_vertical_fov_upper,
-        params_.lidar_vertical_fov_lower,
+        params_.lidar_horizon_fov_rad,
+        params_.lidar_vertical_fov_upper_rad,
+        params_.lidar_vertical_fov_lower_rad,
         params_.depth_image_vertical_lines,
         params_.depth_image_min_range,
         params_.max_raycast_enhancement_range,

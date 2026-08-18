@@ -105,7 +105,21 @@ open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_call_v2(
   chunk.data = NULL;
   chunk.size = 1;
 #else
-  if (call->operation.size == 5 && call->operation.data &&
+  if (call->operation.size == 6 && call->operation.data &&
+      memcmp(call->operation.data, "chunks", 6) == 0) {
+    static const char repeated[] = "four";
+    chunk.data = repeated;
+    chunk.size = sizeof(repeated) - 1;
+    chunk.memory_location = OPEN_LMM_MEMORY_HOST_V2;
+    for (int i = 0; i < 4; ++i) {
+      if (sink->write(sink->host_context, &chunk) != OPEN_LMM_STATUS_OK_V2) {
+        --active_calls;
+        return status(OPEN_LMM_STATUS_HOST_ERROR_V2, "sink rejected");
+      }
+    }
+    --active_calls;
+    return status(OPEN_LMM_STATUS_OK_V2, "");
+  } else if (call->operation.size == 5 && call->operation.data &&
       memcmp(call->operation.data, "views", 5) == 0) {
     static const char view_result[] = "views-ok";
     if (!call->points.data || call->points.count != 2 ||

@@ -156,6 +156,8 @@ void TestMultiSessionIsolationAndLifecycle() {
   std::atomic<int> two_events{0};
   std::atomic<uint64_t> one_first_sequence{0};
   std::atomic<uint64_t> two_first_sequence{0};
+  std::atomic<bool> callback_close_attempted{false};
+  std::atomic<bool> callback_close_rejected{false};
   auto one_subscription = service.SubscribeEvents(
       one.Value(), [&](const SessionExecutionEvent& event) {
         Check(event.session_id == one.Value(), "session-one event namespace");
@@ -173,6 +175,13 @@ void TestMultiSessionIsolationAndLifecycle() {
         two_first_sequence.compare_exchange_strong(unset,
                                                    event.event.sequence);
         ++two_events;
+        if (event.event.type == EventType::kJobCompleted ||
+            event.event.type == EventType::kJobCancelled) {
+          callback_close_rejected =
+              !service.CloseSession(event.session_id,
+                                    CloseMode::kRejectIfRunning);
+          callback_close_attempted = true;
+        }
       });
   Check(one_subscription && two_subscription, "session subscriptions created");
 
@@ -207,6 +216,10 @@ void TestMultiSessionIsolationAndLifecycle() {
            snapshot.Value().pipeline.job &&
            snapshot.Value().pipeline.job->state == JobState::kSucceeded;
   }, "session two completes independently");
+  WaitUntil([&] { return callback_close_attempted.load(); },
+            "terminal callback close attempt returns without deadlock");
+  Check(callback_close_rejected.load() && service.Snapshot(two.Value()),
+        "callback session close is safely rejected without removing session");
   Check(service.CloseSession(two.Value(), CloseMode::kRejectIfRunning).IsOk(),
         "idle session closes without cancellation");
   Check(service.SessionIds().empty() &&

@@ -160,5 +160,38 @@ int main() {
            "secret values must be redacted from validation context");
   }
 
+  open_lmm::SchemaFragment nested_path{"nested-path", ConfigDocumentKind::kRoot,
+                                       1};
+  nested_path.fields = {
+      {"/outer/", open_lmm::SchemaValueType::kString},
+  };
+  auto empty_path_registry =
+      open_lmm::SchemaRegistry::Create({nested_path});
+  Expect(!empty_path_registry,
+         "schema paths containing an empty nested component must fail");
+  if (!empty_path_registry) {
+    Expect(empty_path_registry.GetError().code ==
+               open_lmm::Error::Code::kInvalidArgument,
+           "empty nested schema paths must return structured InvalidArgument");
+  }
+
+  nlohmann::json deeply_nested = nlohmann::json::object();
+  nlohmann::json* cursor = &deeply_nested;
+  for (std::size_t depth = 0; depth < 256; ++depth) {
+    (*cursor)["child"] = nlohmann::json::object();
+    cursor = &(*cursor)["child"];
+  }
+  auto deep_result = registry.Validate(ConfigDocumentKind::kRoot,
+                                       deeply_nested, "deep-fixture");
+  Expect(!deep_result,
+         "deep programmatic JSON must fail without recursive traversal");
+  if (!deep_result) {
+    Expect(deep_result.GetError().context.expected.find("depth <=") !=
+               std::string::npos,
+           "deep JSON failure must retain the configured depth bound");
+    Expect(deep_result.GetError().context.actual == "17",
+           "depth traversal must stop at the first node beyond the bound");
+  }
+
   return failures == 0 ? 0 : 1;
 }

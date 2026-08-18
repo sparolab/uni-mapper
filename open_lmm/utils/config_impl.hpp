@@ -191,6 +191,19 @@ bool Config::override_param(const std::string& module_name, const std::string& p
 
 template <typename T>
 std::optional<T> Config::param_nested(const std::vector<std::string>& nested_module_names, const std::string& param_name) const {
+  if (nested_module_names.empty()) {
+    throw std::invalid_argument(
+        "config nested path must contain at least one module");
+  }
+  for (const auto& module_name : nested_module_names) {
+    if (module_name.empty()) {
+      throw std::invalid_argument(
+          "config nested path must not contain an empty module");
+    }
+  }
+  if (param_name.empty()) {
+    throw std::invalid_argument("config nested parameter name must not be empty");
+  }
   const auto& json = std::any_cast<const nlohmann::json&>(config);
 
   nlohmann::json::const_iterator itr = json.find(nested_module_names[0]);

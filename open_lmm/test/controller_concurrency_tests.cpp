@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -22,6 +23,14 @@ void Check(bool condition, const char* message) {
 }
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
+AlignmentFeedbackSnapshot FeedbackSnapshot() {
+  AlignmentFeedbackSnapshot snapshot;
+  snapshot.proposal.target_agent = Id("A");
+  snapshot.proposal.source_agent = Id("B");
+  snapshot.proposal.method = AlignmentMethod::kKissMatcher;
+  return snapshot;
+}
 
 class ConcurrencyRunner final : public StageRunner {
  public:
@@ -132,11 +141,56 @@ void FeedbackAndSnapshotHaveNoLockInversion() {
   Check(controller.Wait(job.Value()).IsOk(), "alignment job did not finish");
 }
 
+void FeedbackPublishesBeforeSynchronousNotification() {
+  AlignmentFeedbackBroker broker;
+  uint64_t observed_request_id = 0;
+  broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
+    const auto published = broker.Snapshot();
+    Check(published && published->proposal.request_id ==
+                           notified.proposal.request_id,
+          "feedback was not published before synchronous notification");
+    observed_request_id = notified.proposal.request_id;
+    Check(broker.Respond({notified.proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+          "synchronous feedback response was rejected");
+  });
+  const auto response = broker.Request(FeedbackSnapshot(), nullptr);
+  Check(response && response.Value().decision == AlignmentDecision::kAccept &&
+            observed_request_id != 0 && !broker.Snapshot(),
+        "synchronous feedback did not complete and clear the request");
+}
+
+void ThrowingFeedbackNotificationRecoversForNextRequest() {
+  AlignmentFeedbackBroker broker;
+  broker.SetNotification([](const AlignmentFeedbackSnapshot&) {
+    throw std::runtime_error("notification fixture");
+  });
+  const auto failed = broker.Request(FeedbackSnapshot(), nullptr);
+  Check(!failed &&
+            failed.GetError().Message().find("notification fixture") !=
+                std::string::npos &&
+            !broker.Snapshot(),
+        "throwing notification did not clear the active request");
+
+  uint64_t retry_request_id = 0;
+  broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
+    retry_request_id = notified.proposal.request_id;
+    Check(broker.Respond({notified.proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+          "response after notification failure was rejected");
+  });
+  const auto retried = broker.Request(FeedbackSnapshot(), nullptr);
+  Check(retried && retry_request_id > 1 && !broker.Snapshot(),
+        "feedback request was not reusable after callback failure");
+}
+
 }  // namespace
 
 int main() {
   SnapshotUsesImmutableRunnerState();
   FeedbackAndSnapshotHaveNoLockInversion();
+  FeedbackPublishesBeforeSynchronousNotification();
+  ThrowingFeedbackNotificationRecoversForNextRequest();
   std::cout << "controller concurrency tests passed\n";
   return 0;
 }

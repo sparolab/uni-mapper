@@ -46,9 +46,10 @@ struct FreeDomParams {
 
   bool enable_raycast_enhancement;
 
-  double lidar_horizon_fov;
-  double lidar_vertical_fov_upper;
-  double lidar_vertical_fov_lower;
+  // Config is degrees; FreeDomParams is the one degree-to-radian boundary.
+  double lidar_horizon_fov_rad;
+  double lidar_vertical_fov_upper_rad;
+  double lidar_vertical_fov_lower_rad;
   unsigned int depth_image_vertical_lines;
 
   double depth_image_min_range;

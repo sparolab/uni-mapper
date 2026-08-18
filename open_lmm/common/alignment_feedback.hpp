@@ -6,10 +6,12 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 
 namespace open_lmm {
 
@@ -31,15 +33,24 @@ class AlignmentFeedbackBroker {
       }
       snapshot.proposal.request_id = next_request_id_++;
       active_ = std::move(snapshot);
-      active_published_ = false;
+      // Publish the request before notifying observers. Notifications are
+      // synchronous and may immediately inspect or answer the request.
+      active_published_ = true;
       published = *active_;
       response_.reset();
       notification = notification_;
     }
-    if (notification) notification(published);
-    {
-      std::lock_guard lock(mutex_);
-      active_published_ = true;
+    try {
+      if (notification) notification(published);
+    } catch (const std::exception& error) {
+      ClearRequest(published.proposal.request_id);
+      return Result<AlignmentResponse>::Failure(Error::InvalidArgument(
+          std::string("alignment feedback notification failed: ") +
+          error.what()));
+    } catch (...) {
+      ClearRequest(published.proposal.request_id);
+      return Result<AlignmentResponse>::Failure(Error::InvalidArgument(
+          "alignment feedback notification failed: unknown exception"));
     }
 
     std::unique_lock lock(mutex_);
@@ -120,6 +131,15 @@ class AlignmentFeedbackBroker {
   }
 
  private:
+  void ClearRequest(uint64_t request_id) {
+    std::lock_guard lock(mutex_);
+    if (!active_ || active_->proposal.request_id != request_id) return;
+    response_.reset();
+    active_.reset();
+    active_published_ = false;
+    condition_.notify_all();
+  }
+
   mutable std::mutex mutex_;
   std::condition_variable condition_;
   uint64_t next_request_id_ = 1;

@@ -7,6 +7,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -90,6 +91,10 @@ class PipelineController {
   [[nodiscard]] std::vector<NodeDescriptor> NodeDescriptors() const;
   Result<void> Cancel(uint64_t job_id);
   Result<void> Wait(uint64_t job_id);
+  // Lifecycle barrier for owners that must retire callback-visible context.
+  // Wait(job) only waits for terminal journal commit by design.
+  Result<void> WaitForEventCallbacks();
+  [[nodiscard]] bool IsInEventCallback() const noexcept;
   [[nodiscard]] PipelineSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
       const AgentId& agent) const;
@@ -107,7 +112,8 @@ class PipelineController {
   Result<void> runOneStage(uint64_t job_id, StageId stage);
   bool cancellationRequested() const;
   void emit(ExecutionEvent event);
-  void finish(uint64_t job_id, const Result<void>& result);
+  void commitTerminal(uint64_t job_id, const Result<void>& result);
+  void drainEventCallbacks();
   bool synchronizeCommittedSession(
       const std::shared_ptr<StageRunner>& runner);
 
@@ -123,6 +129,13 @@ class PipelineController {
   bool maintenance_in_progress_ = false;
   std::shared_ptr<ExecutionEventSubscriberRegistry> event_subscribers_;
   std::vector<ExecutionEvent> recent_events_;
+  // Journal commit and callback queue insertion share this lock so callbacks
+  // observe the same total ordering as recent_events_. Callback execution is
+  // outside both this lock and mutex_.
+  mutable std::mutex event_dispatch_mutex_;
+  std::condition_variable event_callbacks_idle_;
+  std::deque<ExecutionEvent> pending_event_callbacks_;
+  bool dispatching_events_ = false;
   std::thread worker_;
   std::atomic<bool> cancel_requested_{false};
   std::atomic<bool> runner_manages_artifacts_{false};

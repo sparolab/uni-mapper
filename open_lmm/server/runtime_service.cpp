@@ -304,6 +304,10 @@ Result<void> RuntimeService::CloseSession(const SessionId& session_id,
   auto found = lookup(session_id);
   if (!found) return Result<void>::Failure(found.GetError());
   auto session = found.Value();
+  if (session->controller->IsInEventCallback()) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "cannot close a session from its event callback"));
+  }
   std::optional<JobSnapshot> active_job;
   const auto initial_pipeline = session->controller->Snapshot();
   {
@@ -324,11 +328,16 @@ Result<void> RuntimeService::CloseSession(const SessionId& session_id,
   if (active_job) {
     if (active_job->state != JobState::kCancelling) {
       // Completion may win this race. Wait() below remains the authoritative
-      // callback/worker quiescence barrier in either case.
+      // terminal-journal barrier in either case.
       (void)session->controller->Cancel(active_job->id);
     }
     (void)session->controller->Wait(active_job->id);
   }
+  // Wait() is intentionally a terminal-journal barrier, not a callback
+  // completion barrier. Keep the session queryable until every already
+  // committed event callback has left user code.
+  auto callbacks_drained = session->controller->WaitForEventCallbacks();
+  if (!callbacks_drained) return callbacks_drained;
   {
     std::lock_guard lock(session->mutex);
     session->state = RuntimeSessionState::kClosed;
