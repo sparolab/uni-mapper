@@ -5,7 +5,11 @@
 #include <utility>
 
 #include <open_lmm/server/session_payload_builder.hpp>
+#include <open_lmm/common/plugin_host_v2.hpp>
 #include <open_lmm/utils/config_schema.hpp>
+#include <open_lmm/utils/plugin_schema_registry.hpp>
+
+#include <dlfcn.h>
 
 namespace open_lmm {
 namespace {
@@ -18,15 +22,157 @@ struct LoadedDocument {
   SessionConfigDocument document;
 };
 
+Result<Config> LoadRawCandidate(const SessionConfigDocument& source) {
+  std::error_code error;
+  const auto bytes = std::filesystem::file_size(source.path, error);
+  if (error || bytes > SchemaLimits{}.maximum_document_bytes) {
+    return Result<Config>::Failure(Error::InvalidArgument(
+        "candidate plugin config is missing or exceeds byte limit"));
+  }
+  Config disk(source.path.string());
+  if (!disk.is_valid()) {
+    return Result<Config>::Failure(
+        Error::ParseError(disk.error_message()).WithConfig(source.path.string()));
+  }
+  return Result<Config>::Ok(std::move(disk));
+}
+
+bool HasCompleteV2Symbols(const std::string& library) {
+  void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!handle) return false;
+  const bool complete = dlsym(handle, OPEN_LMM_PLUGIN_QUERY_SYMBOL_V2) &&
+                        dlsym(handle, OPEN_LMM_PLUGIN_OPEN_SYMBOL_V2) &&
+                        dlsym(handle, OPEN_LMM_PLUGIN_CALL_SYMBOL_V2) &&
+                        dlsym(handle, OPEN_LMM_PLUGIN_CLOSE_SYMBOL_V2);
+  dlclose(handle);
+  return complete;
+}
+
+Result<bool> AdvertisesSchema(const std::string& library) {
+  void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!handle)
+    return Result<bool>::Failure(
+        Error::PluginLoadFailed("failed to inspect plugin: " + library));
+  auto query = reinterpret_cast<open_lmm_plugin_query_fn_v2>(
+      dlsym(handle, OPEN_LMM_PLUGIN_QUERY_SYMBOL_V2));
+  if (!query) {
+    dlclose(handle);
+    return Result<bool>::Failure(
+        Error::PluginLoadFailed("plugin query symbol disappeared: " + library));
+  }
+  open_lmm_plugin_descriptor_v2 descriptor{};
+  descriptor.struct_size = sizeof(descriptor);
+  descriptor.abi_major = OPEN_LMM_PLUGIN_ABI_V2_MAJOR;
+  descriptor.abi_minor = OPEN_LMM_PLUGIN_ABI_V2_MINOR;
+  open_lmm_status_v2 status{};
+  try {
+    status = query(&descriptor);
+  } catch (...) {
+    dlclose(handle);
+    return Result<bool>::Failure(
+        Error::PluginLoadFailed("plugin query threw: " + library));
+  }
+  dlclose(handle);
+  const uint32_t minimum = descriptor.abi_minor == 0
+      ? OPEN_LMM_PLUGIN_DESCRIPTOR_V2_MINOR_0_SIZE
+      : OPEN_LMM_PLUGIN_DESCRIPTOR_V2_MINOR_1_SIZE;
+  if (status.struct_size < sizeof(status) ||
+      status.abi_major != OPEN_LMM_PLUGIN_ABI_V2_MAJOR ||
+      status.code > OPEN_LMM_STATUS_HOST_ERROR_V2 ||
+      status.message.struct_size < sizeof(status.message) ||
+      status.message.abi_major != OPEN_LMM_PLUGIN_ABI_V2_MAJOR ||
+      (status.message.size != 0 && !status.message.data) ||
+      status.message.size > 64U * 1024U ||
+      status.code != OPEN_LMM_STATUS_OK_V2 ||
+      descriptor.abi_major != OPEN_LMM_PLUGIN_ABI_V2_MAJOR ||
+      descriptor.struct_size < minimum ||
+      descriptor.minimum_host_minor > OPEN_LMM_PLUGIN_ABI_V2_MINOR)
+    return Result<bool>::Failure(
+        Error::PluginLoadFailed("malformed plugin metadata: " + library));
+  return Result<bool>::Ok(
+      (descriptor.capability_bits &
+       OPEN_LMM_CAPABILITY_SCHEMA_FRAGMENT_V2) != 0);
+}
+
+Result<std::optional<PluginV2Metadata>> Discover(
+    const Config& source, std::string_view section, std::string_view kind) {
+  const std::string model = source.param<std::string>(
+      std::string(section), "model", "");
+  const std::string abi = source.param<std::string>(
+      std::string(section), "plugin_abi", "auto");
+  if (model.empty() || abi == "v1")
+    return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
+  const std::string library = "libcreate_" + model + ".so";
+  if (!HasCompleteV2Symbols(library)) {
+    if (abi == "v2")
+      return Result<std::optional<PluginV2Metadata>>::Failure(
+          Error::PluginLoadFailed("explicit ABI-v2 plugin unavailable: " +
+                                  library));
+    return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
+  }
+  auto schema = AdvertisesSchema(library);
+  if (!schema)
+    return Result<std::optional<PluginV2Metadata>>::Failure(schema.GetError());
+  if (!schema.Value())
+    return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
+  auto loaded = LoadPluginV2(library, kind, source.ToJson());
+  if (!loaded)
+    return Result<std::optional<PluginV2Metadata>>::Failure(loaded.GetError());
+  auto metadata = loaded.Value().Metadata();
+  metadata.selected_model = model;
+  return Result<std::optional<PluginV2Metadata>>::Ok(std::move(metadata));
+}
+
+Result<std::shared_ptr<const SchemaRegistry>> CandidateRegistry(
+    const std::shared_ptr<const PluginV2Metadata>& descriptor,
+    const std::shared_ptr<const PluginV2Metadata>& dynamic) {
+  std::vector<PluginV2Metadata> plugins;
+  if (descriptor) plugins.push_back(*descriptor);
+  if (dynamic) plugins.push_back(*dynamic);
+  auto built = BuildSessionSchemaRegistry(plugins);
+  if (!built)
+    return Result<std::shared_ptr<const SchemaRegistry>>::Failure(
+        built.GetError());
+  return Result<std::shared_ptr<const SchemaRegistry>>::Ok(
+      std::make_shared<const SchemaRegistry>(std::move(built).Value()));
+}
+
+Result<void> ValidateCandidateDocuments(const SessionConfigDocuments& documents,
+                                        const SchemaRegistry& registry) {
+  const std::pair<ConfigDocumentKind, const SessionConfigDocument*> inputs[] = {
+      {ConfigDocumentKind::kRoot, &documents.root},
+      {ConfigDocumentKind::kMapServer, &documents.map_server},
+      {ConfigDocumentKind::kDataLoader, &documents.data_loader},
+      {ConfigDocumentKind::kLoopDetector, &documents.loop_detector},
+      {ConfigDocumentKind::kBackendOptimizer, &documents.optimizer},
+      {ConfigDocumentKind::kDynamicRemover, &documents.dynamic_remover},
+  };
+  std::optional<ValidatedConfigDocument> root;
+  std::optional<ValidatedConfigDocument> map;
+  for (const auto& [kind, document] : inputs) {
+    auto validated = registry.ParseAndValidate(
+        kind, document->canonical_json, document->path.string());
+    if (!validated) return Result<void>::Failure(validated.GetError());
+    if (kind == ConfigDocumentKind::kRoot)
+      root = std::move(validated).Value();
+    else if (kind == ConfigDocumentKind::kMapServer)
+      map = std::move(validated).Value();
+  }
+  auto session = ValidateSessionConfigDocuments(*root, *map);
+  if (!session) return Result<void>::Failure(session.GetError());
+  return Result<void>::Ok();
+}
+
 Result<LoadedDocument> LoadCandidate(ConfigDocumentKind kind,
-                                     const SessionConfigDocument& source) {
+                                     const SessionConfigDocument& source,
+                                     const SchemaRegistry& registry) {
   Config disk(source.path.string());
   if (!disk.is_valid()) {
     return Result<LoadedDocument>::Failure(
         Error::ParseError(disk.error_message()).WithConfig(
             source.path.string()));
   }
-  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
+  auto validated = registry.ParseAndValidate(
       kind, disk.ToJson(), source.path.string());
   if (!validated) {
     return Result<LoadedDocument>::Failure(validated.GetError());
@@ -118,10 +264,33 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
   next->documents = documents;
   next->revision = revision;
   std::shared_ptr<const SessionPayload> payload = base->payload;
+  const SchemaRegistry& registry = base->config->schema_registry
+      ? *base->config->schema_registry
+      : BuiltinConfigSchemaRegistry();
 
   if (domain == ConfigDomain::kLoopDetector) {
+    auto raw = LoadRawCandidate(documents->loop_detector);
+    if (!raw)
+      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
+    auto discovered = Discover(raw.Value(), "loop_detector", "descriptor");
+    if (!discovered)
+      return Result<SessionReconfigureCandidate>::Failure(
+          discovered.GetError());
+    std::shared_ptr<const PluginV2Metadata> descriptor;
+    if (discovered.Value()) {
+      descriptor = std::make_shared<const PluginV2Metadata>(
+          std::move(*discovered.Value()));
+    }
+    auto candidate_registry = CandidateRegistry(
+        descriptor, base->config->remover_plugin_schema);
+    if (!candidate_registry)
+      return Result<SessionReconfigureCandidate>::Failure(
+          candidate_registry.GetError());
+    next->schema_registry = candidate_registry.Value();
+    next->descriptor_plugin_schema = std::move(descriptor);
     auto loaded = LoadCandidate(ConfigDocumentKind::kLoopDetector,
-                                documents->loop_detector);
+                                documents->loop_detector,
+                                *next->schema_registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
@@ -152,7 +321,7 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     RefreshAlignmentIdentity(*next);
   } else if (domain == ConfigDomain::kOptimizer) {
     auto loaded = LoadCandidate(ConfigDocumentKind::kBackendOptimizer,
-                                documents->optimizer);
+                                documents->optimizer, registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
@@ -177,8 +346,29 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     payload = std::move(rebuilt).Value();
     RefreshAlignmentIdentity(*next);
   } else if (domain == ConfigDomain::kDynamicRemover) {
+    auto raw = LoadRawCandidate(documents->dynamic_remover);
+    if (!raw)
+      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
+    auto discovered = Discover(raw.Value(), "dynamic_remover",
+                               "dynamic_remover");
+    if (!discovered)
+      return Result<SessionReconfigureCandidate>::Failure(
+          discovered.GetError());
+    std::shared_ptr<const PluginV2Metadata> remover;
+    if (discovered.Value()) {
+      remover = std::make_shared<const PluginV2Metadata>(
+          std::move(*discovered.Value()));
+    }
+    auto candidate_registry = CandidateRegistry(
+        base->config->descriptor_plugin_schema, remover);
+    if (!candidate_registry)
+      return Result<SessionReconfigureCandidate>::Failure(
+          candidate_registry.GetError());
+    next->schema_registry = candidate_registry.Value();
+    next->remover_plugin_schema = std::move(remover);
     auto loaded = LoadCandidate(ConfigDocumentKind::kDynamicRemover,
-                                documents->dynamic_remover);
+                                documents->dynamic_remover,
+                                *next->schema_registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
@@ -196,14 +386,14 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     documents->dynamic_remover = std::move(loaded).Value().document;
   } else if (domain == ConfigDomain::kMapSave) {
     auto loaded = LoadCandidate(ConfigDocumentKind::kMapServer,
-                                documents->map_server);
+                                documents->map_server, registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
-    auto root_schema = BuiltinConfigSchemaRegistry().ParseAndValidate(
+    auto root_schema = registry.ParseAndValidate(
         ConfigDocumentKind::kRoot, documents->root.canonical_json,
         documents->root.path.string());
-    auto map_schema = BuiltinConfigSchemaRegistry().ParseAndValidate(
+    auto map_schema = registry.ParseAndValidate(
         ConfigDocumentKind::kMapServer,
         loaded.Value().document.canonical_json,
         loaded.Value().document.path.string());
@@ -243,6 +433,15 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     return Result<SessionReconfigureCandidate>::Failure(
         Error::InvalidArgument(
             "data/global config requires a new pipeline session"));
+  }
+
+  if (domain == ConfigDomain::kLoopDetector ||
+      domain == ConfigDomain::kDynamicRemover) {
+    auto all_valid = ValidateCandidateDocuments(*documents,
+                                                *next->schema_registry);
+    if (!all_valid)
+      return Result<SessionReconfigureCandidate>::Failure(
+          all_valid.GetError());
   }
 
   return Result<SessionReconfigureCandidate>::Ok(

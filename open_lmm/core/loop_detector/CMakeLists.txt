@@ -5,7 +5,6 @@ add_library(open_lmm_loop_detector SHARED)
 target_sources(open_lmm_loop_detector PRIVATE
   loop_detector_base.cpp
   loop_detector_kdtree.cpp
-  scan_context_v2_adapter.cpp
   kiss_alignment_proposer.cpp
   descriptor_alignment_proposer.cpp
   map_alignment_refiner.cpp
@@ -16,9 +15,11 @@ target_link_libraries(open_lmm_loop_detector
   Eigen3::Eigen
   PCL::PCL
   open_lmm_common
+  open_lmm_descriptor
   open_lmm_algorithm_config
   open_lmm_utils
  PRIVATE
+  open_lmm_alignment
   open_lmm_profiling
   GkCM::GkCM
   kiss_matcher::kiss_matcher_core

@@ -59,6 +59,14 @@ int main() {
     ValidateFile(registry, ConfigDocumentKind::kLoopDetector,
                  config_root / "core/loop_detector" / name);
   }
+  auto default_loop_policy = registry.ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector,
+      Read(config_root / "core/loop_detector/scan_context.json"));
+  Expect(default_loop_policy &&
+             default_loop_policy.Value().Document()
+                     .at("alignment")
+                     .at("headless_policy") == "kiss_then_descriptor",
+         "loop schema must materialize kiss_then_descriptor as its default");
   for (const char* name : {"dufomap.json", "erasor.json", "free_dom.json",
                            "hmm_mos.json", "otd.json"}) {
     ValidateFile(registry, ConfigDocumentKind::kDynamicRemover,

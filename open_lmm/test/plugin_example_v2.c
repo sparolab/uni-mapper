@@ -35,6 +35,18 @@ open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_query_v2(
   out->capability = text("echo,cancel");
   out->capability_bits = UINT64_C(3);
   out->minimum_host_minor = 0;
+  static open_lmm_operation_descriptor_v2 operation = {0};
+  operation.struct_size = sizeof(operation);
+  operation.abi_major = OPEN_LMM_PLUGIN_ABI_V2_MAJOR;
+  operation.abi_minor = OPEN_LMM_PLUGIN_ABI_V2_MINOR;
+  operation.operation = text("echo");
+  out->plugin_id = text("org.openlmm.example.echo");
+  out->plugin_version = text("1.0.0");
+  out->operations = &operation;
+  out->operation_count = 1;
+  out->schema_id = text("");
+  out->thread_safety = OPEN_LMM_THREAD_SAFETY_HANDLE_SERIALIZED_V2;
+  out->cancellation = OPEN_LMM_CANCELLATION_COOPERATIVE_V2;
   return status(OPEN_LMM_STATUS_OK_V2, "");
 }
 open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_open_v2(

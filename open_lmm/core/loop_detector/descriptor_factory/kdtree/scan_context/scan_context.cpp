@@ -15,6 +15,7 @@ ScanContextParams::ScanContextParams(const open_lmm::Config& config) {
   number_sectors = config.param<int>("loop_detector", "num_sector", 60);
   number_rings = config.param<int>("loop_detector", "num_ring", 20);
   max_range = config.param<double>("loop_detector", "max_range", 80);
+  descriptor_vector_dim = number_rings;
   if (number_sectors <= 0 || number_rings <= 0 || max_range <= 0.0) {
     throw std::invalid_argument(
         "scan_context num_sector, num_ring, and max_range must be positive");
@@ -33,6 +34,21 @@ ScanContext::ScanContext(const ScanContextParams& params) : params_(params) {
   descriptor_ =
       Eigen::MatrixXd::Zero(params_.number_rings, params.number_sectors);
   ring_key_ = Eigen::VectorXd::Zero(params_.number_rings);
+}
+
+std::shared_ptr<ScanContext> ScanContext::FromWire(
+    const ScanContextParams& params, Eigen::MatrixXd descriptor,
+    Eigen::VectorXd key) {
+  if (descriptor.rows() != static_cast<Eigen::Index>(params.number_rings) ||
+      descriptor.cols() != static_cast<Eigen::Index>(params.number_sectors) ||
+      key.size() != static_cast<Eigen::Index>(params.number_rings) ||
+      !descriptor.allFinite() || !key.allFinite()) {
+    throw std::invalid_argument("invalid Scan Context wire descriptor");
+  }
+  auto result = std::make_shared<ScanContext>(params);
+  result->descriptor_ = std::move(descriptor);
+  result->ring_key_ = std::move(key);
+  return result;
 }
 
 /*********************************************************************************************************************/

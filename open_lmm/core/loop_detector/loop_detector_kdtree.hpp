@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/descriptor_index.hpp>
+#include <open_lmm/core/descriptor/descriptor_engine.hpp>
 #include <type_traits>
 
 #include "loop_detector_base.hpp"
@@ -20,7 +21,7 @@ using KdtreeParams = LoopDetectorConfig;
 class LoopDetectorKdtree : public LoopDetectorBase {
  public:
   LoopDetectorKdtree(const KdtreeParams& params,
-                     std::shared_ptr<IDescriptorKdtree> model_descriptor);
+                     std::shared_ptr<const DescriptorEngine> descriptor_engine);
   ~LoopDetectorKdtree() override = default;
 
   Result<LoopDetectorOutput> Process(
@@ -34,35 +35,22 @@ class LoopDetectorKdtree : public LoopDetectorBase {
   LoopPair createLoopPair(AgentId agent_id, size_t current_idx,
                           const LoopCandidateInfo& candidate_info);
 
-  std::vector<LoopPair> detectIntraLoops(const ScanVec& scans,
-                                         const AgentContext& agent_ctx);
+  Result<std::vector<LoopPair>> detectIntraLoops(
+      const AlgorithmExecutionContext& context, const ScanVec& scans,
+      const AgentContext& agent_ctx);
 
-  std::vector<LoopPair> detectInterLoops(const ScanVec& scans,
-                                         const DescriptorStore& descriptor_store,
-                                         const AgentContext& agent_ctx);
+  Result<std::vector<LoopPair>> detectInterLoops(
+      const AlgorithmExecutionContext& context, const ScanVec& scans,
+      const DescriptorStore& descriptor_store,
+      const AgentContext& agent_ctx);
 
-  // transformed_map_points를 out 파라미터로 반환
-  std::vector<LoopPair> detectKissMatcherLoops(
+  std::optional<MapAlignmentProposal> proposeKissAlignment(
       const AlgorithmExecutionContext& context,
-      const LoopDetectorProcessInput& input,
-      std::vector<Eigen::Vector3f>& out_transformed_map_points,
-      std::optional<MapAlignmentProposal>& out_proposal);
-
-  std::vector<LoopPair> loopsFromGlobalTransform(
-      const AlgorithmExecutionContext& context,
-      const LoopDetectorProcessInput& input,
-      const Eigen::Isometry3d& target_T_source);
-
-  std::vector<LoopPair> findLoopPairsFromKdTree(
-      const AgentOptimizedDataMap& all_optimized,
-      const AgentRawDataMap& all_raw_data,
-      const std::vector<Eigen::Isometry3f>& transformed_poses,
-      const AgentContext& agent_ctx,
-      float distance_threshold);
+      const LoopDetectorProcessInput& input);
 
   KdtreeParams params_;
   std::optional<DatabaseKdtree> database_;
-  std::shared_ptr<IDescriptorKdtree> model_descriptor_;
+  std::shared_ptr<const DescriptorEngine> descriptor_engine_;
 
   /**
    * @brief Load an dynamic removal module from a dynamic library

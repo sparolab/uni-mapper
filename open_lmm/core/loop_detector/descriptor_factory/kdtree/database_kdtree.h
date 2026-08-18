@@ -5,6 +5,8 @@
 #include <memory>
 #include <nanoflann.hpp>
 #include <open_lmm/common/descriptor_index.hpp>
+#include <open_lmm/common/algorithm_execution_context.hpp>
+#include <open_lmm/core/descriptor/descriptor_engine.hpp>
 #include <optional>
 
 struct DatabaseKdtreeParams {
@@ -34,15 +36,19 @@ class DatabaseKdtree final : public DescriptorIndex {
   explicit DatabaseKdtree(
       const DatabaseKdtreeParams& params,
       std::shared_ptr<IDescriptorKdtree> plugin_owner = {});
+  DatabaseKdtree(const DatabaseKdtreeParams& params,
+                 std::shared_ptr<const open_lmm::DescriptorEngine> engine);
 
   // Copy constructor
   DatabaseKdtree(const DatabaseKdtree& other)
       : params_(other.params_),
         tree_descriptor_keys_(other.tree_descriptor_keys_),
         plugin_owners_(other.plugin_owners_),
+        engine_(other.engine_),
         database_(other.database_) {
-    kd_tree_ = std::make_shared<KDTree>(
-        params_.descriptor_vector_dim, tree_descriptor_keys_, KDTreeParams(20));
+    kd_tree_.reset();
+    indexed_size_ = 0;
+    tryRebuild();
   }
 
   // Copy operator
@@ -52,9 +58,10 @@ class DatabaseKdtree final : public DescriptorIndex {
       tree_descriptor_keys_ = other.tree_descriptor_keys_;
       database_ = other.database_;
       plugin_owners_ = other.plugin_owners_;
-      kd_tree_ =
-          std::make_shared<KDTree>(params_.descriptor_vector_dim,
-                                   tree_descriptor_keys_, KDTreeParams(20));
+      engine_ = other.engine_;
+      indexed_size_ = 0;
+      kd_tree_.reset();
+      tryRebuild();
     }
     return *this;
   }
@@ -64,9 +71,11 @@ class DatabaseKdtree final : public DescriptorIndex {
       : params_(std::move(other.params_)),
         tree_descriptor_keys_(std::move(other.tree_descriptor_keys_)),
         plugin_owners_(std::move(other.plugin_owners_)),
+        engine_(std::move(other.engine_)),
         database_(std::move(other.database_)) {
-    kd_tree_ = std::make_shared<KDTree>(
-        params_.descriptor_vector_dim, tree_descriptor_keys_, KDTreeParams(20));
+    kd_tree_.reset();
+    indexed_size_ = 0;
+    tryRebuild();
   }
 
   // Move assignment operator
@@ -76,9 +85,10 @@ class DatabaseKdtree final : public DescriptorIndex {
       tree_descriptor_keys_ = std::move(other.tree_descriptor_keys_);
       database_ = std::move(other.database_);
       plugin_owners_ = std::move(other.plugin_owners_);
-      kd_tree_ =
-          std::make_shared<KDTree>(params_.descriptor_vector_dim,
-                                   tree_descriptor_keys_, KDTreeParams(20));
+      engine_ = std::move(other.engine_);
+      indexed_size_ = 0;
+      kd_tree_.reset();
+      tryRebuild();
     }
     return *this;
   }
@@ -89,11 +99,7 @@ class DatabaseKdtree final : public DescriptorIndex {
     return std::make_unique<DatabaseKdtree>(*this);
   }
 
-  void clear() override {
-    database_.clear();
-    tree_descriptor_keys_.data.clear();
-    kd_tree_.reset();
-  }
+  void clear() override;
 
   // TODO(gil) : need this?
   void setAgentId(open_lmm::AgentId agent_id) { agent_id_ = std::move(agent_id); }
@@ -102,9 +108,15 @@ class DatabaseKdtree final : public DescriptorIndex {
 
   void insert(open_lmm::AgentId agent_id, size_t key,
               const std::shared_ptr<IDescriptorKdtree>& descriptor) override;
+  void insertArtifact(open_lmm::AgentId agent_id, size_t key,
+                      open_lmm::DescriptorArtifact artifact);
 
   std::optional<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> query(
       const std::shared_ptr<IDescriptorKdtree>& query) const override;
+  open_lmm::Result<std::optional<
+      std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>>>
+  queryArtifact(const open_lmm::AlgorithmExecutionContext& context,
+                const open_lmm::DescriptorArtifact& query) const;
 
   std::vector<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> queryK(
       const std::shared_ptr<IDescriptorKdtree>& query,
@@ -115,6 +127,8 @@ class DatabaseKdtree final : public DescriptorIndex {
 
   std::vector<std::pair<size_t, double>> findDescriptorKeyNeighborsSafe(
       const std::shared_ptr<IDescriptorKdtree>& query, size_t k) const;
+  std::vector<std::pair<size_t, double>> findDescriptorKeyNeighborsSafe(
+      const std::vector<double>& query_key, size_t k) const;
 
   static bool keyDistPairComp(const std::pair<size_t, double>& lhs,
                               const std::pair<size_t, double>& rhs) {
@@ -126,6 +140,11 @@ class DatabaseKdtree final : public DescriptorIndex {
       const std::tuple<size_t, double, Eigen::Isometry3d>& rhs) {
     return std::get<1>(lhs) < std::get<1>(rhs);
   }
+
+  enum class StorageKind { kEmpty, kLegacy, kArtifact, kMixed };
+  [[nodiscard]] StorageKind storageKind() const;
+  void validateArtifactIdentity(
+      const open_lmm::DescriptorArtifact& artifact) const;
 
  protected:
   struct KDTreeAdaptor {
@@ -159,7 +178,12 @@ class DatabaseKdtree final : public DescriptorIndex {
   // This member is declared before database_ so reverse destruction releases
   // descriptor objects before their plugin handles.
   std::vector<std::shared_ptr<IDescriptorKdtree>> plugin_owners_;
-  std::vector<std::tuple<open_lmm::AgentId, size_t, std::shared_ptr<IDescriptorKdtree>>>
-      database_;
+  struct StoredDescriptor {
+    std::shared_ptr<IDescriptorKdtree> legacy;
+    std::optional<open_lmm::DescriptorArtifact> artifact;
+  };
+  std::shared_ptr<const open_lmm::DescriptorEngine> engine_;
+  std::vector<std::tuple<open_lmm::AgentId, size_t, StoredDescriptor>> database_;
+  std::size_t indexed_size_ = 0;
   open_lmm::AgentId agent_id_;
 };

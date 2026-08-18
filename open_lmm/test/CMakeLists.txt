@@ -27,6 +27,72 @@ openlmm_set_global_target_properties(open_lmm_algorithm_contract_tests)
 add_test(NAME open_lmm_algorithm_contract_tests
          COMMAND open_lmm_algorithm_contract_tests)
 
+add_executable(open_lmm_descriptor_engine_tests
+  descriptor_engine_tests.cpp
+)
+target_link_libraries(open_lmm_descriptor_engine_tests PRIVATE
+  open_lmm_descriptor
+)
+openlmm_set_global_target_properties(open_lmm_descriptor_engine_tests)
+add_test(NAME open_lmm_descriptor_engine_tests
+         COMMAND open_lmm_descriptor_engine_tests)
+
+add_executable(open_lmm_descriptor_database_tests
+  descriptor_database_tests.cpp
+)
+target_link_libraries(open_lmm_descriptor_database_tests PRIVATE
+  descriptor_kdtree
+  open_lmm_descriptor
+)
+openlmm_set_global_target_properties(open_lmm_descriptor_database_tests)
+add_test(NAME open_lmm_descriptor_database_tests
+         COMMAND open_lmm_descriptor_database_tests)
+
+add_executable(open_lmm_descriptor_v2_adapter_tests
+  descriptor_v2_adapter_tests.cpp
+)
+target_link_libraries(open_lmm_descriptor_v2_adapter_tests PRIVATE
+  open_lmm_descriptor
+  open_lmm_utils
+)
+openlmm_set_global_target_properties(open_lmm_descriptor_v2_adapter_tests)
+add_dependencies(open_lmm_descriptor_v2_adapter_tests
+  create_scan_context
+  create_solid
+  open_lmm_plugin_fixture_valid
+  open_lmm_plugin_fixture_v2_short_descriptor
+  open_lmm_descriptor_v2_newer_minor_fixture
+  open_lmm_descriptor_v2_malformed_missing_cap_fixture
+)
+add_test(NAME open_lmm_descriptor_v2_adapter_tests
+  COMMAND open_lmm_descriptor_v2_adapter_tests
+    $<TARGET_FILE:create_scan_context>
+    $<TARGET_FILE:create_solid>
+    $<TARGET_FILE:open_lmm_plugin_fixture_valid>
+    $<TARGET_FILE:open_lmm_plugin_fixture_v2_short_descriptor>
+    $<TARGET_FILE:open_lmm_descriptor_v2_newer_minor_fixture>
+    $<TARGET_FILE:open_lmm_descriptor_v2_malformed_missing_cap_fixture>)
+
+add_executable(open_lmm_alignment_decision_policy_tests
+  alignment_decision_policy_tests.cpp
+)
+target_link_libraries(open_lmm_alignment_decision_policy_tests PRIVATE
+  open_lmm_alignment
+)
+openlmm_set_global_target_properties(open_lmm_alignment_decision_policy_tests)
+add_test(NAME open_lmm_alignment_decision_policy_tests
+         COMMAND open_lmm_alignment_decision_policy_tests)
+
+add_executable(open_lmm_alignment_contract_fixture_tests
+  alignment_contract_fixture_tests.cpp
+)
+target_link_libraries(open_lmm_alignment_contract_fixture_tests PRIVATE
+  open_lmm_alignment
+)
+openlmm_set_global_target_properties(open_lmm_alignment_contract_fixture_tests)
+add_test(NAME open_lmm_alignment_contract_fixture_tests
+         COMMAND open_lmm_alignment_contract_fixture_tests)
+
 add_executable(open_lmm_agent_id_tests agent_id_tests.cpp)
 target_link_libraries(open_lmm_agent_id_tests PRIVATE
   open_lmm_common
@@ -124,6 +190,13 @@ target_link_libraries(open_lmm_session_bootstrapper_tests PRIVATE
 openlmm_set_global_target_properties(open_lmm_session_bootstrapper_tests)
 add_test(NAME open_lmm_session_bootstrapper_tests
          COMMAND open_lmm_session_bootstrapper_tests)
+add_library(open_lmm_plugin_schema_fixture_v2 MODULE plugin_schema_fixture_v2.c)
+set_target_properties(open_lmm_plugin_schema_fixture_v2 PROPERTIES
+  OUTPUT_NAME create_external_fixture)
+target_link_libraries(open_lmm_plugin_schema_fixture_v2 PRIVATE
+  open_lmm_plugin_sdk)
+add_dependencies(open_lmm_session_bootstrapper_tests
+  open_lmm_plugin_schema_fixture_v2)
 
 add_executable(open_lmm_execution_spec_tests
   execution_spec_tests.cpp
@@ -240,7 +313,8 @@ add_test(NAME open_lmm_plugin_abi_tests COMMAND open_lmm_plugin_abi_tests
   ${_open_lmm_built_in_plugin_test_arguments})
 
 foreach(mode IN ITEMS valid wrong_major short_descriptor partial_open malformed_result
-                      newer_minor missing_close null_handle unsupported_minor)
+                      newer_minor missing_close null_handle unsupported_minor
+                      older_minor)
   # modes are C-only ABI fixtures; keep each DSO independently addressable.
   add_library(open_lmm_plugin_fixture_v2_${mode} MODULE plugin_fixture_v2.c)
   target_link_libraries(open_lmm_plugin_fixture_v2_${mode} PRIVATE
@@ -262,6 +336,21 @@ target_compile_definitions(open_lmm_plugin_fixture_v2_null_handle PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=7)
 target_compile_definitions(open_lmm_plugin_fixture_v2_unsupported_minor PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=8)
+target_compile_definitions(open_lmm_plugin_fixture_v2_older_minor PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=9)
+
+add_library(open_lmm_descriptor_v2_newer_minor_fixture MODULE
+  descriptor_v2_newer_minor_fixture.c)
+target_link_libraries(open_lmm_descriptor_v2_newer_minor_fixture PRIVATE
+  open_lmm_plugin_sdk)
+add_library(open_lmm_descriptor_v2_malformed_missing_cap_fixture MODULE
+  descriptor_v2_newer_minor_fixture.c)
+target_compile_definitions(
+  open_lmm_descriptor_v2_malformed_missing_cap_fixture PRIVATE
+  OPEN_LMM_DESCRIPTOR_V2_FIXTURE_MALFORMED=1)
+target_link_libraries(
+  open_lmm_descriptor_v2_malformed_missing_cap_fixture PRIVATE
+  open_lmm_plugin_sdk)
 
 add_executable(open_lmm_plugin_abi_v2_tests plugin_abi_v2_tests.cpp)
 target_link_libraries(open_lmm_plugin_abi_v2_tests PRIVATE open_lmm_contracts)
@@ -275,7 +364,41 @@ add_test(NAME open_lmm_plugin_abi_v2_tests COMMAND open_lmm_plugin_abi_v2_tests
   $<TARGET_FILE:open_lmm_plugin_fixture_v2_newer_minor>
   $<TARGET_FILE:open_lmm_plugin_fixture_v2_missing_close>
   $<TARGET_FILE:open_lmm_plugin_fixture_v2_null_handle>
-  $<TARGET_FILE:open_lmm_plugin_fixture_v2_unsupported_minor>)
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_unsupported_minor>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_older_minor>)
+
+add_library(open_lmm_remover_fixture_v2 MODULE remover_fixture_v2.c)
+set_target_properties(open_lmm_remover_fixture_v2 PROPERTIES
+  OUTPUT_NAME create_remover_fixture_v2)
+set_source_files_properties(remover_fixture_v2.c PROPERTIES LANGUAGE CXX)
+target_link_libraries(open_lmm_remover_fixture_v2 PRIVATE open_lmm_plugin_sdk)
+add_library(open_lmm_remover_bad_ops_fixture_v2 MODULE remover_fixture_v2.c)
+set_source_files_properties(remover_fixture_v2.c PROPERTIES LANGUAGE CXX)
+target_compile_definitions(open_lmm_remover_bad_ops_fixture_v2 PRIVATE
+  OPEN_LMM_REMOVER_FIXTURE_BAD_OPS=1)
+target_link_libraries(open_lmm_remover_bad_ops_fixture_v2 PRIVATE
+  open_lmm_plugin_sdk)
+add_executable(open_lmm_dynamic_remover_v2_tests dynamic_remover_v2_tests.cpp)
+target_link_libraries(open_lmm_dynamic_remover_v2_tests PRIVATE
+  open_lmm_dynamic_remover open_lmm_map_server ${CMAKE_DL_LIBS})
+add_dependencies(open_lmm_dynamic_remover_v2_tests
+  open_lmm_remover_fixture_v2 open_lmm_remover_bad_ops_fixture_v2
+  create_otd create_free_dom)
+openlmm_set_global_target_properties(open_lmm_dynamic_remover_v2_tests)
+add_test(NAME open_lmm_dynamic_remover_v2_tests
+  COMMAND open_lmm_dynamic_remover_v2_tests
+    $<TARGET_FILE:open_lmm_remover_fixture_v2>
+    $<TARGET_FILE:create_otd>
+    $<TARGET_FILE:create_free_dom>
+    $<TARGET_FILE:open_lmm_remover_bad_ops_fixture_v2>)
+
+add_executable(open_lmm_plugin_schema_registry_tests
+  plugin_schema_registry_tests.cpp)
+target_link_libraries(open_lmm_plugin_schema_registry_tests PRIVATE
+  open_lmm_contracts open_lmm_utils)
+openlmm_set_global_target_properties(open_lmm_plugin_schema_registry_tests)
+add_test(NAME open_lmm_plugin_schema_registry_tests
+  COMMAND open_lmm_plugin_schema_registry_tests)
 
 find_program(OPEN_LMM_TEST_GCC NAMES gcc-13 gcc-12 gcc)
 find_program(OPEN_LMM_TEST_GXX NAMES g++-13 g++-12 g++)
@@ -342,6 +465,7 @@ endif()
 # A sourced, older install prefix may appear in LD_LIBRARY_PATH ahead of the
 # build-tree RUNPATH. Unit tests must exercise the libraries just compiled.
 set(_open_lmm_build_library_path
+  "$<TARGET_FILE_DIR:open_lmm_plugin_schema_fixture_v2>:"
   "$<TARGET_FILE_DIR:open_lmm_batch>:"
   "$<TARGET_FILE_DIR:open_lmm_map_server>:"
   "$<TARGET_FILE_DIR:open_lmm_data_loader>:"
@@ -353,6 +477,7 @@ set(_open_lmm_build_library_path
   "$<TARGET_FILE_DIR:open_lmm_contracts>:"
   "$<TARGET_FILE_DIR:open_lmm_client>:"
   "$<TARGET_FILE_DIR:open_lmm_common>:"
+  "$<TARGET_FILE_DIR:open_lmm_descriptor>:"
   "$<TARGET_FILE_DIR:open_lmm_utils>:")
 foreach(plugin_support_target IN ITEMS
     scan_context solid hmm_mos dufomap otd free_dom erasor)
@@ -372,6 +497,7 @@ set_tests_properties(
   open_lmm_runtime_service_tests
   open_lmm_bounded_executor_tests
   open_lmm_session_transaction_tests
+  open_lmm_session_bootstrapper_tests
   open_lmm_execution_spec_tests
   open_lmm_controller_concurrency_tests
   open_lmm_map_alignment_coordinator_tests
@@ -381,6 +507,10 @@ set_tests_properties(
   open_lmm_config_schema_tests
   open_lmm_plugin_abi_tests
   open_lmm_plugin_abi_v2_tests
+  open_lmm_plugin_schema_registry_tests
+  open_lmm_descriptor_v2_adapter_tests
+  open_lmm_dynamic_remover_v2_tests
+  open_lmm_descriptor_v2_adapter_tests
   open_lmm_plugin_selection_tests
   PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${_open_lmm_build_library_path}")
 if(TARGET open_lmm_self_contained_e2e_tests)

@@ -43,7 +43,7 @@ struct LoopDetectorConfig {
   bool kiss_use_quatro = false;
   float pose_nn_distance_threshold = 10.0F;
   std::string feedback_mode = "adaptive";
-  std::string headless_policy = "legacy_combined";
+  std::string headless_policy = "kiss_then_descriptor";
   int feedback_timeout_sec = 0;
   std::string plugin_config_json;
 };
@@ -66,6 +66,7 @@ enum class PluginThreadSafety : uint8_t {
 struct DynamicRemoverConfig {
   std::string type;
   std::string model;
+  std::string plugin_abi = "auto";
   std::string plugin_config_json;
   PluginThreadSafety thread_safety = PluginThreadSafety::kSingleThreadOnly;
   std::size_t internal_cpu_threads = 1;

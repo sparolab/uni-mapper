@@ -5,6 +5,7 @@ add_subdirectory(remover_factory)
 add_library(open_lmm_dynamic_remover SHARED)
 target_sources(open_lmm_dynamic_remover PRIVATE
   dynamic_remover_base.cpp
+  dynamic_remover_v2.cpp
   dynamic_remover_online.cpp
   dynamic_remover_offline.cpp
 )

@@ -1,9 +1,11 @@
 #include <open_lmm/server/bootstrap/algorithm_factory.hpp>
 #include <open_lmm/server/bootstrap/session_bootstrapper.hpp>
 #include <open_lmm/server/execution/algorithm_context.hpp>
+#include <open_lmm/server/transaction/session_reconfigurer.hpp>
 
 #include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -115,6 +117,12 @@ class TrackingFactory final : public AlgorithmFactory {
   Result<void> Preflight(const LoopDetectorConfig&,
                          const DynamicRemoverConfig&) const override {
     preflight_called = true;
+    return Result<void>::Ok();
+  }
+  Result<void> PreflightDescriptor(const LoopDetectorConfig&) const override {
+    return Result<void>::Ok();
+  }
+  Result<void> PreflightRemover(const DynamicRemoverConfig&) const override {
     return Result<void>::Ok();
   }
 
@@ -259,6 +267,98 @@ void TestBootstrapSnapshotAndCache() {
   fs::remove_all(root, ignored);
 }
 
+void TestExternalPluginSchemaBootstrapsWithoutCentralCatalogEntry() {
+  const fs::path root = TemporaryDirectory();
+  WriteFixture(root);
+  WriteJson(root / "config/core/loop.json",
+            {{"loop_detector", {{"loop_detector_type", "kdtree"},
+                                {"plugin_abi", "v2"},
+                                {"model", "external_fixture"},
+                                {"external_fixture", {{"tuning", 0.75}}}}},
+             {"database", {{"descriptor_vector_dim", 1}}}});
+  SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+  auto result = bootstrapper.Bootstrap(
+      {root / "config", root / "external_output",
+       std::make_shared<CancellationToken>()});
+  if (!result) std::cerr << result.GetError().Message() << '\n';
+  Check(result && result.Value().initial_state->config->schema_registry,
+        "external self-described plugin did not bootstrap");
+  bool found = false;
+  for (const auto& fragment :
+       result.Value().initial_state->config->schema_registry->Fragments(
+           ConfigDocumentKind::kLoopDetector)) {
+    found |= fragment.id == "descriptor.external_fixture.schema";
+  }
+  Check(found, "session-local registry omitted external plugin fragment");
+  bool global_found = false;
+  for (const auto& fragment : BuiltinConfigSchemaRegistry().Fragments(
+           ConfigDocumentKind::kLoopDetector)) {
+    global_found |= fragment.id == "descriptor.external_fixture.schema";
+  }
+  Check(!global_found, "external plugin mutated the builtin schema registry");
+  const auto base = result.Value().initial_state;
+  setenv("OPEN_LMM_SCHEMA_FIXTURE_QUERY_UNAVAILABLE", "1", 1);
+  auto unavailable = SessionReconfigurer(std::make_shared<TrackingFactory>())
+                         .Prepare(base, ConfigDomain::kDynamicRemover,
+                                  base->config->revision + 1);
+  unsetenv("OPEN_LMM_SCHEMA_FIXTURE_QUERY_UNAVAILABLE");
+  Check(unavailable &&
+            unavailable.Value().config->descriptor_plugin_schema ==
+                base->config->descriptor_plugin_schema,
+        "unrelated remover reconfigure queried an unavailable committed "
+        "descriptor plugin");
+  setenv("OPEN_LMM_SCHEMA_FIXTURE_MUTATED", "1", 1);
+  auto unrelated = SessionReconfigurer(std::make_shared<TrackingFactory>())
+                       .Prepare(base, ConfigDomain::kDynamicRemover,
+                                base->config->revision + 1);
+  unsetenv("OPEN_LMM_SCHEMA_FIXTURE_MUTATED");
+  Check(unrelated &&
+            unrelated.Value().config->descriptor_plugin_schema ==
+                base->config->descriptor_plugin_schema,
+        "unrelated remover reconfigure reopened or replaced the committed "
+        "descriptor schema");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
+}
+
+void TestPluginSchemaReconfigureIsTransactional() {
+  const fs::path root = TemporaryDirectory();
+  WriteFixture(root);
+  auto factory = std::make_shared<TrackingFactory>();
+  SessionBootstrapper bootstrapper(factory);
+  auto boot = bootstrapper.Bootstrap(
+      {root / "config", root / "reconfigure_output",
+       std::make_shared<CancellationToken>()});
+  Check(boot.IsOk(), "base session for plugin schema reconfigure did not bootstrap");
+  const auto base = boot.Value().initial_state;
+  const auto prior_registry = base->config->schema_registry;
+  WriteJson(root / "config/core/loop.json",
+            {{"loop_detector", {{"loop_detector_type", "kdtree"},
+                                {"plugin_abi", "v2"},
+                                {"model", "external_fixture"},
+                                {"external_fixture", {{"tuning", 0.5}}}}},
+             {"database", {{"descriptor_vector_dim", 1}}}});
+  auto changed = SessionReconfigurer(factory).Prepare(
+      base, ConfigDomain::kLoopDetector, base->config->revision + 1);
+  Check(changed && changed.Value().config->schema_registry != prior_registry &&
+            changed.Value().config->loop_detector->model == "external_fixture",
+        "plugin selector change did not build a candidate session registry");
+
+  WriteJson(root / "config/core/loop.json",
+            {{"loop_detector",
+              {{"loop_detector_type", "kdtree"}, {"plugin_abi", "v2"},
+               {"model", "external_fixture"}}},
+             {"database", {{"descriptor_vector_dim", 1}}}});
+  auto rejected = SessionReconfigurer(factory).Prepare(
+      base, ConfigDomain::kLoopDetector, base->config->revision + 1);
+  Check(!rejected && base->config->schema_registry == prior_registry &&
+            base->config->loop_detector->model == "scan_context" &&
+            base->config->revision == 1,
+        "failed plugin schema reconfigure mutated committed session state");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
+}
+
 void TestCancellationBeforeSideEffects() {
   const fs::path root = TemporaryDirectory();
   WriteFixture(root);
@@ -335,6 +435,8 @@ int main() {
   TestAlgorithmFactoryNormalizesFaults();
   TestAlgorithmContextUsesDocumentFingerprint();
   TestBootstrapSnapshotAndCache();
+  TestExternalPluginSchemaBootstrapsWithoutCentralCatalogEntry();
+  TestPluginSchemaReconfigureIsTransactional();
   TestCancellationBeforeSideEffects();
   TestInvalidInputsDoNotPublishManifest();
   TestManifestPreflightFailureCleansTemporaryFile();

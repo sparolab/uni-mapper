@@ -168,7 +168,13 @@ Result<LoopDetectorConfig> ParseLoopDetectorConfig(const Config& source) {
     config.feedback_mode = source.param<std::string>(
         "alignment", "feedback_mode", "adaptive");
     config.headless_policy = source.param<std::string>(
-        "alignment", "headless_policy", "legacy_combined");
+        "alignment", "headless_policy", "kiss_then_descriptor");
+    // legacy_combined previously mixed constraints derived from two different
+    // transforms. Keep the serialized value readable, but normalize it to the
+    // single-accepted-transform fallback policy at the typed boundary.
+    if (config.headless_policy == "legacy_combined") {
+      config.headless_policy = "kiss_then_descriptor";
+    }
     config.feedback_timeout_sec = source.param<int>(
         "alignment", "feedback_timeout_sec", 0);
     config.plugin_config_json = source.ToJson();
@@ -190,8 +196,7 @@ Result<LoopDetectorConfig> ParseLoopDetectorConfig(const Config& source) {
          config.feedback_mode != "automatic" &&
          config.feedback_mode != "interactive" &&
          config.feedback_mode != "always_manual") ||
-        (config.headless_policy != "legacy_combined" &&
-         config.headless_policy != "kiss_only" &&
+        (config.headless_policy != "kiss_only" &&
          config.headless_policy != "kiss_then_descriptor" &&
          config.headless_policy != "fail")) {
       throw std::invalid_argument("invalid KD-tree alignment parameters");
@@ -233,11 +238,15 @@ Result<DynamicRemoverConfig> ParseDynamicRemoverConfig(const Config& source) {
     config.type = source.param<std::string>(
         "dynamic_remover", "dynamic_remover_type", "");
     config.model = source.param<std::string>("dynamic_remover", "model", "");
+    config.plugin_abi = source.param<std::string>(
+        "dynamic_remover", "plugin_abi", "auto");
     const int internal_cpu_threads = config.model == "erasor"
         ? source.param<int>("dynamic_remover", "internal_cpu_threads", 1)
         : 1;
     config.plugin_config_json = source.ToJson();
     if ((config.type != "offline" && config.type != "online") ||
+        (config.plugin_abi != "auto" && config.plugin_abi != "v1" &&
+         config.plugin_abi != "v2") ||
         config.model.empty() || internal_cpu_threads <= 0) {
       throw std::invalid_argument(
           "type/model must be valid and internal_cpu_threads must be positive");

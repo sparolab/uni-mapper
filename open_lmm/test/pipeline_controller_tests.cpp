@@ -109,7 +109,8 @@ class FakeRunner final : public test::RuntimePortFixture {
         proposal.source_agent = Id("B");
         proposal.method = AlignmentMethod::kKissMatcher;
         proposal.target_T_source.translation().x() = 1;
-        return std::optional(proposal);
+        return Result<std::optional<MapAlignmentProposal>>::Ok(
+            std::optional<MapAlignmentProposal>(std::move(proposal)));
       };
       input.descriptor_proposer = [] {
         MapAlignmentProposal proposal;
@@ -117,7 +118,8 @@ class FakeRunner final : public test::RuntimePortFixture {
         proposal.source_agent = Id("B");
         proposal.method = AlignmentMethod::kDescriptor;
         proposal.target_T_source.translation().x() = 2;
-        return std::optional(proposal);
+        return Result<std::optional<MapAlignmentProposal>>::Ok(
+            std::optional<MapAlignmentProposal>(std::move(proposal)));
       };
       auto coordinated = MapAlignmentCoordinator().Align(input);
       if (!coordinated) {

@@ -19,7 +19,7 @@ int32_t OPEN_LMM_PLUGIN_CALL_V2 Cancelled(void* value) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 10) return Fail("expected nine fixture paths");
+  if (argc != 11) return Fail("expected ten fixture paths");
   void* valid_probe = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
   void* partial_probe = dlopen(argv[4], RTLD_NOW | RTLD_LOCAL);
   if (!valid_probe || !partial_probe) return Fail("fixture probe dlopen failed");
@@ -40,10 +40,30 @@ int main(int argc, char** argv) {
     if (!plugin || plugin.Value().Metadata().name != "c_echo_v2")
       return Fail("valid C plugin did not load");
     auto loaded = std::move(plugin).Value();
+    if (loaded.Metadata().plugin_id != "org.openlmm.fixture.echo" ||
+        loaded.Metadata().plugin_version != "1.0.0" ||
+        loaded.Metadata().schema_id !=
+            "org.openlmm.fixture.echo.schema" ||
+        loaded.Metadata().schema_fragment_json.empty() ||
+        loaded.Metadata().operations.size() != 7)
+      return Fail("minor-1 self-description metadata was not copied");
+    if (loaded.Call({"undeclared", nullptr, 0}))
+      return Fail("undeclared operation was accepted");
     auto output = loaded.Call({"echo", input.data(), input.size()});
     if (!output ||
         std::string(output.Value().begin(), output.Value().end()) != input)
       return Fail("echo call failed");
+    bool call_cancelled = true;
+    open_lmm::PluginV2Call call_scoped_cancel{"echo", input.data(),
+                                               input.size()};
+    call_scoped_cancel.cancellation_context = &call_cancelled;
+    call_scoped_cancel.is_cancelled = &Cancelled;
+    auto cancelled_call = loaded.Call(call_scoped_cancel);
+    if (cancelled_call || cancelled_call.GetError().code !=
+                              open_lmm::Error::Code::kCancelled)
+      return Fail("call-scoped cancellation was not propagated");
+    if (!loaded.Call({"echo", input.data(), input.size()}))
+      return Fail("call-scoped cancellation leaked into the next call");
     const float points[2][4] = {{1.0F, 2.0F, 3.0F, 4.0F},
                                 {5.0F, 6.0F, 7.0F, 8.0F}};
     double poses[1][16]{};
@@ -134,6 +154,10 @@ int main(int argc, char** argv) {
     return Fail("successful open with null handle accepted");
   if (open_lmm::LoadPluginV2(argv[9], "fixture", "{}"))
     return Fail("unsupported minimum host minor accepted");
+  auto older_minor = open_lmm::LoadPluginV2(argv[10], "fixture", "{}");
+  if (!older_minor || older_minor.Value().Metadata().abi_minor != 0 ||
+      older_minor.Value().Metadata().plugin_id != "c_echo_v2")
+    return Fail("minimum readable minor-0 descriptor prefix was rejected");
   if (open_lmm::LoadPluginV2(argv[1], "fixture", "{}", UINT64_C(4)))
     return Fail("unsupported capability accepted");
   if (open_lmm::LoadPluginV2(argv[4], "fixture", "{}"))

@@ -1,6 +1,32 @@
 #include "map_alignment_coordinator.hpp"
 
+#include <exception>
+#include <string>
+
 namespace open_lmm {
+namespace {
+
+Result<std::optional<MapAlignmentProposal>> InvokeProposer(
+    const std::function<Result<std::optional<MapAlignmentProposal>>()>& proposer,
+    std::string_view name) {
+  if (!proposer) {
+    return Result<std::optional<MapAlignmentProposal>>::Ok(std::nullopt);
+  }
+  try {
+    return proposer();
+  } catch (const std::exception& error) {
+    return Result<std::optional<MapAlignmentProposal>>::Failure(
+        Error::RegistrationFailed(std::string(name) +
+                                  " proposer callback exception: " +
+                                  error.what()));
+  } catch (...) {
+    return Result<std::optional<MapAlignmentProposal>>::Failure(
+        Error::RegistrationFailed(std::string(name) +
+                                  " proposer callback exception"));
+  }
+}
+
+}  // namespace
 
 Result<AlignmentResponse> MapAlignmentCoordinator::Request(
     const MapAlignmentCoordinatorInput& input,
@@ -90,7 +116,7 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::ValidateOrRetryManual(
 
 Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
     const MapAlignmentCoordinatorInput& input) const {
-  if (input.feedback_mode == "always_manual") {
+  if (input.intent == InteractiveAlignmentIntent::kManualOnly) {
     auto manual = ManualProposal(input, Eigen::Isometry3d::Identity());
     auto response = Request(input, manual);
     if (!response) {
@@ -107,26 +133,29 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
       return Result<MapAlignmentProposal>::Failure(response.GetError());
     }
     if (response.Value().decision == AlignmentDecision::kTryKissMatcher) {
-      const auto kiss = input.kiss_proposer ? input.kiss_proposer()
-                                            : std::nullopt;
+      auto kiss = InvokeProposer(input.kiss_proposer, "KISS Matcher");
       if (!kiss) {
+        return Result<MapAlignmentProposal>::Failure(kiss.GetError());
+      }
+      if (!kiss.Value()) {
         return Result<MapAlignmentProposal>::Failure(
             Error::RegistrationFailed(
                 "KISS Matcher did not produce an alignment"));
       }
-      proposal = *kiss;
+      proposal = *kiss.Value();
       continue;
     }
     if (response.Value().decision == AlignmentDecision::kTryDescriptor) {
-      const auto descriptor = input.descriptor_proposer
-                                  ? input.descriptor_proposer()
-                                  : std::nullopt;
+      auto descriptor = InvokeProposer(input.descriptor_proposer, "Descriptor");
       if (!descriptor) {
+        return Result<MapAlignmentProposal>::Failure(descriptor.GetError());
+      }
+      if (!descriptor.Value()) {
         return Result<MapAlignmentProposal>::Failure(
             Error::RegistrationFailed(
                 "Descriptor did not produce an alignment"));
       }
-      proposal = *descriptor;
+      proposal = *descriptor.Value();
       continue;
     }
     return ValidateOrRetryManual(

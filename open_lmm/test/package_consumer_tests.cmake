@@ -82,6 +82,7 @@ set(versioned_runtime_libraries
   open_lmm_algorithm_config
   open_lmm_utils
   open_lmm_data_loader
+  open_lmm_descriptor
   open_lmm_loop_detector
   open_lmm_backend_optimizer
   open_lmm_dynamic_remover
@@ -106,6 +107,10 @@ foreach(library IN LISTS versioned_runtime_libraries)
       "runtime library has an unexpected SONAME: ${library_full}")
   endif()
 endforeach()
+
+if(NOT EXISTS "${install_prefix}/lib/libopen_lmm_alignment.a")
+  message(FATAL_ERROR "installed alignment development archive is missing")
+endif()
 
 foreach(plugin IN ITEMS create_scan_context create_free_dom)
   if(NOT EXISTS "${install_prefix}/lib/lib${plugin}.so.1.0.0")

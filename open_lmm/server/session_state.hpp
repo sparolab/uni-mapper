@@ -16,6 +16,9 @@
 
 namespace open_lmm {
 
+class SchemaRegistry;
+struct PluginV2Metadata;
+
 struct SessionRootConfig {
   std::vector<std::filesystem::path> data_directories;
   std::filesystem::path output_directory;
@@ -62,6 +65,13 @@ struct SessionConfig {
   std::string fingerprint;
   std::shared_ptr<const SessionConfigDocuments> documents;
   std::shared_ptr<const AlignmentArtifactMetadata> alignment_artifacts;
+  // Immutable per-session schema composition, including self-described
+  // external plugin fragments. Never aliases mutable global registry state.
+  std::shared_ptr<const SchemaRegistry> schema_registry;
+  // Committed self-description snapshots. Reconfiguration reuses the
+  // unchanged domain rather than reopening an unrelated DSO.
+  std::shared_ptr<const PluginV2Metadata> descriptor_plugin_schema;
+  std::shared_ptr<const PluginV2Metadata> remover_plugin_schema;
 };
 
 struct OptimizerStateMetadata {

@@ -13,6 +13,7 @@ SolidParams::SolidParams(const open_lmm::Config& config) {
   min_distance = config.param<int>("loop_detector", "min_distance", 3);
   max_distance = config.param<int>("loop_detector", "max_distance", 80);
   voxel_size = config.param<double>("loop_detector", "voxel_size", 0.4);
+  descriptor_vector_dim = num_range;
   if (fov_d >= fov_u || num_angle == 0 || num_range == 0 ||
       num_height == 0 || min_distance >= max_distance || voxel_size <= 0.0) {
     throw std::invalid_argument("SOLiD descriptor parameters are out of range");
@@ -22,6 +23,24 @@ SolidParams::SolidParams(const open_lmm::Config& config) {
 SOLiD::SOLiD(const SolidParams& params) : params_(params) {
   descriptor_ = Eigen::MatrixXd::Zero(params_.num_range + params_.num_angle, 1);
   r_solid_key_ = Eigen::VectorXd::Zero(params_.num_range);
+}
+
+std::shared_ptr<SOLiD> SOLiD::FromWire(const SolidParams& params,
+                                       Eigen::MatrixXd descriptor,
+                                       Eigen::VectorXd key) {
+  if (descriptor.rows() !=
+          static_cast<Eigen::Index>(params.num_range + params.num_angle) ||
+      descriptor.cols() != 1 ||
+      key.size() != static_cast<Eigen::Index>(params.num_range) ||
+      !descriptor.allFinite() || !key.allFinite()) {
+    throw std::invalid_argument("invalid SOLiD wire descriptor");
+  }
+  auto result = std::make_shared<SOLiD>(params);
+  result->descriptor_ = std::move(descriptor);
+  result->r_solid_key_ = std::move(key);
+  result->a_solid_key_ =
+      result->getASolidKeyFromDescriptor(result->descriptor_);
+  return result;
 }
 
 bool SolidParams::equals(const SolidParams& other) const {

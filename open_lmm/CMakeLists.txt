@@ -69,6 +69,8 @@ add_library(open_lmm_core INTERFACE)
 target_link_libraries(open_lmm_core INTERFACE
   open_lmm_algorithm_config
   open_lmm_data_loader
+  open_lmm_descriptor
+  open_lmm_alignment
   open_lmm_loop_detector
   open_lmm_backend_optimizer
   open_lmm_dynamic_remover
@@ -92,6 +94,8 @@ add_library(open_lmm::client ALIAS open_lmm_client)
 add_library(open_lmm::common ALIAS open_lmm_common)
 add_library(open_lmm::plugin_sdk ALIAS open_lmm_plugin_sdk)
 add_library(open_lmm::config ALIAS open_lmm_algorithm_config)
+add_library(open_lmm::descriptor ALIAS open_lmm_descriptor)
+add_library(open_lmm::alignment ALIAS open_lmm_alignment)
 add_library(open_lmm::core ALIAS open_lmm_core)
 add_library(open_lmm::runtime ALIAS open_lmm_map_server)
 add_library(open_lmm::gui ALIAS open_lmm_gui_core)
@@ -130,6 +134,8 @@ install(TARGETS
   open_lmm_algorithm_config
   open_lmm_utils
   open_lmm_data_loader
+  open_lmm_descriptor
+  open_lmm_alignment
   open_lmm_loop_detector
   open_lmm_backend_optimizer
   open_lmm_dynamic_remover

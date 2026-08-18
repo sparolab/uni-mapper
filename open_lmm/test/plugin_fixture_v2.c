@@ -39,6 +39,13 @@ static open_lmm_status_v2 status(open_lmm_status_code_v2 code,
   return result;
 }
 
+static open_lmm_operation_descriptor_v2 operation(const char* name) {
+  open_lmm_operation_descriptor_v2 result =
+      V2_INIT(open_lmm_operation_descriptor_v2);
+  result.operation = text(name);
+  return result;
+}
+
 open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_query_v2(
     open_lmm_plugin_descriptor_v2* descriptor) {
   if (!descriptor) return status(OPEN_LMM_STATUS_INVALID_ARGUMENT_V2, "descriptor");
@@ -46,6 +53,10 @@ open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_query_v2(
   descriptor->abi_major = 99;
 #elif OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 2
   descriptor->struct_size = 4;
+#elif OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 9
+  descriptor->struct_size = OPEN_LMM_PLUGIN_DESCRIPTOR_V2_MINOR_0_SIZE;
+  descriptor->abi_major = OPEN_LMM_PLUGIN_ABI_V2_MAJOR;
+  descriptor->abi_minor = 0;
 #else
   descriptor->struct_size = sizeof(*descriptor);
   descriptor->abi_major = OPEN_LMM_PLUGIN_ABI_V2_MAJOR;
@@ -59,9 +70,42 @@ open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_query_v2(
   descriptor->capability = text("echo,cancel");
   descriptor->capability_bits = OPEN_LMM_CAPABILITY_POINT_VIEW_V2 |
                                 OPEN_LMM_CAPABILITY_POSE_VIEW_V2;
+#if OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 0 || \
+    OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 5
+  descriptor->capability_bits |= OPEN_LMM_CAPABILITY_SCHEMA_FRAGMENT_V2;
+#endif
   descriptor->minimum_host_minor = 0;
 #if OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 8
-  descriptor->minimum_host_minor = 1;
+  descriptor->minimum_host_minor = OPEN_LMM_PLUGIN_ABI_V2_MINOR + 1;
+#endif
+#if OPEN_LMM_PLUGIN_FIXTURE_V2_MODE != 9
+  static open_lmm_operation_descriptor_v2 operations[7];
+  operations[0] = operation("echo");
+  operations[1] = operation("views");
+  operations[2] = operation("point");
+  operations[3] = operation("pose");
+  operations[4] = operation("chunks");
+  operations[5] = operation("slow");
+  operations[6] = operation(OPEN_LMM_PLUGIN_SCHEMA_OPERATION_V2);
+  operations[6].required_capability_bits =
+      OPEN_LMM_CAPABILITY_SCHEMA_FRAGMENT_V2;
+  descriptor->plugin_id = text("org.openlmm.fixture.echo");
+  descriptor->plugin_version = text("1.0.0");
+  descriptor->operations = operations;
+#if OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 0 || \
+    OPEN_LMM_PLUGIN_FIXTURE_V2_MODE == 5
+  descriptor->operation_count = 7;
+  descriptor->schema_id = text("org.openlmm.fixture.echo.schema");
+  descriptor->schema_version = 1;
+#else
+  descriptor->operation_count = 6;
+  descriptor->schema_id = text("");
+  descriptor->schema_version = 0;
+#endif
+  descriptor->thread_safety = OPEN_LMM_THREAD_SAFETY_HANDLE_SERIALIZED_V2;
+  descriptor->cancellation = OPEN_LMM_CANCELLATION_COOPERATIVE_V2;
+  descriptor->artifact_formats = NULL;
+  descriptor->artifact_format_count = 0;
 #endif
   return status(OPEN_LMM_STATUS_OK_V2, "");
 }
@@ -105,7 +149,21 @@ open_lmm_status_v2 OPEN_LMM_PLUGIN_CALL_V2 open_lmm_plugin_call_v2(
   chunk.data = NULL;
   chunk.size = 1;
 #else
-  if (call->operation.size == 6 && call->operation.data &&
+  if (call->operation.size ==
+          sizeof(OPEN_LMM_PLUGIN_SCHEMA_OPERATION_V2) - 1 &&
+      call->operation.data &&
+      memcmp(call->operation.data, OPEN_LMM_PLUGIN_SCHEMA_OPERATION_V2,
+             sizeof(OPEN_LMM_PLUGIN_SCHEMA_OPERATION_V2) - 1) == 0) {
+    static const char schema[] =
+        "{\"id\":\"org.openlmm.fixture.echo.schema\",\"version\":1,"
+        "\"document_kind\":\"loop_detector\","
+        "\"selector\":{\"pointer\":\"/loop_detector/model\","
+        "\"equals\":\"external_fixture\"},"
+        "\"fields\":[{\"pointer\":\"/external_fixture/gain\","
+        "\"type\":\"number\",\"required\":false,\"default\":1.0}]}";
+    chunk.data = schema;
+    chunk.size = sizeof(schema) - 1;
+  } else if (call->operation.size == 6 && call->operation.data &&
       memcmp(call->operation.data, "chunks", 6) == 0) {
     static const char repeated[] = "four";
     chunk.data = repeated;

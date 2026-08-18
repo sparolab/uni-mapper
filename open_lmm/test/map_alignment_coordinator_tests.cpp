@@ -30,6 +30,16 @@ MapAlignmentProposal Proposal(AlignmentMethod method, double x) {
   return proposal;
 }
 
+Result<std::optional<MapAlignmentProposal>> Proposed(
+    std::optional<MapAlignmentProposal> proposal) {
+  return Result<std::optional<MapAlignmentProposal>>::Ok(std::move(proposal));
+}
+
+Result<std::optional<MapAlignmentProposal>> Proposed(
+    MapAlignmentProposal proposal) {
+  return Proposed(std::optional<MapAlignmentProposal>(std::move(proposal)));
+}
+
 AlignmentFeedbackSnapshot WaitForSnapshot(
     const std::shared_ptr<AlignmentFeedbackBroker>& broker) {
   for (int i = 0; i < 200; ++i) {
@@ -58,11 +68,11 @@ void TestKissAcceptDoesNotComputeDescriptor() {
   std::atomic<int> descriptor_calls{0};
   input.kiss_proposer = [&] {
     ++kiss_calls;
-    return std::optional(Proposal(AlignmentMethod::kKissMatcher, 1));
+    return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1));
   };
   input.descriptor_proposer = [&] {
     ++descriptor_calls;
-    return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
+    return Proposed(Proposal(AlignmentMethod::kDescriptor, 2));
   };
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
@@ -96,9 +106,9 @@ void TestDescriptorFallback() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
   input.descriptor_proposer = [] {
-    return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
+    return Proposed(Proposal(AlignmentMethod::kDescriptor, 2));
   };
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
@@ -127,9 +137,9 @@ void TestFullFallbackToManual() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
   input.descriptor_proposer = [] {
-    return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
+    return Proposed(Proposal(AlignmentMethod::kDescriptor, 2));
   };
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
@@ -173,13 +183,13 @@ void TestAlwaysManualAndRigidTransformValidation() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.feedback_mode = "always_manual";
+  input.intent = InteractiveAlignmentIntent::kManualOnly;
   std::atomic<int> kiss_calls{0};
   input.kiss_proposer = [&] {
     ++kiss_calls;
-    return std::optional(Proposal(AlignmentMethod::kKissMatcher, 3));
+    return Proposed(Proposal(AlignmentMethod::kKissMatcher, 3));
   };
-  input.descriptor_proposer = []() -> std::optional<MapAlignmentProposal> {
+  input.descriptor_proposer = []() -> Result<std::optional<MapAlignmentProposal>> {
     std::abort();
   };
   Result<MapAlignmentProposal> result =
@@ -213,19 +223,45 @@ void TestTimeout() {
   broker->SetEnabled(true);
   auto input = Input(broker);
   input.feedback_timeout = std::chrono::milliseconds(5);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
   const auto result = MapAlignmentCoordinator().Align(input);
   Check(!result && result.GetError().code == Error::Code::kInvalidArgument,
         "feedback timeout reported");
   Check(!broker->Snapshot(), "timed-out request cleared");
 }
 
+void TestProposerFailurePreservesStructuredError() {
+  auto broker = std::make_shared<AlignmentFeedbackBroker>();
+  broker->SetEnabled(true);
+  auto input = Input(broker);
+  input.kiss_proposer = [] {
+    return Result<std::optional<MapAlignmentProposal>>::Failure(
+        Error::Cancelled("KISS stopped by caller")
+            .WithExecution("alignment", "kiss", Id("B")));
+  };
+  Result<MapAlignmentProposal> result =
+      Result<MapAlignmentProposal>::Failure(Error::InvalidArgument("not run"));
+  std::thread worker([&] { result = MapAlignmentCoordinator().Align(input); });
+  const auto snapshot = WaitForSnapshot(broker);
+  Check(static_cast<bool>(broker->Respond(
+            {snapshot.proposal.request_id,
+             AlignmentDecision::kTryKissMatcher, std::nullopt})),
+        "request failing KISS proposal");
+  worker.join();
+  Check(!result && result.GetError().code == Error::Code::kCancelled,
+        "proposer error code is preserved");
+  Check(result.GetError().context.stage == "alignment" &&
+            result.GetError().context.node == "kiss" &&
+            result.GetError().context.agent == Id("B"),
+        "proposer structured context is preserved");
+}
+
 void TestManualValidationRetries() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
-  input.descriptor_proposer = [] { return std::optional<MapAlignmentProposal>{}; };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
+  input.descriptor_proposer = [] { return Proposed(std::nullopt); };
   std::atomic<int> validation_calls{0};
   input.proposal_validator = [&](const MapAlignmentProposal&) {
     if (++validation_calls == 1) {
@@ -346,6 +382,7 @@ int main() {
   TestFullFallbackToManual();
   TestAlwaysManualAndRigidTransformValidation();
   TestTimeout();
+  TestProposerFailurePreservesStructuredError();
   TestManualValidationRetries();
   TestDescriptorConsensusRejectsOutlier();
   TestMapRefinementAndQualityMetrics();

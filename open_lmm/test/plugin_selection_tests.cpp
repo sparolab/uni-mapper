@@ -53,6 +53,19 @@ int main(int argc, char** argv) {
                          open_lmm::PluginThreadSafety::kSingleThreadOnly,
         "unverified remover defaults to single-thread-only capability");
 
+  auto default_policy = open_lmm::ParseLoopDetectorConfig(
+      open_lmm::Config::FromJson(
+          R"({"loop_detector":{"loop_detector_type":"kdtree","model":"external_descriptor"}})"));
+  Check(default_policy &&
+            default_policy.Value().headless_policy == "kiss_then_descriptor",
+        "headless alignment defaults to one accepted fallback transform");
+  auto legacy_policy = open_lmm::ParseLoopDetectorConfig(
+      open_lmm::Config::FromJson(
+          R"({"loop_detector":{"loop_detector_type":"kdtree","model":"external_descriptor"},"alignment":{"headless_policy":"legacy_combined"}})"));
+  Check(legacy_policy &&
+            legacy_policy.Value().headless_policy == "kiss_then_descriptor",
+        "legacy_combined is a deprecated kiss_then_descriptor alias");
+
   for (int index = 1; index < argc; ++index) {
     const std::string selection = argv[index];
     const auto separator = selection.find(':');

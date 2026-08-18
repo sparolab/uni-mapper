@@ -3,7 +3,7 @@ project(open_lmm_package_consumer LANGUAGES C CXX)
 
 find_package(open_lmm 1.0 CONFIG REQUIRED)
 
-foreach(expected_target contracts client plugin_sdk common config core runtime gui utils)
+foreach(expected_target contracts client plugin_sdk common config descriptor alignment core runtime gui utils)
   if(NOT TARGET open_lmm::${expected_target})
     message(FATAL_ERROR
       "Installed package does not export open_lmm::${expected_target}")
@@ -13,6 +13,8 @@ endforeach()
 add_executable(open_lmm_package_consumer main.cpp)
 target_compile_features(open_lmm_package_consumer PRIVATE cxx_std_20)
 target_link_libraries(open_lmm_package_consumer PRIVATE
+  open_lmm::descriptor
+  open_lmm::alignment
   open_lmm::runtime
   open_lmm::gui
 )

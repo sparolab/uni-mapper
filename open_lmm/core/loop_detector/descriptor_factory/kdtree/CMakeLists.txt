@@ -14,5 +14,6 @@ target_link_libraries(descriptor_kdtree PRIVATE
   Eigen3::Eigen
   PCL::PCL
   nanoflann::nanoflann
+  open_lmm_descriptor
 )
 openlmm_set_global_target_properties(descriptor_kdtree)

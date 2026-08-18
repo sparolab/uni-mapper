@@ -1,5 +1,10 @@
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/common/agent_id.hpp>
+#include <open_lmm/core/alignment/alignment_decision_policy.hpp>
+#include <open_lmm/core/alignment/alignment_proposer.hpp>
+#include <open_lmm/core/alignment/loop_constraint_builder.hpp>
+#include <open_lmm/core/descriptor/descriptor_artifact.hpp>
+#include <open_lmm/core/descriptor/descriptor_engine.hpp>
 #include <open_lmm/server/stage_ports.hpp>
 #include <open_lmm/server/runtime_service.hpp>
 #include <open_lmm/utils/config_schema.hpp>
@@ -9,6 +14,10 @@
 int main() {
   static_assert(std::is_abstract_v<open_lmm::StageCommandPort>);
   static_assert(std::is_abstract_v<open_lmm::SessionQueryPort>);
+  static_assert(std::is_abstract_v<open_lmm::DescriptorEngine>);
+  static_assert(std::is_class_v<open_lmm::AlignmentDecisionPolicy>);
+  static_assert(std::is_class_v<open_lmm::AlignmentProposer>);
+  static_assert(std::is_class_v<open_lmm::LoopConstraintBuilder>);
   const auto root_schema = open_lmm::BuiltinConfigSchemaRegistry().Fragments(
       open_lmm::ConfigDocumentKind::kRoot);
   if (root_schema.empty()) return 2;

@@ -12,12 +12,38 @@
 
 namespace open_lmm {
 
+struct PluginOperationMetadata {
+  std::string operation;
+  uint64_t required_capability_bits = 0;
+};
+
+struct PluginArtifactFormatMetadata {
+  std::string format_id;
+  uint32_t format_version = 0;
+  uint64_t index_dimension = 0;
+};
+
 struct PluginV2Metadata {
   std::string kind;
   std::string name;
   std::string capability;
   uint64_t capability_bits = 0;
   uint16_t abi_minor = 0;
+  std::string plugin_id;
+  std::string plugin_version;
+  std::vector<PluginOperationMetadata> operations;
+  std::string schema_id;
+  uint32_t schema_version = 0;
+  open_lmm_thread_safety_v2 thread_safety =
+      OPEN_LMM_THREAD_SAFETY_HANDLE_SERIALIZED_V2;
+  open_lmm_cancellation_mode_v2 cancellation =
+      OPEN_LMM_CANCELLATION_NONE_V2;
+  std::vector<PluginArtifactFormatMetadata> artifact_formats;
+  std::string schema_fragment_json;
+  // Host-owned selector identity. The ABI query does not populate this field;
+  // config discovery binds it to the model that selected this plugin before a
+  // schema fragment can enter a session registry.
+  std::string selected_model;
 };
 
 struct PluginPointView {
@@ -36,6 +62,17 @@ struct PluginPoseView {
   open_lmm_endian_v2 endian = OPEN_LMM_ENDIAN_LITTLE_V2;
 };
 
+struct PluginIndexedPoseView {
+  PluginPoseView poses;
+  const uint64_t* frame_ids = nullptr;
+  uint64_t frame_count = 0;
+};
+
+struct PluginFramePointView {
+  uint64_t frame_id = 0;
+  PluginPointView points;
+};
+
 struct PluginV2ResultLimits {
   uint64_t maximum_result_bytes = 64U * 1024U * 1024U;
   uint64_t maximum_chunk_bytes = 8U * 1024U * 1024U;
@@ -48,7 +85,13 @@ struct PluginV2Call {
   uint64_t request_size = 0;
   std::optional<PluginPointView> points;
   std::optional<PluginPoseView> poses;
+  std::optional<PluginIndexedPoseView> indexed_poses;
+  std::optional<PluginFramePointView> frame_points;
   PluginV2ResultLimits result_limits;
+  // Optional call-scoped cancellation overrides the callback supplied at
+  // plugin load. The context is borrowed until Call returns.
+  void* cancellation_context = nullptr;
+  open_lmm_is_cancelled_fn_v2 is_cancelled = nullptr;
 };
 
 class PluginV2 {

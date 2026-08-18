@@ -34,6 +34,7 @@ target_sources(open_lmm_utils PRIVATE
   config_schema_catalog.cpp
   logging.cpp
   load_module.cpp
+  plugin_schema_registry.cpp
 )
 target_link_libraries(open_lmm_utils
  PUBLIC
