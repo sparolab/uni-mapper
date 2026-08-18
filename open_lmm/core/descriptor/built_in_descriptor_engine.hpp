@@ -9,9 +9,8 @@
 
 namespace open_lmm {
 
-// Wraps both ABI-v1 descriptor objects and the current ScanContext ABI-v2
-// adapter, which already presents IDescriptorKdtree. Artifacts retain the
-// descriptor object and therefore its plugin/library lifetime.
+// Wraps ABI-v1 descriptor objects. Artifacts retain the descriptor object and
+// therefore its plugin/library lifetime.
 class BuiltInDescriptorEngine final : public DescriptorEngine {
  public:
   static Result<std::shared_ptr<BuiltInDescriptorEngine>> Create(

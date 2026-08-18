@@ -9,7 +9,6 @@ common/config_transaction.hpp
 common/data_types.hpp
 common/descriptor_index.hpp
 common/plugin_api.h
-common/plugin_api_v2.h
 common/result.hpp
 common/runtime_contracts.hpp
 common/runtime_api.hpp

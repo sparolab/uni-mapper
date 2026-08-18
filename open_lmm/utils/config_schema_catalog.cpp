@@ -204,7 +204,6 @@ SchemaFragment LoopBaseSchema() {
       Object("/loop_detector"),
       Choice("/loop_detector/loop_detector_type", "kdtree", {"kdtree"},
              true),
-      Choice("/loop_detector/plugin_abi", "auto", {"auto", "v1", "v2"}),
       Text("/loop_detector/model", true, std::nullopt, true),
       Field("/database", SchemaValueType::kObject, false,
             nlohmann::json::object()),
@@ -233,7 +232,7 @@ SchemaFragment LoopBaseSchema() {
       UInt("/alignment/feedback_timeout_sec", 0, 0),
       ExtensionObject(),
   };
-  fragment.fields[20].value_migrations.push_back(
+  fragment.fields[19].value_migrations.push_back(
       {"legacy_combined", "kiss_then_descriptor", 1});
   return fragment;
 }
@@ -300,7 +299,6 @@ SchemaFragment RemoverBaseSchema() {
       Field("/dynamic_remover/dynamic_remover_type", SchemaValueType::kString,
             true, std::nullopt, Enum({"online", "offline"})),
       Text("/dynamic_remover/model", true, std::nullopt, true),
-      Choice("/dynamic_remover/plugin_abi", "auto", {"auto", "v1", "v2"}),
       ExtensionObject(),
   };
   return fragment;

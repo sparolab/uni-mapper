@@ -189,7 +189,6 @@ Result<LoopDetectorConfig> DecodeLoopDetectorConfig(
     const auto& alignment = root.at("alignment");
     LoopDetectorConfig config;
     config.type = loop.at("loop_detector_type").get<std::string>();
-    config.plugin_abi = loop.at("plugin_abi").get<std::string>();
     config.num_candidates = database.at("num_candidates").get<std::size_t>();
     config.distance_threshold = database.at("distance_threshold").get<double>();
     config.kdtree_rebuild_threshold =
@@ -259,7 +258,6 @@ Result<DynamicRemoverConfig> DecodeDynamicRemoverConfig(
     DynamicRemoverConfig config;
     config.type = data.at("dynamic_remover_type").get<std::string>();
     config.model = data.at("model").get<std::string>();
-    config.plugin_abi = data.at("plugin_abi").get<std::string>();
     const int internal_cpu_threads = config.model == "erasor"
         ? CheckedInt(data.at("internal_cpu_threads"),
                      "/dynamic_remover/internal_cpu_threads")

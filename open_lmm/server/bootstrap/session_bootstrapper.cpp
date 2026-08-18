@@ -3,15 +3,12 @@
 #include "algorithm_factory.hpp"
 
 #include <open_lmm/common/pointcloud_utils.hpp>
-#include <open_lmm/common/plugin_host_v2.hpp>
 #include <open_lmm/server/artifact_repository.hpp>
 #include <open_lmm/server/file_set_transaction.hpp>
 #include <open_lmm/utils/config.hpp>
 #include <open_lmm/utils/config_schema.hpp>
-#include <open_lmm/utils/plugin_schema_registry.hpp>
 
 #include <Eigen/Geometry>
-#include <dlfcn.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -58,100 +55,6 @@ Result<LoadedConfig> ValidateSnapshot(ConfigDocumentKind kind,
   const std::string canonical = validated_document.CanonicalJson();
   return Result<LoadedConfig>::Ok(
       {{path, canonical}, std::move(validated_document)});
-}
-
-bool HasCompleteV2Symbols(const std::string& library) {
-  void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!handle) return false;
-  const bool complete = dlsym(handle, OPEN_LMM_PLUGIN_QUERY_SYMBOL_V2) &&
-                        dlsym(handle, OPEN_LMM_PLUGIN_OPEN_SYMBOL_V2) &&
-                        dlsym(handle, OPEN_LMM_PLUGIN_CALL_SYMBOL_V2) &&
-                        dlsym(handle, OPEN_LMM_PLUGIN_CLOSE_SYMBOL_V2);
-  dlclose(handle);
-  return complete;
-}
-
-Result<bool> AdvertisesSchema(const std::string& library) {
-  void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!handle)
-    return Result<bool>::Failure(Error::PluginLoadFailed(
-        "failed to inspect ABI-v2 plugin metadata: " + library));
-  auto query = reinterpret_cast<open_lmm_plugin_query_fn_v2>(
-      dlsym(handle, OPEN_LMM_PLUGIN_QUERY_SYMBOL_V2));
-  if (!query) {
-    dlclose(handle);
-    return Result<bool>::Failure(Error::PluginLoadFailed(
-        "ABI-v2 query symbol disappeared: " + library));
-  }
-  open_lmm_plugin_descriptor_v2 descriptor{};
-  descriptor.struct_size = sizeof(descriptor);
-  descriptor.abi_major = OPEN_LMM_PLUGIN_ABI_V2_MAJOR;
-  descriptor.abi_minor = OPEN_LMM_PLUGIN_ABI_V2_MINOR;
-  open_lmm_status_v2 status{};
-  try {
-    status = query(&descriptor);
-  } catch (...) {
-    dlclose(handle);
-    return Result<bool>::Failure(
-        Error::PluginLoadFailed("ABI-v2 plugin query threw: " + library));
-  }
-  dlclose(handle);
-  const uint32_t minimum = descriptor.abi_minor == 0
-      ? OPEN_LMM_PLUGIN_DESCRIPTOR_V2_MINOR_0_SIZE
-      : OPEN_LMM_PLUGIN_DESCRIPTOR_V2_MINOR_1_SIZE;
-  if (status.struct_size < sizeof(status) ||
-      status.abi_major != OPEN_LMM_PLUGIN_ABI_V2_MAJOR ||
-      status.code > OPEN_LMM_STATUS_HOST_ERROR_V2 ||
-      status.message.struct_size < sizeof(status.message) ||
-      status.message.abi_major != OPEN_LMM_PLUGIN_ABI_V2_MAJOR ||
-      (status.message.size != 0 && !status.message.data) ||
-      status.message.size > 64U * 1024U ||
-      status.code != OPEN_LMM_STATUS_OK_V2 ||
-      descriptor.abi_major != OPEN_LMM_PLUGIN_ABI_V2_MAJOR ||
-      descriptor.struct_size < minimum ||
-      descriptor.minimum_host_minor > OPEN_LMM_PLUGIN_ABI_V2_MINOR) {
-    return Result<bool>::Failure(
-        Error::PluginLoadFailed("malformed ABI-v2 plugin metadata: " + library));
-  }
-  return Result<bool>::Ok(
-      (descriptor.capability_bits &
-       OPEN_LMM_CAPABILITY_SCHEMA_FRAGMENT_V2) != 0);
-}
-
-Result<std::optional<PluginV2Metadata>> DiscoverPluginSchema(
-    const Config& source, std::string_view section, std::string_view kind) {
-  const auto raw = nlohmann::json::parse(source.ToJson());
-  const auto found = raw.find(std::string(section));
-  const std::string model = found != raw.end() && found->is_object()
-                                ? found->value("model", std::string{})
-                                : std::string{};
-  const std::string abi = found != raw.end() && found->is_object()
-                              ? found->value("plugin_abi", std::string("auto"))
-                              : std::string("auto");
-  if (model.empty() || abi == "v1")
-    return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
-  const std::string library = "libcreate_" + model + ".so";
-  if (!HasCompleteV2Symbols(library)) {
-    if (abi == "v2") {
-      return Result<std::optional<PluginV2Metadata>>::Failure(
-          Error::PluginLoadFailed(
-              "explicit ABI-v2 plugin has incomplete symbols: " + library));
-    }
-    return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
-  }
-  auto schema = AdvertisesSchema(library);
-  if (!schema)
-    return Result<std::optional<PluginV2Metadata>>::Failure(schema.GetError());
-  if (!schema.Value())
-    return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
-  auto loaded = LoadPluginV2(library, kind, source.ToJson());
-  if (!loaded) {
-    return Result<std::optional<PluginV2Metadata>>::Failure(
-        loaded.GetError());
-  }
-  auto metadata = loaded.Value().Metadata();
-  metadata.selected_model = model;
-  return Result<std::optional<PluginV2Metadata>>::Ok(std::move(metadata));
 }
 
 void HashBytes(uint64_t& hash, const char* data, std::size_t size) {
@@ -479,30 +382,8 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
       return Result<SessionBootstrapResult>::Failure(loaded->GetError());
     }
   }
-  auto descriptor_metadata = DiscoverPluginSchema(
-      loop_source.Value(), "loop_detector", "descriptor");
-  auto remover_metadata = DiscoverPluginSchema(
-      remover_source.Value(), "dynamic_remover", "dynamic_remover");
-  if (!descriptor_metadata) {
-    return Result<SessionBootstrapResult>::Failure(
-        descriptor_metadata.GetError());
-  }
-  if (!remover_metadata) {
-    return Result<SessionBootstrapResult>::Failure(
-        remover_metadata.GetError());
-  }
-  std::vector<PluginV2Metadata> plugin_metadata;
-  if (descriptor_metadata.Value())
-    plugin_metadata.push_back(*descriptor_metadata.Value());
-  if (remover_metadata.Value())
-    plugin_metadata.push_back(*remover_metadata.Value());
-  auto registry_result = BuildSessionSchemaRegistry(plugin_metadata);
-  if (!registry_result) {
-    return Result<SessionBootstrapResult>::Failure(
-        registry_result.GetError());
-  }
   auto session_registry = std::make_shared<const SchemaRegistry>(
-      std::move(registry_result).Value());
+      BuiltinConfigSchemaRegistry());
 
   auto map_loaded =
       ValidateSnapshot(ConfigDocumentKind::kMapServer,
@@ -747,14 +628,6 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   config->documents = std::move(documents);
   config->alignment_artifacts = std::move(alignment);
   config->schema_registry = std::move(session_registry);
-  if (descriptor_metadata.Value()) {
-    config->descriptor_plugin_schema =
-        std::make_shared<const PluginV2Metadata>(*descriptor_metadata.Value());
-  }
-  if (remover_metadata.Value()) {
-    config->remover_plugin_schema =
-        std::make_shared<const PluginV2Metadata>(*remover_metadata.Value());
-  }
 
   ArtifactRepository initial_artifacts;
   initial_artifacts.Reset(ordered_agents);

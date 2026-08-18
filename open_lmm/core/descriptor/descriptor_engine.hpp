@@ -27,7 +27,6 @@ struct DescriptorIndexMetadata {
   std::string format_id;
   uint32_t format_version = 0;
   std::size_t index_dimension = 0;
-  std::string engine_identity;
 
   friend bool operator==(const DescriptorIndexMetadata&,
                          const DescriptorIndexMetadata&) = default;

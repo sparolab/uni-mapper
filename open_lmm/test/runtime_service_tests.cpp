@@ -124,7 +124,7 @@ void WriteDefaultRuntimeFixture(const fs::path& config_directory,
     std::ofstream loop(config_directory / "core/loop.json");
     loop << "{"
          << "\"loop_detector\":{\"loop_detector_type\":\"kdtree\","
-         << "\"plugin_abi\":\"auto\",\"model\":\"scan_context\"},"
+         << "\"model\":\"scan_context\"},"
          << "\"database\":{\"descriptor_vector_dim\":20,"
          << "\"distance_threshold\":0.15,\"num_candidates\":3,"
          << "\"rebuild_threshold\":50},"

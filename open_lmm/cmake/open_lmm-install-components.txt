@@ -7,7 +7,7 @@ Development
   Public headers, static archives and CMake package/export metadata.
 
 PluginSDK
-  Toolchain-neutral C ABI v2 header and exported CMake interface target.
+  Toolchain-compatible C ABI v1 header and exported CMake interface target.
 
 Plugins
   Runtime-loaded plugin entry libraries and their support shared libraries.

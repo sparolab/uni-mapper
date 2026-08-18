@@ -27,10 +27,6 @@ class DescriptorArtifact {
   [[nodiscard]] const std::vector<double>& index_key() const {
     return index_key_;
   }
-  [[nodiscard]] const std::shared_ptr<const DescriptorOpaquePayload>&
-  opaque_payload() const {
-    return opaque_payload_;
-  }
 
  private:
   DescriptorArtifact(std::string plugin_id, std::string format_id,

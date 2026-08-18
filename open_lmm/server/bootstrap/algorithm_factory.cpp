@@ -7,10 +7,8 @@
 #include <open_lmm/core/data_loader/data_loader_file.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_offline.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_online.hpp>
-#include <open_lmm/core/dynamic_remover/dynamic_remover_v2.hpp>
 #include <open_lmm/core/loop_detector/loop_detector_base.hpp>
 #include <open_lmm/core/loop_detector/loop_detector_kdtree.hpp>
-#include <open_lmm/core/descriptor/generic_descriptor_v2_adapter.hpp>
 #include <open_lmm/core/descriptor/built_in_descriptor_engine.hpp>
 #include <open_lmm/utils/load_module.hpp>
 #include <open_lmm/utils/logging.hpp>
@@ -69,25 +67,11 @@ Result<void> AlgorithmFactory::PreflightDescriptor(
 
 Result<void> AlgorithmFactory::PreflightRemover(
     const DynamicRemoverConfig& remover) const {
-  const std::string library = "libcreate_" + remover.model + ".so";
-  const uint64_t mode_capability =
-      remover.type == "offline" ? OPEN_LMM_CAPABILITY_REMOVER_BATCH_V2
-      : remover.type == "online" ? OPEN_LMM_CAPABILITY_REMOVER_STREAMING_V2
-                                 : 0;
-  if (mode_capability != 0 && remover.plugin_abi != "v1") {
-    auto v2 = DynamicRemoverV2::TryLoad(
-        library, remover.plugin_config_json, mode_capability);
-    if (!v2) return Result<void>::Failure(v2.GetError());
-    if (v2.Value()) return Result<void>::Ok();
-    if (remover.plugin_abi == "v2") {
-      return Result<void>::Failure(Error::PluginLoadFailed(
-          "dynamic remover ABI-v2 symbols/capability are unavailable"));
-    }
-  }
   const std::string remover_kind = remover.type == "online"
                                        ? "dynamic_remover_online"
                                        : "dynamic_remover_offline";
-  auto remover_plugin = inspect_plugin_v1(library, remover_kind);
+  auto remover_plugin =
+      inspect_plugin_v1("libcreate_" + remover.model + ".so", remover_kind);
   if (!remover_plugin) {
     return Result<void>::Failure(remover_plugin.GetError());
   }
@@ -126,34 +110,6 @@ AlgorithmFactory::CreateLoopDetectorImpl(
                                "'. Supported: kdtree"));
   }
   const std::string library = "libcreate_" + config.model + ".so";
-  if (config.plugin_abi != "v1") {
-    auto availability = ProbeGenericDescriptorV2Plugin(library);
-    if (!availability) {
-      return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
-          availability.GetError());
-    }
-    if (availability.Value() == DescriptorV2Availability::kUnavailable) {
-      if (config.plugin_abi == "v2") {
-        return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
-            Error::PluginLoadFailed(
-                "descriptor plugin lacks required ABI-v2 symbols or capabilities"));
-      }
-      LogWarning(
-          "[plugin ABI] descriptor v2 unavailable; falling back to v1");
-    } else {
-      auto v2 = LoadGenericDescriptorV2Adapter(
-          library, config.plugin_config_json);
-      if (v2) {
-        LogInfo("[plugin ABI v2] descriptor:" + config.model);
-        return Result<std::unique_ptr<LoopDetectorBase>>::Ok(
-            std::make_unique<LoopDetectorKdtree>(
-                config, std::move(v2).Value()));
-      }
-      // A present/capable ABI-v2 plugin is authoritative. Malformed metadata,
-      // open failures, and runtime errors must never be hidden by ABI-v1.
-      return Result<std::unique_ptr<LoopDetectorBase>>::Failure(v2.GetError());
-    }
-  }
   auto module = LoopDetectorKdtree::loadModule(
       library, config.plugin_config_json);
   if (!module) {
@@ -191,31 +147,9 @@ AlgorithmFactory::CreateDynamicRemover(
 Result<std::shared_ptr<DynamicRemoverBase>>
 AlgorithmFactory::CreateDynamicRemoverImpl(
     const DynamicRemoverConfig& config) const {
-  const std::string library = "libcreate_" + config.model + ".so";
-  const uint64_t mode_capability =
-      config.type == "offline" ? OPEN_LMM_CAPABILITY_REMOVER_BATCH_V2
-      : config.type == "online" ? OPEN_LMM_CAPABILITY_REMOVER_STREAMING_V2
-                                : 0;
-  if (mode_capability != 0 && config.plugin_abi != "v1") {
-    auto v2 = DynamicRemoverV2::TryLoad(
-        library, config.plugin_config_json, mode_capability);
-    if (!v2) {
-      return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
-          v2.GetError());
-    }
-    if (v2.Value()) {
-      return Result<std::shared_ptr<DynamicRemoverBase>>::Ok(
-          std::move(*v2.Value()));
-    }
-    if (config.plugin_abi == "v2") {
-      return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
-          Error::PluginLoadFailed(
-              "dynamic remover ABI-v2 symbols/capability are unavailable"));
-    }
-  }
   if (config.type == "offline") {
     auto module = DynamicRemoverOffline::loadModule(
-        library, config.plugin_config_json);
+        "libcreate_" + config.model + ".so", config.plugin_config_json);
     if (!module) {
       return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
           module.GetError());
@@ -226,7 +160,7 @@ AlgorithmFactory::CreateDynamicRemoverImpl(
   }
   if (config.type == "online") {
     auto module = DynamicRemoverOnline::loadModule(
-        library, config.plugin_config_json);
+        "libcreate_" + config.model + ".so", config.plugin_config_json);
     if (!module) {
       return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
           module.GetError());

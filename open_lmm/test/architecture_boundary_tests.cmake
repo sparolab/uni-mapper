@@ -116,7 +116,7 @@ file(READ "${OPEN_LMM_SOURCE_DIR}/common/CMakeLists.txt" common_cmake)
 string(REGEX MATCH
   "add_library\\(open_lmm_contracts SHARED[^)]*\\)" contracts_sources
   "${common_cmake}")
-foreach(forbidden "plugin_host_v2.cpp" "CMAKE_DL_LIBS")
+foreach(forbidden "CMAKE_DL_LIBS")
   string(FIND "${contracts_sources}" "${forbidden}" found)
   if(NOT found EQUAL -1)
     message(FATAL_ERROR
@@ -134,7 +134,6 @@ file(READ
   "${OPEN_LMM_SOURCE_DIR}/test/package_consumer/public_header_allowlist.txt"
   public_header_allowlist)
 foreach(forbidden
-    "plugin_host_v2.hpp"
     "plugin_support.hpp"
     "stage_executor.hpp"
     "session_state.hpp"
@@ -207,7 +206,7 @@ if(found_session_id EQUAL -1)
 endif()
 foreach(lightweight_header IN ITEMS
     common/agent_id.hpp common/result.hpp common/runtime_contracts.hpp
-    common/plugin_api_v2.h common/plugin_host_v2.hpp server/runtime_client.hpp)
+    server/runtime_client.hpp)
   assert_file_excludes("${lightweight_header}"
     "Eigen/" "pcl/" "gtsam/" "rclcpp/" "open_lmm/core/")
 endforeach()

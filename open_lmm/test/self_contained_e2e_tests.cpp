@@ -149,8 +149,7 @@ void WriteAgent(const fs::path& root, const std::string& name) {
 
 void WriteConfiguration(const fs::path& config, const fs::path& data,
                         const fs::path& output,
-                        bool parallel_data_load = false,
-                        const std::string& plugin_abi = "v2") {
+                        bool parallel_data_load = false) {
   WriteJson(config / "config.json", {
       {"global", {
           {"config_map_server", "server/map_server.json"},
@@ -182,7 +181,6 @@ void WriteConfiguration(const fs::path& config, const fs::path& data,
                        {"delimiter", " "}}}});
   WriteJson(config / "core/loop_detector.json", {
       {"loop_detector", {{"loop_detector_type", "kdtree"},
-                         {"plugin_abi", plugin_abi},
                          {"model", "scan_context"},
                          {"num_ring", 20},
                          {"num_sector", 60},
@@ -430,22 +428,6 @@ int main() {
           "commit one revision per ordered replay node");
   Require(replayed.descriptor_count == snapshot.descriptor_count,
           "ordered replay does not append duplicate descriptors");
-
-  const fs::path v1_config = fixture.path() / "v1-config";
-  const fs::path v1_output = fixture.path() / "v1-output";
-  WriteConfiguration(v1_config, data, v1_output, false, "v1");
-  open_lmm::MapServer v1_server(Bootstrap(v1_config));
-  auto v1_completed = v1_server.process();
-  if (!v1_completed) std::cerr << v1_completed.GetError().Message() << '\n';
-  Require(v1_completed.IsOk(), "complete ABI-v1 descriptor baseline pipeline");
-  for (const char* agent : {"agent1", "agent2"}) {
-    const std::string filename =
-        "optimized_poses_" + std::string(agent) + ".txt";
-    RequireNear(ReadNumbers(FindNamedFile(output, filename)),
-                ReadNumbers(FindNamedFile(v1_output, filename)), 1e-3,
-                "ABI-v2 Scan Context preserves " + std::string(agent) +
-                    " pose baseline");
-  }
 
   const fs::path parallel_config = fixture.path() / "parallel-config";
   const fs::path parallel_output = fixture.path() / "parallel-output";

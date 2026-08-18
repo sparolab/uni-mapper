@@ -47,9 +47,6 @@ class SOLiD : public IDescriptorKdtree {
 
  public:
   SOLiD(const SolidParams& params);
-  static std::shared_ptr<SOLiD> FromWire(const SolidParams& params,
-                                         Eigen::MatrixXd descriptor,
-                                         Eigen::VectorXd key);
 
   std::shared_ptr<IDescriptorKdtree> makeDescriptor(
       const pcl::PointCloud<pcl::PointXYZI>::Ptr& lidar_scan) override;

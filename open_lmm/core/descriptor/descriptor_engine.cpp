@@ -35,7 +35,7 @@ BuiltInDescriptorEngine::BuiltInDescriptorEngine(
     std::shared_ptr<IDescriptorKdtree> prototype)
     : metadata_{std::move(plugin_id), std::move(format_id), format_version,
                 static_cast<std::size_t>(
-                    prototype->getDescriptorKey().size()), "abi-v1"},
+                    prototype->getDescriptorKey().size())},
       prototype_(std::move(prototype)) {}
 
 Result<std::shared_ptr<BuiltInDescriptorEngine>>

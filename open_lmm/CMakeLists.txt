@@ -63,6 +63,8 @@ target_include_directories(open_lmm_client PRIVATE
   "$<TARGET_PROPERTY:Eigen3::Eigen,INTERFACE_INCLUDE_DIRECTORIES>"
   "$<TARGET_PROPERTY:PCL::PCL,INTERFACE_INCLUDE_DIRECTORIES>"
   "$<TARGET_PROPERTY:gtsam,INTERFACE_INCLUDE_DIRECTORIES>")
+target_link_options(open_lmm_client INTERFACE
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_map_server>>")
 openlmm_set_global_target_properties(open_lmm_client)
 set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
 
@@ -159,14 +161,6 @@ install(TARGETS
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
 )
 
-# Runtime implementation detail: installed because public runtime libraries
-# have a DT_NEEDED edge, but deliberately absent from open_lmmTargets.cmake.
-install(TARGETS open_lmm_plugin_host
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
-)
-
 install(TARGETS open_lmm_batch
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Tools
 )
@@ -245,7 +239,7 @@ set(_open_lmm_owned_stale_headers
 list(REMOVE_ITEM _open_lmm_owned_stale_headers
   ${_open_lmm_public_headers}
   common/plugin_api.h
-  common/plugin_api_v2.h)
+  )
 list(REMOVE_DUPLICATES _open_lmm_owned_stale_headers)
 configure_file(
   "${PROJECT_SOURCE_DIR}/cmake/open_lmm-clean-stale-headers.cmake.in"
@@ -254,7 +248,7 @@ install(SCRIPT "${PROJECT_BINARY_DIR}/open_lmm-clean-stale-headers.cmake"
   COMPONENT Development)
 
 string(REPLACE ";" "\n" _open_lmm_public_header_manifest
-  "${_open_lmm_public_headers};common/plugin_api.h;common/plugin_api_v2.h")
+  "${_open_lmm_public_headers};common/plugin_api.h")
 file(WRITE "${PROJECT_BINARY_DIR}/open_lmm-public-headers.txt"
   "${_open_lmm_public_header_manifest}\n")
 install(FILES "${PROJECT_BINARY_DIR}/open_lmm-public-headers.txt"
@@ -262,13 +256,7 @@ install(FILES "${PROJECT_BINARY_DIR}/open_lmm-public-headers.txt"
   COMPONENT Development)
 install(FILES
   ${PROJECT_SOURCE_DIR}/common/plugin_api.h
-  ${PROJECT_SOURCE_DIR}/common/plugin_api_v2.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/common
-  COMPONENT PluginSDK)
-install(FILES
-  ${PROJECT_SOURCE_DIR}/test/plugin_example_v2.c
-  ${PROJECT_SOURCE_DIR}/test/plugin_fixture_v2.c
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/plugin_sdk
   COMPONENT PluginSDK)
 install(DIRECTORY ${nlohmann_json_SOURCE_DIR}/include/nlohmann
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}

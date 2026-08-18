@@ -155,19 +155,17 @@ void TestArtifactValidationAndOwnership() {
         "artifact destruction releases the retained plugin owner");
 }
 
-void TestV1V2WrapperAndCompare() {
-  for (const char* plugin : {"scan_context.v1", "scan_context.v2"}) {
-    auto state = std::make_shared<FakeState>();
-    auto engine = BuiltInDescriptorEngine::Create(
-        plugin, "scan_context", 1,
-        std::make_shared<FakeDescriptor>(state)).Value();
-    auto lhs = engine->Make(Context(), Points(1.0F));
-    auto rhs = engine->Make(Context(), Points(4.0F));
-    Check(lhs && rhs, "v1/v2 adapters produce the same artifact contract");
-    auto match = engine->Compare(Context(), lhs.Value(), rhs.Value());
-    Check(match && match.Value().score == 3.0,
-          "v1/v2 adapters use the same compare contract");
-  }
+void TestV1WrapperAndCompare() {
+  auto state = std::make_shared<FakeState>();
+  auto engine = BuiltInDescriptorEngine::Create(
+      "scan_context.v1", "scan_context", 1,
+      std::make_shared<FakeDescriptor>(state)).Value();
+  auto lhs = engine->Make(Context(), Points(1.0F));
+  auto rhs = engine->Make(Context(), Points(4.0F));
+  Check(lhs && rhs, "v1 adapter produces the artifact contract");
+  auto match = engine->Compare(Context(), lhs.Value(), rhs.Value());
+  Check(match && match.Value().score == 3.0,
+        "v1 adapter uses the descriptor compare contract");
 }
 
 void TestFailureBoundaries() {
@@ -223,7 +221,7 @@ void TestFailureBoundaries() {
 
 int main() {
   TestArtifactValidationAndOwnership();
-  TestV1V2WrapperAndCompare();
+  TestV1WrapperAndCompare();
   TestFailureBoundaries();
   std::cout << "Descriptor engine tests passed\n";
   return EXIT_SUCCESS;

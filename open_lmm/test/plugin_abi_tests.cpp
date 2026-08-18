@@ -2,7 +2,6 @@
 
 #include <open_lmm/common/descriptor_index.hpp>
 #include <open_lmm/common/plugin_api.h>
-#include <open_lmm/common/plugin_host_v2.hpp>
 #include <open_lmm/core/dynamic_remover/remover_factory/offline/interface_offline_plugin.hpp>
 #include <open_lmm/core/dynamic_remover/remover_factory/online/interface_online_plugin.hpp>
 #include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
@@ -148,24 +147,6 @@ int main(int argc, char** argv) {
     auto plugin = open_lmm::load_plugin_v1<IOfflineRemoverPlugin>(
         path->second, "dynamic_remover_offline", config);
     Check(plugin.IsOk(), "built-in offline remover must use ABI v1 loader");
-  }
-
-  if (auto path = built_ins.find("create_otd"); path != built_ins.end()) {
-    auto plugin = open_lmm::LoadPluginV2(
-        path->second, "dynamic_remover", "{}",
-        OPEN_LMM_CAPABILITY_POINT_VIEW_V2 |
-            OPEN_LMM_CAPABILITY_POSE_VIEW_V2 |
-            OPEN_LMM_CAPABILITY_REMOVER_STREAMING_V2);
-    Check(plugin.IsOk(), "OTD must expose the generic streaming remover ABI v2");
-  }
-  if (auto path = built_ins.find("create_free_dom");
-      path != built_ins.end()) {
-    auto plugin = open_lmm::LoadPluginV2(
-        path->second, "dynamic_remover", "{}",
-        OPEN_LMM_CAPABILITY_POINT_VIEW_V2 |
-            OPEN_LMM_CAPABILITY_POSE_VIEW_V2 |
-            OPEN_LMM_CAPABILITY_REMOVER_BATCH_V2);
-    Check(plugin.IsOk(), "FreeDom must expose the generic batch remover ABI v2");
   }
 
   std::cout << "plugin ABI tests passed\n";

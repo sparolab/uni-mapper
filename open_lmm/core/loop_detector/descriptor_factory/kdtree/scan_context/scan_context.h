@@ -56,9 +56,6 @@ class ScanContext : public IDescriptorKdtree {
   /// @brief Constructs an Empty ScanContext. See fromScan to construct from a
   /// lidar Scan.
   ScanContext(const ScanContextParams& params);
-  static std::shared_ptr<ScanContext> FromWire(
-      const ScanContextParams& params, Eigen::MatrixXd descriptor,
-      Eigen::VectorXd key);
 
   /** @brief Constructs a ScanContext descriptor from a lidar scan
    * @tparam Accessor - Class used to access the x, y, z data from points in the

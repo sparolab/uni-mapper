@@ -33,9 +33,6 @@ file(MAKE_DIRECTORY
   "${install_prefix}/include/open_lmm/core/loop_detector")
 file(WRITE "${install_prefix}/include/open_lmm/server/stage_executor.hpp"
   "// stale package-owned header\n")
-file(WRITE
-  "${install_prefix}/include/open_lmm/core/loop_detector/scan_context_v2_adapter.hpp"
-  "// deleted historical package-owned header\n")
 file(WRITE "${install_prefix}/include/open_lmm/user-owned.hpp"
   "// must survive package cleanup\n")
 
@@ -54,11 +51,6 @@ if(NOT EXISTS "${targets_file}")
 endif()
 if(EXISTS "${install_prefix}/include/open_lmm/server/stage_executor.hpp")
   message(FATAL_ERROR "upgrade left a stale package-owned public header")
-endif()
-if(EXISTS
-    "${install_prefix}/include/open_lmm/core/loop_detector/scan_context_v2_adapter.hpp")
-  message(FATAL_ERROR
-    "upgrade left a deleted historical package-owned public header")
 endif()
 if(NOT EXISTS "${install_prefix}/include/open_lmm/user-owned.hpp")
   message(FATAL_ERROR "upgrade cleanup removed an unknown user file")
@@ -118,7 +110,6 @@ endforeach()
 
 set(versioned_runtime_libraries
   open_lmm_contracts
-  open_lmm_plugin_host
   open_lmm_client
   open_lmm_common
   open_lmm_algorithm_config
@@ -172,12 +163,6 @@ file(READ "${targets_file}" targets_contents)
 string(FIND "${targets_contents}" "${OPEN_LMM_SOURCE_DIR}" source_reference)
 if(NOT source_reference EQUAL -1)
   message(FATAL_ERROR "installed targets retain a source-tree reference")
-endif()
-string(FIND "${targets_contents}" "open_lmm_plugin_host"
-  exported_plugin_host)
-if(NOT exported_plugin_host EQUAL -1)
-  message(FATAL_ERROR
-    "internal plugin host must not be part of the package target surface")
 endif()
 string(REGEX MATCHALL
   "add_library\\(open_lmm::[A-Za-z0-9_]+" exported_target_declarations

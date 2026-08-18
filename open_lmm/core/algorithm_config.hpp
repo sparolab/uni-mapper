@@ -29,7 +29,6 @@ struct DataLoaderConfig {
 
 struct LoopDetectorConfig {
   std::string type;
-  std::string plugin_abi = "auto";
   std::size_t num_candidates = 5;
   double distance_threshold = 0.13;
   std::size_t kdtree_rebuild_threshold = 50;
@@ -67,7 +66,6 @@ enum class PluginThreadSafety : uint8_t {
 struct DynamicRemoverConfig {
   std::string type;
   std::string model;
-  std::string plugin_abi = "auto";
   std::string plugin_config_json;
   PluginThreadSafety thread_safety = PluginThreadSafety::kSingleThreadOnly;
   std::size_t internal_cpu_threads = 1;

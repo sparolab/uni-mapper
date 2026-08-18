@@ -32,21 +32,6 @@ ScanContext::ScanContext(const ScanContextParams& params) : params_(params) {
   ring_key_ = Eigen::VectorXd::Zero(params_.number_rings);
 }
 
-std::shared_ptr<ScanContext> ScanContext::FromWire(
-    const ScanContextParams& params, Eigen::MatrixXd descriptor,
-    Eigen::VectorXd key) {
-  if (descriptor.rows() != static_cast<Eigen::Index>(params.number_rings) ||
-      descriptor.cols() != static_cast<Eigen::Index>(params.number_sectors) ||
-      key.size() != static_cast<Eigen::Index>(params.number_rings) ||
-      !descriptor.allFinite() || !key.allFinite()) {
-    throw std::invalid_argument("invalid Scan Context wire descriptor");
-  }
-  auto result = std::make_shared<ScanContext>(params);
-  result->descriptor_ = std::move(descriptor);
-  result->ring_key_ = std::move(key);
-  return result;
-}
-
 /*********************************************************************************************************************/
 const Eigen::MatrixXd& ScanContext::getDescriptor() const {
   return descriptor_;
