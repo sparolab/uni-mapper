@@ -218,12 +218,38 @@ openlmm_set_global_target_properties(open_lmm_map_alignment_coordinator_tests)
 add_test(NAME open_lmm_map_alignment_coordinator_tests
          COMMAND open_lmm_map_alignment_coordinator_tests)
 
+foreach(fixture IN ITEMS valid old_capability empty_capability null_capability)
+  add_library(open_lmm_gui_plugin_fixture_${fixture} MODULE
+    gui_plugin_fixture.cpp)
+  target_include_directories(open_lmm_gui_plugin_fixture_${fixture} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(open_lmm_gui_plugin_fixture_${fixture} PRIVATE
+    open_lmm_common)
+  openlmm_set_global_target_properties(open_lmm_gui_plugin_fixture_${fixture})
+endforeach()
+target_compile_definitions(open_lmm_gui_plugin_fixture_old_capability PRIVATE
+  OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=1)
+target_compile_definitions(open_lmm_gui_plugin_fixture_empty_capability PRIVATE
+  OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=2)
+target_compile_definitions(open_lmm_gui_plugin_fixture_null_capability PRIVATE
+  OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=3)
+
 add_executable(open_lmm_gui_plugin_tests gui_plugin_tests.cpp)
 target_link_libraries(open_lmm_gui_plugin_tests PRIVATE
   open_lmm_gui_core
+  open_lmm_utils
   nlohmann_json::nlohmann_json)
 openlmm_set_global_target_properties(open_lmm_gui_plugin_tests)
-add_test(NAME open_lmm_gui_plugin_tests COMMAND open_lmm_gui_plugin_tests)
+add_dependencies(open_lmm_gui_plugin_tests
+  open_lmm_gui_plugin_fixture_valid
+  open_lmm_gui_plugin_fixture_old_capability
+  open_lmm_gui_plugin_fixture_empty_capability
+  open_lmm_gui_plugin_fixture_null_capability)
+add_test(NAME open_lmm_gui_plugin_tests COMMAND open_lmm_gui_plugin_tests
+  $<TARGET_FILE:open_lmm_gui_plugin_fixture_valid>
+  $<TARGET_FILE:open_lmm_gui_plugin_fixture_old_capability>
+  $<TARGET_FILE:open_lmm_gui_plugin_fixture_empty_capability>
+  $<TARGET_FILE:open_lmm_gui_plugin_fixture_null_capability>)
 
 add_executable(open_lmm_profiling_macro_tests
   profiling_macro_tests.cpp

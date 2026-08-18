@@ -1177,7 +1177,7 @@ void DestroyGui(void* value) noexcept {
 }
 const OpenLmmPluginApiV1 kGuiApi{
     OPEN_LMM_PLUGIN_ABI_VERSION_V1, "gui", "iridescence",
-    &CreateGui, &DestroyGui, "gui:desktop", 1, "open-lmm-1.0"};
+    &CreateGui, &DestroyGui, "gui:services-v2", 1, "open-lmm-2.0"};
 }  // namespace
 
 extern "C" const OpenLmmPluginApiV1* open_lmm_plugin_entry() {

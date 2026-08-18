@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(open_lmm_contracts_only LANGUAGES CXX)
-find_package(open_lmm 1.0 CONFIG REQUIRED COMPONENTS contracts)
+find_package(open_lmm 2.0 CONFIG REQUIRED COMPONENTS contracts)
 add_executable(contracts_only ../contracts_main.cpp)
 target_compile_features(contracts_only PRIVATE cxx_std_20)
 target_link_libraries(contracts_only PRIVATE open_lmm::contracts)

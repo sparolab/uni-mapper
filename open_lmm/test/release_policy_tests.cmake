@@ -21,7 +21,7 @@ set(workflow
 
 assert_file_contains(
   "${core_dir}/CMakeLists.txt"
-  "project(open_lmm VERSION 1.0.0"
+  "project(open_lmm VERSION 2.0.0"
   "COMPATIBILITY SameMajorVersion"
   "COMPONENT Runtime"
   "COMPONENT Development"
@@ -29,7 +29,7 @@ assert_file_contains(
   "COMPONENT Tools")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/ros/CMakeLists.txt"
-  "project(open_lmm_ros VERSION 1.0.0"
+  "project(open_lmm_ros VERSION 2.0.0"
   "VERSION \${PROJECT_VERSION}"
   "SOVERSION \${PROJECT_VERSION_MAJOR}")
 assert_file_contains(
@@ -37,19 +37,29 @@ assert_file_contains(
   "openlmm_target_type STREQUAL \"SHARED_LIBRARY\""
   "VERSION \${PROJECT_VERSION}"
   "SOVERSION \${PROJECT_VERSION_MAJOR}")
+assert_file_contains(
+  "${core_dir}/gui/gui_plugin_host.cpp"
+  "gui:services-v2")
+assert_file_contains(
+  "${core_dir}/gui/iridescence_gui.cpp"
+  "gui:services-v2")
+assert_file_contains(
+  "${core_dir}/common/plugin_api.h"
+  "kind-specific capability contract")
 
 foreach(package_manifest IN ITEMS
     "${core_dir}/package.xml"
     "${OPEN_LMM_REPOSITORY_ROOT}/ros/package.xml")
   assert_file_contains(
     "${package_manifest}"
-    "<version>1.0.0</version>"
+    "<version>2.0.0</version>"
     "<license>GPL-3.0-only</license>")
 endforeach()
 
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/RELEASE_POLICY.md"
-  "SOVERSION=1"
+  "SOVERSION=2"
+  "gui:services-v2"
   "Runtime"
   "Development"
   "Plugins"
@@ -60,7 +70,7 @@ assert_file_contains(
   "open_lmm/thirdparty/<dependency>/LICENSE")
 assert_file_contains(
   "${core_dir}/cmake/open_lmm-install-components.txt"
-  "version 1.0.0"
+  "version 2.0.0"
   "Runtime"
   "Development"
   "Plugins"

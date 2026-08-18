@@ -1,9 +1,12 @@
+#include "plugin_fixture_interface.hpp"
+
 #include <open_lmm/gui/config_editor.hpp>
 #include <open_lmm/gui/gui_controller_bridge.hpp>
 #include <open_lmm/gui/gui_event_queue.hpp>
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/gui/gui_plugin_host.hpp>
 #include <open_lmm/gui/visualization_repository.hpp>
+#include <open_lmm/utils/load_module.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -73,6 +76,42 @@ void WriteRuntimeFixture(const fs::path& config, const fs::path& data,
       << R"({"backend_optimizer":{"backend_optimizer_type":"incremental","relinearizeThreshold":0.1,"relinearizeSkip":1,"isam_extra_updates":1,"min_loop_frame_gap":30,"icp_search_num":1}})";
   std::ofstream(config / "core/remover.json")
       << R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"free_dom"}})";
+}
+
+void TestGuiPluginCapabilityGate(int argc, char** argv) {
+  Require(argc == 5, "GUI plugin fixture paths are required");
+  PluginFixtureCounters counters;
+
+  auto valid = open_lmm::load_plugin_v1<open_lmm::GuiPlugin>(
+      argv[1], "gui", "{}", nullptr, &counters,
+      open_lmm::PluginContractExpectation{
+          .exact_capability = "gui:services-v2"});
+  Require(valid.IsOk() && counters.creates == 1,
+          "matching GUI services contract loads before create");
+  auto valid_plugin = std::move(valid).Value();
+  valid_plugin.reset();
+  Require(counters.destroys == 1,
+          "matching GUI services contract destroys normally");
+
+  for (int index = 2; index != argc; ++index) {
+    counters = {};
+    auto rejected = open_lmm::load_plugin_v1<open_lmm::GuiPlugin>(
+        argv[index], "gui", "{}", nullptr, &counters,
+        open_lmm::PluginContractExpectation{
+            .exact_capability = "gui:services-v2"});
+    Require(!rejected.IsOk() && counters.creates == 0,
+            "incompatible GUI capability is rejected before create");
+  }
+
+  auto host_rejected = open_lmm::GuiPluginHost::Load(argv[2]);
+  Require(!host_rejected.IsOk(),
+          "GUI host requires the GUI services capability contract");
+
+  auto inspected = open_lmm::inspect_plugin_v1(
+      argv[2], "gui", open_lmm::PluginContractExpectation{
+                          .exact_capability = "gui:services-v2"});
+  Require(!inspected.IsOk(),
+          "plugin preflight enforces the GUI services capability contract");
 }
 
 void TestGuiUtilities() {
@@ -178,7 +217,8 @@ void TestSessionFreeBridgeAndModelReplacement() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  TestGuiPluginCapabilityGate(argc, argv);
   TestGuiUtilities();
   TestSessionFreeBridgeAndModelReplacement();
   std::cout << "GUI plugin single-runtime tests passed\n";

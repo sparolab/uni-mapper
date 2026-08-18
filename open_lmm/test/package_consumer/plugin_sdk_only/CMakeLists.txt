@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
 project(open_lmm_plugin_sdk_only LANGUAGES C)
-find_package(open_lmm 1.0 CONFIG REQUIRED COMPONENTS plugin_sdk)
+find_package(open_lmm 2.0 CONFIG REQUIRED COMPONENTS plugin_sdk)
 add_executable(plugin_sdk_only ../plugin_sdk_main.c)
 target_link_libraries(plugin_sdk_only PRIVATE open_lmm::plugin_sdk)

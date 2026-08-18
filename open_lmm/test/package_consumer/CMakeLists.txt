@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(open_lmm_package_consumer LANGUAGES C CXX)
 
-find_package(open_lmm 1.0 CONFIG REQUIRED)
+find_package(open_lmm 2.0 CONFIG REQUIRED)
 
 foreach(expected_target contracts client plugin_sdk common config descriptor alignment core runtime gui utils)
   if(NOT TARGET open_lmm::${expected_target})

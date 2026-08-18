@@ -26,8 +26,10 @@ typedef struct OpenLmmPluginApiV1 {
   void* (*create)(const OpenLmmPluginConfigV1* config);
   void (*destroy)(void* instance);
 
-  // Capability metadata is descriptive in ABI v1. Compatibility is decided
-  // by abi_version and plugin_kind before create() is called.
+  // Capability metadata is descriptive in ABI v1 by default. A host may
+  // require one exact, kind-specific capability contract before create() is
+  // called when the C++ object exchanged through the plugin boundary has a
+  // stricter layout requirement (for example, GUI services).
   const char* capability;
   uint32_t config_schema_version;
   const char* build_version;

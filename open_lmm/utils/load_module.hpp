@@ -4,7 +4,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include <open_lmm/common/plugin_api.h>
 #include <open_lmm/common/result.hpp>
@@ -22,6 +24,13 @@ struct PluginMetadata {
   std::string capability;
   uint32_t config_schema_version = 0;
   std::string build_version;
+};
+
+// Most ABI-v1 plugin capabilities are descriptive metadata.  A host that
+// passes this expectation opts into an exact, kind-specific contract check
+// before the plugin's create function is ever invoked.
+struct PluginContractExpectation {
+  std::optional<std::string_view> exact_capability;
 };
 
 namespace detail {
@@ -46,7 +55,8 @@ inline std::string PluginString(const char* value) {
 // is used during session creation so an unavailable/incorrect plugin fails
 // before any stage starts.
 inline Result<PluginMetadata> inspect_plugin_v1(
-    const std::string& so_name, const std::string& expected_kind) {
+    const std::string& so_name, const std::string& expected_kind,
+    PluginContractExpectation expectation = {}) {
   LogWarning("[plugin ABI v1] same-toolchain compatibility mode: " + so_name);
   void* raw = dlopen(so_name.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!raw) {
@@ -91,9 +101,19 @@ inline Result<PluginMetadata> inspect_plugin_v1(
                                 actual_kind + "'")
             .WithPlugin(so_name));
   }
+  const std::string actual_capability = detail::PluginString(api->capability);
+  if (expectation.exact_capability &&
+      actual_capability != *expectation.exact_capability) {
+    return Result<PluginMetadata>::Failure(
+        Error::PluginLoadFailed("plugin capability mismatch in " + so_name +
+                                ": expected '" +
+                                std::string(*expectation.exact_capability) +
+                                "', got '" + actual_capability + "'")
+            .WithPlugin(so_name));
+  }
   return Result<PluginMetadata>::Ok(
       {api->abi_version, actual_kind, detail::PluginString(api->plugin_name),
-       detail::PluginString(api->capability), api->config_schema_version,
+       actual_capability, api->config_schema_version,
        detail::PluginString(api->build_version)});
 }
 
@@ -104,7 +124,7 @@ template <typename Module>
 Result<std::shared_ptr<Module>> load_plugin_v1(
     const std::string& so_name, const std::string& expected_kind,
     const std::string& config_json, PluginMetadata* metadata = nullptr,
-    void* host_context = nullptr) {
+    void* host_context = nullptr, PluginContractExpectation expectation = {}) {
   LogWarning("[plugin ABI v1] same-toolchain compatibility mode: " + so_name);
   void* raw = dlopen(so_name.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!raw) {
@@ -157,6 +177,16 @@ Result<std::shared_ptr<Module>> load_plugin_v1(
                                 actual_kind + "'")
             .WithPlugin(so_name));
   }
+  const std::string actual_capability = detail::PluginString(api->capability);
+  if (expectation.exact_capability &&
+      actual_capability != *expectation.exact_capability) {
+    return Result<std::shared_ptr<Module>>::Failure(
+        Error::PluginLoadFailed("plugin capability mismatch in " + so_name +
+                                ": expected '" +
+                                std::string(*expectation.exact_capability) +
+                                "', got '" + actual_capability + "'")
+            .WithPlugin(so_name));
+  }
   if (!api->plugin_name || !api->create || !api->destroy) {
     return Result<std::shared_ptr<Module>>::Failure(
         Error::PluginLoadFailed(
@@ -186,7 +216,7 @@ Result<std::shared_ptr<Module>> load_plugin_v1(
         api->abi_version,
         actual_kind,
         detail::PluginString(api->plugin_name),
-        detail::PluginString(api->capability),
+        actual_capability,
         api->config_schema_version,
         detail::PluginString(api->build_version)};
   }

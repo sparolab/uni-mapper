@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(open_lmm VERSION 1.0.0 LANGUAGES C CXX)
+project(open_lmm VERSION 2.0.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

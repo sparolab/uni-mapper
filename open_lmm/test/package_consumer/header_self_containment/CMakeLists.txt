@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(open_lmm_header_self_containment LANGUAGES C CXX)
 
-find_package(open_lmm 1.0 CONFIG REQUIRED)
+find_package(open_lmm 2.0 CONFIG REQUIRED)
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../public_header_allowlist.txt"
   public_headers)
 set(header_index 0)
