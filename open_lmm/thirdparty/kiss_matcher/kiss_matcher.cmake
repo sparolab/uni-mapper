@@ -25,6 +25,21 @@
 set(USE_SYSTEM_ROBIN OFF CACHE BOOL "Don't build lapack module")
 
 include(FetchContent)
+
+# KISS-Matcher 3rdparty declares ROBIN with a GitHub archive URL.  Clean
+# builds then go through codeload.github.com, whose unauthenticated archive
+# endpoint is frequently rate-limited.  FetchContent keeps the first
+# declaration for a dependency, so declare the same pinned release through
+# Git before adding KISS-Matcher.  This preserves FetchContent ownership while
+# avoiding the separate codeload endpoint.
+FetchContent_Declare(
+    robin
+    GIT_REPOSITORY https://github.com/MIT-SPARK/ROBIN.git
+    GIT_TAG        v.1.2.4
+    GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE
+)
+
 FetchContent_Declare(
     kiss_matcher
     GIT_REPOSITORY https://github.com/MIT-SPARK/KISS-Matcher.git
