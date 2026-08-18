@@ -360,7 +360,8 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
       return LoopConstraintBuilder().Build(
           context,
           {accepted, source, input.current, input.all_raw_data,
-           input.all_optimized, params_.pose_nn_distance_threshold, 10.0});
+           input.all_optimized, params_.pose_nn_distance_threshold,
+           params_.inter_loop_keyframe_spacing_m});
     };
 
     if (!context.agent.is_anchor() && !input.stored_alignment &&

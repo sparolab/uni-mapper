@@ -68,6 +68,7 @@ class IridescenceGui final : public GuiPlugin {
   float kiss_voxel_size_ = 2.0F;
   bool kiss_use_quatro_ = false;
   float pose_nn_distance_threshold_ = 10.0F;
+  float inter_loop_keyframe_spacing_m_ = 10.0F;
   int config_domain_ = 0;
   uint64_t config_revision_draft_ = 0;
   double last_gui_work_ms_ = 0.0;

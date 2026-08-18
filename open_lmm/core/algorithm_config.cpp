@@ -210,6 +210,9 @@ Result<LoopDetectorConfig> DecodeLoopDetectorConfig(
     config.pose_nn_distance_threshold = CheckedFloat(
         alignment.at("pose_nn_distance_threshold"),
         "/alignment/pose_nn_distance_threshold");
+    config.inter_loop_keyframe_spacing_m = CheckedFloat(
+        alignment.at("inter_loop_keyframe_spacing_m"),
+        "/alignment/inter_loop_keyframe_spacing_m");
     config.feedback_mode = alignment.at("feedback_mode").get<std::string>();
     config.headless_policy = alignment.at("headless_policy").get<std::string>();
     config.feedback_timeout_sec = CheckedInt(

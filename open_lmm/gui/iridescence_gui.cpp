@@ -912,6 +912,8 @@ void IridescenceGui::LoadAlignmentEditor() {
   kiss_use_quatro_ = alignment.Value().kiss_use_quatro;
   pose_nn_distance_threshold_ =
       static_cast<float>(alignment.Value().pose_nn_distance_threshold);
+  inter_loop_keyframe_spacing_m_ = static_cast<float>(
+      alignment.Value().inter_loop_keyframe_spacing_m);
 }
 
 Result<void> IridescenceGui::SaveAndApplyConfig() {
@@ -932,6 +934,30 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
   ConfigCandidate candidate;
   const auto config_directory =
       std::filesystem::path(services_.config_file_path).parent_path();
+  // Events are delivered asynchronously, so the model can briefly lag the
+  // controller after a completed command.  Reconfigure against an
+  // authoritative runtime snapshot instead of sending a stale revision.
+  const auto current_expected_revision = [&]() -> Result<ExpectedRevision> {
+    if (!services_.runtime_snapshot) {
+      if (!synchronized_session_) {
+        return Result<ExpectedRevision>::Failure(Error::InvalidArgument(
+            "configuration session is unavailable"));
+      }
+      return Result<ExpectedRevision>::Ok(
+          {model_.SessionRevision(), model_.ConfigRevision()});
+    }
+    auto snapshot = services_.runtime_snapshot();
+    if (!snapshot) return Result<ExpectedRevision>::Failure(snapshot.GetError());
+    synchronized_session_ = snapshot.Value().id;
+    if (snapshot.Value().pipeline.session_revision != model_.SessionRevision() ||
+        snapshot.Value().pipeline.config_revision != model_.ConfigRevision()) {
+      model_.Synchronize(snapshot.Value().pipeline);
+      config_revision_draft_ = model_.ConfigRevision() + 1;
+    }
+    return Result<ExpectedRevision>::Ok(
+        {snapshot.Value().pipeline.session_revision,
+         snapshot.Value().pipeline.config_revision});
+  };
   if (*config_stage_ == StageId::kDataLoad) {
     candidate.domain = ConfigDomain::kGlobal;
     auto json = document.CanonicalJson();
@@ -952,7 +978,8 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
     auto json = BuildAlignmentConfigCandidate(
         config_directory / config_loop_detector_.data(),
         AlignmentConfigValues{kiss_voxel_size_, kiss_use_quatro_,
-                              pose_nn_distance_threshold_});
+                              pose_nn_distance_threshold_,
+                              inter_loop_keyframe_spacing_m_});
     if (!json) return Result<void>::Failure(json.GetError());
     candidate.document_json = std::move(json).Value();
     if (!services_.apply_config) {
@@ -963,9 +990,10 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
       return Result<void>::Failure(
           Error::InvalidArgument("configuration session is unavailable"));
     }
+    auto expected = current_expected_revision();
+    if (!expected) return Result<void>::Failure(expected.GetError());
     auto applied = services_.apply_config(
-        *synchronized_session_, std::move(candidate),
-        ExpectedRevision{model_.SessionRevision(), model_.ConfigRevision()});
+        *synchronized_session_, std::move(candidate), expected.Value());
     result = applied ? Result<void>::Ok()
                      : Result<void>::Failure(applied.GetError());
   } else {
@@ -983,9 +1011,10 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
       return Result<void>::Failure(
           Error::InvalidArgument("configuration session is unavailable"));
     }
+    auto expected = current_expected_revision();
+    if (!expected) return Result<void>::Failure(expected.GetError());
     auto applied = services_.apply_config(
-        *synchronized_session_, std::move(candidate),
-        ExpectedRevision{model_.SessionRevision(), model_.ConfigRevision()});
+        *synchronized_session_, std::move(candidate), expected.Value());
     result = applied ? Result<void>::Ok()
                      : Result<void>::Failure(applied.GetError());
   }
@@ -1091,6 +1120,9 @@ void IridescenceGui::DrawStageConfigModal() {
     ImGui::Checkbox("KISS use Quatro", &kiss_use_quatro_);
     ImGui::DragFloat("Pose NN max distance (m)",
                      &pose_nn_distance_threshold_, 0.1F, 0.1F, 100.0F,
+                     "%.1f");
+    ImGui::DragFloat("Inter-loop keyframe spacing (m)",
+                     &inter_loop_keyframe_spacing_m_, 0.1F, 0.1F, 100.0F,
                      "%.1f");
     ImGui::Separator();
     ImGui::TextUnformatted("Module: Incremental backend optimizer");

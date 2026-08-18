@@ -25,6 +25,7 @@ struct AlignmentConfigValues {
   double kiss_voxel_size{2.0};
   bool kiss_use_quatro{false};
   double pose_nn_distance_threshold{10.0};
+  double inter_loop_keyframe_spacing_m{10.0};
 };
 
 [[nodiscard]] Result<std::vector<std::string>> DiscoverDatasetDirectories(

@@ -42,6 +42,7 @@ struct LoopDetectorConfig {
   float kiss_voxel_size = 2.0F;
   bool kiss_use_quatro = false;
   float pose_nn_distance_threshold = 10.0F;
+  float inter_loop_keyframe_spacing_m = 10.0F;
   std::string feedback_mode = "adaptive";
   std::string headless_policy = "kiss_then_descriptor";
   int feedback_timeout_sec = 0;

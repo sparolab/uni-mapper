@@ -44,7 +44,8 @@ Result<AlignmentConfigValues> LoadAlignmentConfig(
   return Result<AlignmentConfigValues>::Ok(
       {alignment.at("kiss_voxel_size").get<double>(),
        alignment.at("kiss_use_quatro").get<bool>(),
-       alignment.at("pose_nn_distance_threshold").get<double>()});
+       alignment.at("pose_nn_distance_threshold").get<double>(),
+       alignment.at("inter_loop_keyframe_spacing_m").get<double>()});
 }
 
 Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
@@ -84,6 +85,8 @@ Result<std::string> BuildAlignmentConfigCandidate(
   candidate["alignment"]["kiss_use_quatro"] = values.kiss_use_quatro;
   candidate["alignment"]["pose_nn_distance_threshold"] =
       values.pose_nn_distance_threshold;
+  candidate["alignment"]["inter_loop_keyframe_spacing_m"] =
+      values.inter_loop_keyframe_spacing_m;
   auto validated = BuiltinConfigSchemaRegistry().Validate(
       ConfigDocumentKind::kLoopDetector, candidate, path.string());
   if (!validated) {

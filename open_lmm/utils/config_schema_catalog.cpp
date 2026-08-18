@@ -224,6 +224,8 @@ SchemaFragment LoopBaseSchema() {
       FloatNumber("/alignment/kiss_voxel_size", 2.0, 0.0, true),
       Bool("/alignment/kiss_use_quatro", false),
       FloatNumber("/alignment/pose_nn_distance_threshold", 10.0, 0.0, true),
+      FloatNumber("/alignment/inter_loop_keyframe_spacing_m", 10.0, 0.0,
+                  true),
       Choice("/alignment/feedback_mode", "adaptive",
              {"adaptive", "automatic", "interactive", "always_manual"}),
       Choice("/alignment/headless_policy", "kiss_then_descriptor",
@@ -231,7 +233,7 @@ SchemaFragment LoopBaseSchema() {
       UInt("/alignment/feedback_timeout_sec", 0, 0),
       ExtensionObject(),
   };
-  fragment.fields[19].value_migrations.push_back(
+  fragment.fields[20].value_migrations.push_back(
       {"legacy_combined", "kiss_then_descriptor", 1});
   return fragment;
 }
