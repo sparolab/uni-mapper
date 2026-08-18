@@ -5,6 +5,7 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/kdtree/kdtree_flann.h>
+#include <tqdmcpp/tqdmcpp.hpp>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
@@ -45,66 +46,14 @@ void LogProposalDifference(
 }
 }  // namespace
 
-KdtreeParams::KdtreeParams(const Config& config) {
-  num_candidates = config.param<int>("database", "num_candidates", 5);
-  distance_threshold =
-      config.param<double>("database", "distance_threshold", 0.13);
-  kdtree_rebuild_threshold =
-      config.param<int>("database", "rebuild_threshold", 50);
-  model = config.param<std::string>("loop_detector", "model", "");
-  pcm_translation_threshold = config.param<double>(
-      "alignment", "pcm_translation_threshold", 10.0);
-  pcm_rotation_threshold_deg = config.param<double>(
-      "alignment", "pcm_rotation_threshold_deg", 20.0);
-  pcm_solver = config.param<std::string>(
-      "alignment", "pcm_solver", "heuristic");
-  pcm_threads = config.param<int>("alignment", "pcm_threads", 1);
-  const int configured_max_candidates = config.param<int>(
-      "alignment", "pcm_max_candidates", 0);
-  if (configured_max_candidates < 0) {
-    throw std::invalid_argument("alignment.pcm_max_candidates must be nonnegative");
-  }
-  pcm_max_candidates = static_cast<size_t>(configured_max_candidates);
-  kiss_voxel_size = config.param<float>("alignment", "kiss_voxel_size", 2.0F);
-  kiss_use_quatro =
-      config.param<bool>("alignment", "kiss_use_quatro", false);
-  pose_nn_distance_threshold = config.param<float>(
-      "alignment", "pose_nn_distance_threshold", 10.0F);
-  if (auto value = config.param<std::string>("alignment", "feedback_mode")) {
-    feedback_mode = *value;
-  }
-  if (auto value = config.param<std::string>("alignment", "headless_policy")) {
-    headless_policy = *value;
-  }
-  if (auto value = config.param<int>("alignment", "feedback_timeout_sec")) {
-    feedback_timeout_sec = *value;
-  }
-  if (num_candidates <= 0 || distance_threshold < 0.0 ||
-      kdtree_rebuild_threshold <= 0 || model.empty() ||
-      (feedback_mode != "adaptive" && feedback_mode != "automatic" &&
-       feedback_mode != "interactive" &&
-       feedback_mode != "always_manual") ||
-      (headless_policy != "legacy_combined" &&
-       headless_policy != "kiss_only" &&
-       headless_policy != "kiss_then_descriptor" &&
-       headless_policy != "fail") ||
-      feedback_timeout_sec < 0 || pcm_translation_threshold <= 0.0 ||
-      pcm_rotation_threshold_deg <= 0.0 ||
-      pcm_rotation_threshold_deg > 180.0 ||
-      (pcm_solver != "heuristic" && pcm_solver != "exact") ||
-      pcm_threads <= 0 || kiss_voxel_size <= 0.0F ||
-      pose_nn_distance_threshold <= 0.0F) {
-    throw std::invalid_argument(
-        "loop detector requires positive candidate/rebuild values, "
-        "valid alignment/PCM policies, a model, and positive PCM values");
-  }
-}
-
 LoopDetectorKdtree::LoopDetectorKdtree(
     const KdtreeParams& params,
     std::shared_ptr<IDescriptorKdtree> model_descriptor)
     : params_(params), model_descriptor_(std::move(model_descriptor)) {
-  database_ = DatabaseKdtree();
+  database_.emplace(DatabaseKdtreeParams{
+      static_cast<std::size_t>(model_descriptor_->getDescriptorKey().size()),
+      params_.num_candidates, params_.distance_threshold,
+      params_.kdtree_rebuild_threshold}, model_descriptor_);
 }
 
 LoopPair LoopDetectorKdtree::createLoopPair(
@@ -159,8 +108,9 @@ std::vector<LoopPair> LoopDetectorKdtree::detectInterLoops(
     auto scan = scans[idx];
     auto descriptor = model_descriptor_->makeDescriptor(scan);
 
+    if (!descriptor_store.total_db) continue;
     std::optional<LoopCandidateInfo> inter_loop_candidates =
-        descriptor_store.total_db.query(descriptor);
+        descriptor_store.total_db->query(descriptor);
 
     if (inter_loop_candidates != std::nullopt) {
       inter_loop_pairs.push_back(
@@ -172,8 +122,8 @@ std::vector<LoopPair> LoopDetectorKdtree::detectInterLoops(
 }
 
 std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
-    const std::map<char, AgentOptimizedData>& all_optimized,
-    const std::map<char, AgentRawData>& all_raw_data,
+    const AgentOptimizedDataMap& all_optimized,
+    const AgentRawDataMap& all_raw_data,
     const std::vector<Eigen::Isometry3f>& transformed_poses,
     const AgentContext& agent_ctx,
     float distance_threshold) {
@@ -184,14 +134,14 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
 
   for (const auto& [db_id, opt_data] : all_optimized) {
     const auto raw_it = all_raw_data.find(db_id);
-    if (raw_it == all_raw_data.end() || opt_data.kdtree_poses.empty() ||
-        raw_it->second.odom_poses.empty()) {
+    if (raw_it == all_raw_data.end() || opt_data->kdtree_poses.empty() ||
+        raw_it->second->odom_poses.empty()) {
       continue;
     }
     pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(
         new pcl::PointCloud<pcl::PointXYZ>);
-    *cloud = opt_data.kdtree_poses;
+    *cloud = opt_data->kdtree_poses;
     kdtree.setInputCloud(cloud);
 
     Eigen::Vector3f prev_pose = transformed_poses[0].translation();
@@ -214,17 +164,17 @@ std::vector<LoopPair> LoopDetectorKdtree::findLoopPairsFromKdTree(
       const int found = kdtree.nearestKSearch(
           src_point, 1, pointIdxNKNSearch, pointNKNSquaredDistance);
       auto neighbor_result = ValidateNearestNeighborResult(
-          found, pointIdxNKNSearch, opt_data.optimized_poses.size(),
+          found, pointIdxNKNSearch, opt_data->optimized_poses.size(),
           "LoopDetectorKdtree");
       if (!neighbor_result || pointNKNSquaredDistance.empty()) continue;
 
       if (std::sqrt(pointNKNSquaredDistance[0]) < distance_threshold) {
         const auto neighbor_index = neighbor_result.Value();
         const auto& [target_scan_index, target_global_pose] =
-            opt_data.optimized_poses[neighbor_index];
+            opt_data->optimized_poses[neighbor_index];
         if (target_scan_index < 0 ||
             static_cast<std::size_t>(target_scan_index) >=
-                raw_it->second.odom_poses.size()) {
+                raw_it->second->odom_poses.size()) {
           continue;
         }
         // Registration expects target_scan_T_source_scan so that it can move
@@ -324,8 +274,8 @@ AlignmentVisualizationData DescriptorVisualization(
   AlignmentVisualizationData output;
   const auto target = input.all_optimized.find(target_agent);
   if (target != input.all_optimized.end()) {
-    output.target_trajectory.reserve(target->second.optimized_poses.size());
-    for (const auto& [index, pose] : target->second.optimized_poses) {
+    output.target_trajectory.reserve(target->second->optimized_poses.size());
+    for (const auto& [index, pose] : target->second->optimized_poses) {
       (void)index;
       output.target_trajectory.push_back(VisualizationPoint(pose.translation()));
     }
@@ -343,11 +293,11 @@ AlignmentVisualizationData DescriptorVisualization(
     const auto optimized = input.all_optimized.find(loop.to.first);
     if (optimized == input.all_optimized.end()) continue;
     const auto target_pose = std::find_if(
-        optimized->second.optimized_poses.begin(),
-        optimized->second.optimized_poses.end(), [&loop](const auto& value) {
+        optimized->second->optimized_poses.begin(),
+        optimized->second->optimized_poses.end(), [&loop](const auto& value) {
           return value.first == static_cast<int>(loop.to.second);
         });
-    if (target_pose == optimized->second.optimized_poses.end()) continue;
+    if (target_pose == optimized->second->optimized_poses.end()) continue;
     const bool inlier = std::find(diagnostics.inlier_loop_indices.begin(),
                                   diagnostics.inlier_loop_indices.end(),
                                   loop_index) !=
@@ -387,7 +337,8 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
     return LoopDetectorOutput{
         .intra_loops = std::move(intra_loops),
         .inter_loops = std::move(inter_loops),
-        .agent_db = std::move(database_.value()),
+        .agent_descriptors = std::make_shared<const DatabaseKdtree>(
+            std::move(database_.value())),
         .transformed_map_points = std::move(transformed_map_points),
         .accepted_global_T_agent = stored.proposal.target_T_source,
         .accepted_alignment_method = stored.proposal.method,
@@ -564,7 +515,8 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   return LoopDetectorOutput{
       .intra_loops             = std::move(intra_loops),
       .inter_loops             = std::move(inter_loops),
-      .agent_db                = std::move(database_.value()),
+      .agent_descriptors      = std::make_shared<const DatabaseKdtree>(
+          std::move(database_.value())),
       .transformed_map_points  = std::move(transformed_map_points),
       .accepted_global_T_agent = std::move(accepted_global_T_agent),
       .accepted_alignment_method = accepted_alignment_method,
@@ -580,9 +532,9 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
 }
 
 Result<std::shared_ptr<IDescriptorKdtree>> LoopDetectorKdtree::loadModule(
-    const std::string& so_name) {
-  return load_module_from_so<IDescriptorKdtree>(
-      so_name, "create_descriptor_kdtree_module");
+    const std::string& so_name, const std::string& config_json) {
+  return load_plugin_v1<IDescriptorKdtree>(
+      so_name, "descriptor", config_json);
 }
 
 }  // namespace open_lmm

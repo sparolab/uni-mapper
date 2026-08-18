@@ -1,14 +1,16 @@
 #include "data_loader_file.hpp"
 
 #include <pcl/common/transforms.h>
+#include <tqdmcpp/tqdmcpp.hpp>
+
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/common/profiling.hpp>
 
 namespace fs = std::filesystem;
 namespace open_lmm {
 
-DataLoaderFile::DataLoaderFile(Config config) {
-  parseConfig(config);
+DataLoaderFile::DataLoaderFile(DataLoaderConfig config)
+    : param_(std::move(config)) {
 
   if (param_.pose_file_name.empty() || param_.scan_dir_name.empty()) {
     initialization_error_ = Error::InvalidArgument(
@@ -45,22 +47,6 @@ DataLoaderFile::DataLoaderFile(Config config) {
         "Unsupported scan type: '" + param_.scan_type +
         "'. Supported: pcd, bin");
   }
-}
-
-void DataLoaderFile::parseConfig(Config config) {
-  param_.pose_format =
-      config.param<std::string>("data_loader", "pose_format", "");
-  param_.scan_type = config.param<std::string>("data_loader", "scan_type", "");
-  param_.scan_dir_name =
-      config.param<std::string>("data_loader", "scan_dir_name", "");
-  param_.pose_file_name =
-      config.param<std::string>("data_loader", "pose_file_name", "");
-  param_.extrinsic = config.param<Eigen::Isometry3d>(
-      "data_loader", "extrinsic", Eigen::Isometry3d::Identity());
-  param_.voxel_size = config.param<float>("data_loader", "voxel_size", 0.1f);
-  param_.min_range = config.param<float>("data_loader", "min_range", 0.0f);
-  param_.max_range = config.param<float>("data_loader", "max_range", 100.0f);
-  param_.delimiter = config.param<std::string>("data_loader", "delimiter", " ");
 }
 
 Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
@@ -167,7 +153,7 @@ Result<PoseVec> DataLoaderFile::loadPoseData(
 
 // const fs::path data_dir_name = data_dir_path.filename();
 // const fs::path scan_save_dir =
-//     GlobalConfig::get_save_dir_path() / data_dir_name / param_.scan_dir_name;
+//     configured_save_dir / data_dir_name / param_.scan_dir_name;
 // fs::create_directories(scan_save_dir);
 // const fs::path file_name = scan_file.filename();
 // const fs::path save_file_path = scan_save_dir / file_name;

@@ -7,7 +7,10 @@
 #include <memory>
 
 #include <cstdint>
+#include <compare>
+#include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -26,6 +29,46 @@ enum class ConfigDomain : uint8_t {
   kGlobal, kDataLoader, kLoopDetector, kOptimizer, kDynamicRemover,
   kMapSave,
 };
+enum class ArtifactState : uint8_t { kMissing, kReady, kStale, kFailed };
+
+struct ArtifactKey {
+  ArtifactType type;
+  std::optional<char> agent;
+  auto operator<=>(const ArtifactKey&) const = default;
+};
+
+struct ArtifactMetadata {
+  ArtifactKey key;
+  ArtifactState state = ArtifactState::kMissing;
+  uint64_t revision = 0;
+  std::string producer;
+  std::string detail;
+  std::string external_path;
+  std::string fingerprint;
+};
+
+struct CommittedSessionSnapshot {
+  uint64_t revision = 0;
+  uint64_t config_revision = 0;
+  std::vector<char> ordered_agents;
+  std::vector<ArtifactMetadata> artifacts;
+  std::size_t descriptor_count = 0;
+  std::map<char, std::size_t> per_agent_descriptor_count;
+};
+
+enum class ExecutionScope : uint8_t { kPerAgent, kSession };
+
+struct NodeExecutionSpec {
+  NodeId id;
+  std::string_view name;
+  StageId stage;
+  ExecutionScope scope;
+  bool ordered = false;
+  bool supports_cancellation = false;
+  std::vector<ArtifactType> required_artifacts;
+  std::vector<ArtifactType> produces;
+  std::vector<ArtifactType> invalidates;
+};
 
 struct NodeDescriptor {
   NodeId id;
@@ -37,7 +80,21 @@ struct NodeDescriptor {
   bool supports_cancellation = false;
 };
 
+[[nodiscard]] const std::vector<NodeExecutionSpec>& ExecutionSpecs();
+[[nodiscard]] const NodeExecutionSpec& ExecutionSpecFor(NodeId node);
 [[nodiscard]] const NodeDescriptor& DescribeNode(NodeId node);
+[[nodiscard]] const std::vector<NodeId>& PipelineNodes();
+[[nodiscard]] const std::vector<StageId>& PipelineStages();
+[[nodiscard]] std::vector<NodeId> StageNodes(StageId stage);
+[[nodiscard]] Result<std::vector<char>> OrderedAgentPrefix(
+    const std::vector<char>& ordered_agents, char target_agent);
+[[nodiscard]] std::size_t ProgressTotal(
+    NodeId node, const std::vector<char>& ordered_agents,
+    std::optional<char> target_agent);
+[[nodiscard]] std::vector<ArtifactType> ProducedArtifacts(StageId stage);
+[[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(NodeId node);
+[[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(StageId stage);
+[[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(ConfigDomain domain);
 
 class StageRunner {
  public:
@@ -48,8 +105,17 @@ class StageRunner {
   virtual Result<void> RunStage(StageId stage) = 0;
   virtual Result<void> RunNode(NodeId node, std::optional<char> agent) = 0;
   virtual Result<void> RunOptimizeThrough(char target_agent) = 0;
-  virtual Result<void> Reconfigure(ConfigDomain) { return Result<void>::Ok(); }
+  virtual Result<void> Reconfigure(ConfigDomain domain,
+                                   uint64_t revision = 0) {
+    (void)domain;
+    (void)revision;
+    return Result<void>::Ok();
+  }
   [[nodiscard]] virtual std::vector<char> AgentIds() const = 0;
+  [[nodiscard]] virtual std::optional<CommittedSessionSnapshot>
+  SessionSnapshot() const {
+    return std::nullopt;
+  }
   [[nodiscard]] virtual Result<VisualizationSnapshot>
   CreateVisualizationSnapshot(char) const {
     return Result<VisualizationSnapshot>::Failure(

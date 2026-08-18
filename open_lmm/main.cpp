@@ -1,18 +1,27 @@
-// open_lmm
-#include <open_lmm/server/map_server.hpp>
-#include <tqdmcpp/tqdmcpp.hpp>
+#include <iostream>
+#include <string>
 
-#include "utils/config.hpp"
-#include "utils/logging.hpp"
+#include <open_lmm/server/map_server.hpp>
+#include <open_lmm/utils/config.hpp>
+#include <open_lmm/utils/logging.hpp>
 
 int main(int argc, char** argv) {
   open_lmm::InitializeLogging();
+  if (argc == 2 && std::string(argv[1]) == "--help") {
+    std::cout << "Usage: " << argv[0] << " <config_dir_path>\n";
+    return 0;
+  }
   if (argc != 2) {
     std::cerr << "Usage: " << argv[0] << " <config_dir_path>" << std::endl;
     return 1;
   }
-  std::string config_dir_path = argv[1];
-  open_lmm::GlobalConfig::instance(config_dir_path);
+
+  auto configured = open_lmm::GlobalConfig::reload(argv[1]);
+  if (!configured) {
+    open_lmm::LogError(configured.GetError().Message());
+    return 1;
+  }
+
   open_lmm::MapServer map_server;
   auto result = map_server.process();
   if (!result) {

@@ -6,8 +6,8 @@
 # )
 
 
-# specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
+# ABI-v1 plugins use the package-wide host toolchain and language standard.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -37,6 +37,7 @@ target_link_libraries(erasor
     Eigen3::Eigen 
     PCL::PCL 
     small_gicp
+    open_lmm_utils
 )
 openlmm_set_global_target_properties(erasor)
 

@@ -1,16 +1,29 @@
-add_library(open_lmm_map_server STATIC)
+add_library(open_lmm_map_server SHARED)
 target_sources(open_lmm_map_server PRIVATE
   ../common/pipeline.cpp
   map_server.cpp
+  stage_executor.cpp
   stage_runner.cpp
   artifact_repository.cpp
+  file_set_transaction.cpp
+  output_repository.cpp
+  session_manager.cpp
+  session_state.cpp
   pipeline_controller.cpp
   nodes/map_update_node.cpp
 )
-target_link_libraries(open_lmm_map_server PUBLIC
-  open_lmm_profiling
+target_link_libraries(open_lmm_map_server
+ PUBLIC
   Eigen3::Eigen
+  PCL::PCL
+  gtsam
+  open_lmm_common
+  open_lmm_algorithm_config
+  open_lmm_utils
   open_lmm_backend_optimizer
+ PRIVATE
+  open_lmm_profiling
+  nlohmann_json::nlohmann_json
   open_lmm_loop_detector
   open_lmm_data_loader
   open_lmm_dynamic_remover

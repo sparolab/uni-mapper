@@ -2,7 +2,7 @@
 #include <string>
 
 struct HmmMosParams {
-  HmmMosParams();
+  explicit HmmMosParams(const open_lmm::Config& config);
   ~HmmMosParams() = default;
 
   bool replace_intensity;

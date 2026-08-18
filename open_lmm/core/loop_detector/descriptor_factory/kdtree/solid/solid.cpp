@@ -4,9 +4,7 @@
 #include <cmath>
 #include <limits>
 
-SolidParams::SolidParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_loop_detector"));
+SolidParams::SolidParams(const open_lmm::Config& config) {
   fov_u = config.param<double>("loop_detector", "fov_u", 2.0);
   fov_d = config.param<double>("loop_detector", "fov_d", -24.8);
   num_angle = config.param<int>("loop_detector", "num_angle", 60);
@@ -15,6 +13,10 @@ SolidParams::SolidParams() {
   min_distance = config.param<int>("loop_detector", "min_distance", 3);
   max_distance = config.param<int>("loop_detector", "max_distance", 80);
   voxel_size = config.param<double>("loop_detector", "voxel_size", 0.4);
+  if (fov_d >= fov_u || num_angle == 0 || num_range == 0 ||
+      num_height == 0 || min_distance >= max_distance || voxel_size <= 0.0) {
+    throw std::invalid_argument("SOLiD descriptor parameters are out of range");
+  }
 }
 
 SOLiD::SOLiD(const SolidParams& params) : params_(params) {

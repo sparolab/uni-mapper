@@ -1,4 +1,4 @@
-add_library(open_lmm_gui_core STATIC
+add_library(open_lmm_gui_core SHARED
   config_editor.cpp
   gui_controller_bridge.cpp
   gui_event_queue.cpp

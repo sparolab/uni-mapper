@@ -41,4 +41,6 @@ jobs:
               scripts/ci/build_and_test.sh gcc12-gui-on  /usr/bin/gcc-12 /usr/bin/g++-12 ON
               scripts/ci/build_and_test.sh gcc13-gui-off /usr/bin/gcc-13 /usr/bin/g++-13 OFF
               scripts/ci/build_and_test.sh clang15-gui-off /usr/bin/clang-15 /usr/bin/clang++-15 OFF
+              scripts/ci/build_sanitizer_tests.sh clang15-asan-ubsan ASAN_UBSAN /usr/bin/clang-15 /usr/bin/clang++-15
+              scripts/ci/build_sanitizer_tests.sh gcc12-tsan TSAN /usr/bin/gcc-12 /usr/bin/g++-12
             '

@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -15,6 +16,7 @@
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/utils/load_module.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <open_lmm/server/file_set_transaction.hpp>
 
 namespace {
 
@@ -75,6 +77,33 @@ void TestAgentContext() {
       .id = 'B', .role = open_lmm::AgentRole::kFollower, .order = 1};
   Expect(anchor.is_anchor(), "anchor role must be recognized");
   Expect(!follower.is_anchor(), "follower must not be recognized as anchor");
+}
+
+void TestFileSetCommitRollsBackPartialReplacement() {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() /
+      ("open_lmm_file_commit_" + std::to_string(std::random_device{}()));
+  fs::create_directories(root);
+  const fs::path original = root / "map_a.pcd";
+  const fs::path replacement = root / "map_a.pcd.tmp";
+  const fs::path second_temp = root / "map_b.pcd.tmp";
+  {
+    std::ofstream(original) << "original";
+    std::ofstream(replacement) << "replacement";
+    std::ofstream(second_temp) << "second";
+  }
+  const auto result = open_lmm::CommitFileSet({
+      {replacement, original},
+      {second_temp, root / "missing" / "map_b.pcd"},
+  });
+  Expect(!result, "file-set commit must report a partial rename failure");
+  std::ifstream restored(original);
+  std::string contents;
+  restored >> contents;
+  Expect(contents == "original",
+         "file-set commit must restore a replaced destination");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
 }
 
 void TestRigidTransformInverse() {
@@ -225,12 +254,15 @@ void TestPipelineControlFlow() {
 }
 
 void TestPluginFailurePropagation() {
-  auto result = open_lmm::load_module_from_so<int>(
-      "libopen_lmm_test_plugin_that_does_not_exist.so", "create");
+  auto result = open_lmm::load_plugin_v1<int>(
+      "libopen_lmm_test_plugin_that_does_not_exist.so", "test", "{}");
   Expect(!result.IsOk(), "missing plugin must return an error");
   if (!result.IsOk()) {
     Expect(result.GetError().code == Error::Code::kPluginLoadFailed,
            "missing plugin must use plugin-load error code");
+    Expect(result.GetError().context.plugin ==
+               "libopen_lmm_test_plugin_that_does_not_exist.so",
+           "plugin failure must retain plugin context");
   }
 }
 
@@ -238,10 +270,13 @@ void TestOptimizerLifecycle() {
   const std::string config_path = "/tmp/open_lmm_optimizer_lifecycle.json";
   {
     std::ofstream output(config_path);
-    output << R"({"backend_optimizer":{"relinearizeThreshold":0.1,"relinearizeSkip":1,"isam_extra_updates":0,"min_loop_frame_gap":30,"icp_search_num":0}})";
+    output << R"({"backend_optimizer":{"backend_optimizer_type":"incremental","relinearizeThreshold":0.1,"relinearizeSkip":1,"isam_extra_updates":0,"min_loop_frame_gap":30,"icp_search_num":0}})";
   }
 
-  open_lmm::BackendOptimizerIncremental optimizer{open_lmm::Config(config_path)};
+  auto parsed = open_lmm::ParseOptimizerConfig(open_lmm::Config(config_path));
+  Expect(parsed.IsOk(), "optimizer test config must parse");
+  open_lmm::BackendOptimizerIncremental optimizer{
+      std::move(parsed).Value()};
   open_lmm::AgentContext anchor{
       .id = "A"[0], .role = open_lmm::AgentRole::kAnchor, .order = 0};
   open_lmm::AgentRawData raw_a;
@@ -343,11 +378,12 @@ void TestConfigContractValidation() {
     std::ofstream output(range_path);
     output << R"({"data_loader":{"pose_format":"kitti","scan_type":"pcd","scan_dir_name":"Scans","pose_file_name":"poses.txt","voxel_size":0.0,"min_range":5.0,"max_range":1.0,"delimiter":" "}})";
   }
-  open_lmm::DataLoaderFile loader{open_lmm::Config(range_path)};
-  open_lmm::AgentContext agent{
-      .id = "A"[0], .role = open_lmm::AgentRole::kAnchor, .order = 0};
-  auto result = loader.Process(agent, "/tmp");
+  auto result = open_lmm::ParseDataLoaderConfig(open_lmm::Config(range_path));
   Expect(!result.IsOk(), "invalid DataLoader numeric range must fail");
+  if (!result.IsOk()) {
+    Expect(result.GetError().context.config == "data_loader",
+           "typed config failure must retain config-domain context");
+  }
   std::remove(range_path.c_str());
 
   try {
@@ -384,6 +420,7 @@ void TestPointCloudInputValidation() {
 
 int main() {
   TestAgentContext();
+  TestFileSetCommitRollsBackPartialReplacement();
   TestRigidTransformInverse();
   TestGlobalAlignmentLoopConvention();
   TestAlignedMapRebuildUsesLatestTransform();

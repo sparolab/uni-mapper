@@ -21,8 +21,9 @@ class DataLoadNode : public PipelineNodeBase {
       return Result<ControlFlow>::Failure(
           Error::Cancelled("before DataLoad commit"));
     }
-    ctx.raw_data = raw;
-    db.raw_data[ctx.agent.id] = std::move(raw);
+    auto committed = std::make_shared<const AgentRawData>(std::move(raw));
+    ctx.raw_data = committed;
+    db.raw_data[ctx.agent.id] = std::move(committed);
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
   }
 

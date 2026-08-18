@@ -52,6 +52,24 @@ Config::Config(const std::string& config_filename)
   config = json;
 }
 
+Config Config::FromJson(std::string_view json_text, std::string source_name) {
+  Config result("");
+  result.config_path = std::move(source_name);
+  try {
+    result.config = nlohmann::json::parse(
+        json_text.begin(), json_text.end(), nullptr, true, true);
+  } catch (const nlohmann::json::exception& e) {
+    result.error_message_ = "failed to parse config snapshot " +
+                            result.config_path + ": " + e.what();
+    LogError(*result.error_message_);
+  }
+  return result;
+}
+
+std::string Config::ToJson() const {
+  return std::any_cast<const nlohmann::json&>(config).dump();
+}
+
 const std::string Config::create_date() {
   time_t t = time(nullptr);
   const tm* local_time = localtime(&t);

@@ -11,9 +11,7 @@
 #include <numeric>
 
 
-ScanContextParams::ScanContextParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_loop_detector"));
+ScanContextParams::ScanContextParams(const open_lmm::Config& config) {
   number_sectors = config.param<int>("loop_detector", "num_sector", 60);
   number_rings = config.param<int>("loop_detector", "num_ring", 20);
   max_range = config.param<double>("loop_detector", "max_range", 80);

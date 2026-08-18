@@ -1,23 +1,11 @@
 #pragma once
-#include <tqdmcpp/tqdmcpp.hpp>
-
-
 #include <open_lmm/core/dynamic_remover/remover_factory/offline/interface_offline_plugin.hpp>
 
 #include "dynamic_remover_base.hpp"
 
 namespace open_lmm {
 
-struct OfflineParams {
- public:
-  //   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  explicit OfflineParams();
-  ~OfflineParams() = default;
-
- public:
-  std::string dynamic_remover_type;
-  std::string model;
-};
+using OfflineParams = DynamicRemoverConfig;
 
 class DynamicRemoverOffline : public DynamicRemoverBase {
  public:
@@ -32,7 +20,7 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
 
   static Result<std::shared_ptr<IOfflineRemoverPlugin>> loadModule(
-      const std::string& so_name);
+      const std::string& so_name, const std::string& config_json);
 
  private:
   OfflineParams params_;

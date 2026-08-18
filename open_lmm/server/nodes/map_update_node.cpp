@@ -44,7 +44,7 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   }
   auto raw_scans = std::move(raw_result).Value();
   auto count_result = ValidateScanPoseCount(
-      raw_scans.size(), it->second.optimized_poses.size(),
+      raw_scans.size(), it->second->optimized_poses.size(),
       ctx.data_dir.string());
   if (!count_result) {
     return Result<ControlFlow>::Failure(count_result.GetError());
@@ -58,7 +58,7 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   {
     OPEN_LMM_ZONE_N("MapUpdate.RemoverProcess");
     static_map =
-        dynamic_remover->process(raw_scans, it->second.optimized_poses);
+        dynamic_remover->process(raw_scans, it->second->optimized_poses);
   }
   if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
     return Result<ControlFlow>::Failure(

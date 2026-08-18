@@ -34,6 +34,7 @@ target_sources(scan_context PRIVATE
 target_link_libraries(scan_context PUBLIC
   Eigen3::Eigen
   PCL::PCL
+  open_lmm_utils
 )
 openlmm_set_global_target_properties(scan_context)
 

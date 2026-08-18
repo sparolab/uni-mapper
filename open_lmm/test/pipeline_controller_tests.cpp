@@ -1,11 +1,14 @@
 #include <open_lmm/server/pipeline_controller.hpp>
 #include <open_lmm/core/loop_detector/map_alignment_coordinator.hpp>
 
+#include <algorithm>
 #include <cstdlib>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <thread>
 
 using namespace open_lmm;
 
@@ -41,6 +44,12 @@ class FakeRunner final : public StageRunner {
       calls.push_back(stage);
     }
     if (stage == StageId::kAlignment && request_alignment_feedback) {
+      std::unique_lock<std::mutex> runner_lock(mutex, std::defer_lock);
+      if (hold_mutex_during_feedback) {
+        runner_lock.lock();
+        feedback_mutex_held.store(true);
+        while (!allow_feedback_notification.load()) std::this_thread::yield();
+      }
       AlignmentFeedbackSnapshot snapshot;
       snapshot.proposal.target_agent = 'A';
       snapshot.proposal.source_agent = 'B';
@@ -91,14 +100,18 @@ class FakeRunner final : public StageRunner {
         ? Result<void>::Failure(Error::OptimizationFailed("induced replay"))
         : Result<void>::Ok();
   }
-  Result<void> Reconfigure(ConfigDomain domain) override {
+  Result<void> Reconfigure(ConfigDomain domain, uint64_t) override {
     reconfigured_domain = domain;
     return fail_reconfigure
         ? Result<void>::Failure(
               Error::InvalidArgument("fake reconfigure failure"))
         : Result<void>::Ok();
   }
-  std::vector<char> AgentIds() const override { return agent_ids; }
+  std::vector<char> AgentIds() const override {
+    std::lock_guard lock(mutex);
+    if (on_agent_ids) on_agent_ids();
+    return agent_ids;
+  }
 
   mutable std::mutex mutex;
   std::vector<StageId> calls;
@@ -116,6 +129,49 @@ class FakeRunner final : public StageRunner {
   std::chrono::milliseconds alignment_timeout{};
   std::optional<MapAlignmentProposal> coordinated_alignment;
   std::vector<char> agent_ids{'A', 'B'};
+  bool hold_mutex_during_feedback = false;
+  std::atomic<bool> feedback_mutex_held{false};
+  std::atomic<bool> allow_feedback_notification{false};
+  std::function<void()> on_agent_ids;
+};
+
+class ManagedSessionRunner final : public StageRunner {
+ public:
+  ManagedSessionRunner() {
+    repository_.Reset({'A'});
+    snapshot_.revision = 1;
+    snapshot_.config_revision = 5;
+    snapshot_.ordered_agents = {'A'};
+    snapshot_.artifacts = repository_.Snapshot();
+  }
+
+  void SetCancellationToken(std::shared_ptr<CancellationToken>) override {}
+  Result<void> RunStage(StageId) override { return Result<void>::Ok(); }
+  Result<void> RunNode(NodeId node, std::optional<char> agent) override {
+    if (fail_next.exchange(false)) {
+      return Result<void>::Failure(Error::InvalidArgument("induced failure"));
+    }
+    std::lock_guard lock(mutex_);
+    repository_.Restore(snapshot_.artifacts);
+    repository_.BeginNode(node, agent);
+    repository_.CompleteNode(node, agent);
+    ++snapshot_.revision;
+    snapshot_.artifacts = repository_.Snapshot();
+    return Result<void>::Ok();
+  }
+  Result<void> RunOptimizeThrough(char) override { return Result<void>::Ok(); }
+  std::vector<char> AgentIds() const override { return {'A'}; }
+  std::optional<CommittedSessionSnapshot> SessionSnapshot() const override {
+    std::lock_guard lock(mutex_);
+    return snapshot_;
+  }
+
+  std::atomic<bool> fail_next{false};
+
+ private:
+  mutable std::mutex mutex_;
+  ArtifactRepository repository_;
+  CommittedSessionSnapshot snapshot_;
 };
 
 ArtifactState StateOf(const PipelineSnapshot& snapshot, ArtifactType type,
@@ -147,6 +203,37 @@ void TestRunAllAndArtifacts() {
         "map alignment artifact ready");
   Check(StateOf(snapshot, ArtifactType::kPoseFile, 'B') == ArtifactState::kReady,
         "pose artifact ready");
+}
+
+void TestConcurrentSubmissionsAreSerialized() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->block_node_until_cancel = true;
+  PipelineController controller(runner);
+  std::atomic<int> ready{0};
+  std::atomic<bool> go{false};
+  bool accepted[2] = {false, false};
+  uint64_t job_ids[2] = {0, 0};
+  auto submit = [&](int index) {
+    ++ready;
+    while (!go.load()) std::this_thread::yield();
+    auto result = controller.SubmitNode(NodeId::kDataLoad, 'A');
+    accepted[index] = result.IsOk();
+    if (result) job_ids[index] = result.Value();
+  };
+  std::thread first(submit, 0);
+  std::thread second(submit, 1);
+  while (ready.load() != 2) std::this_thread::yield();
+  go = true;
+  first.join();
+  second.join();
+  Check(accepted[0] != accepted[1],
+        "only one concurrent pipeline submission is accepted");
+  const uint64_t accepted_id = accepted[0] ? job_ids[0] : job_ids[1];
+  while (!runner->node_entered.load()) std::this_thread::yield();
+  Check(controller.Cancel(accepted_id).IsOk(),
+        "accepted concurrent submission remains cancellable");
+  Check(!controller.Wait(accepted_id),
+        "cancelled concurrent submission completes");
 }
 
 void TestRerunInvalidatesDownstream() {
@@ -308,6 +395,65 @@ void TestNodeCancellationRollsBackArtifacts() {
     }
   }
   Check(preserved, "cancel restores committed artifact revision");
+  bool emitted_authoritative_change = false;
+  for (const auto& event : after.recent_events) {
+    if (event.job_id == rerun.Value() &&
+        (event.type == EventType::kArtifactInvalidated ||
+         event.type == EventType::kArtifactCommitted)) {
+      emitted_authoritative_change = true;
+    }
+  }
+  Check(!emitted_authoritative_change,
+        "cancelled node emits no authoritative artifact event");
+}
+
+void TestManagedSessionMetadataIsAuthoritative() {
+  auto runner = std::make_shared<ManagedSessionRunner>();
+  PipelineController controller(runner);
+  Check(controller.Snapshot().config_revision == 5,
+        "controller imports committed session config revision");
+  auto first = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  Check(first && controller.Wait(first.Value()),
+        "managed session commits node payload and metadata");
+  const auto committed = controller.Snapshot();
+  uint64_t raw_revision = 0;
+  for (const auto& artifact : committed.artifacts) {
+    if (artifact.key == ArtifactKey{ArtifactType::kRawData, 'A'}) {
+      raw_revision = artifact.revision;
+    }
+  }
+  Check(raw_revision != 0 &&
+            StateOf(committed, ArtifactType::kRawData, 'A') ==
+                ArtifactState::kReady,
+        "controller exposes runner committed artifact");
+
+  runner->fail_next = true;
+  auto failed = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  Check(failed && !controller.Wait(failed.Value()),
+        "managed session failure is propagated");
+  const auto after = controller.Snapshot();
+  bool unchanged = false;
+  for (const auto& artifact : after.artifacts) {
+    if (artifact.key == ArtifactKey{ArtifactType::kRawData, 'A'}) {
+      unchanged = artifact.state == ArtifactState::kReady &&
+                  artifact.revision == raw_revision;
+    }
+  }
+  Check(unchanged,
+        "controller does not synthesize metadata after transaction failure");
+  const auto failed_event = std::find_if(
+      after.recent_events.rbegin(), after.recent_events.rend(),
+      [](const ExecutionEvent& event) {
+        return event.type == EventType::kNodeFailed;
+      });
+  Check(failed_event != after.recent_events.rend() && failed_event->error &&
+            failed_event->error->severity == Error::Severity::kRecoverable &&
+            failed_event->error->context.session_revision ==
+                std::optional<uint64_t>(2) &&
+            failed_event->error->context.stage == "data_load" &&
+            failed_event->error->context.node == "data_load" &&
+            failed_event->error->context.agent == std::optional<char>('A'),
+        "recoverable node error carries session/stage/node/agent context");
 }
 
 void TestSessionRunnerReplacement() {
@@ -364,6 +510,82 @@ void TestAlignmentFeedbackCancellation() {
   Check(!controller.Wait(job.Value()), "cancelled feedback job fails wait");
   Check(controller.Snapshot().job->state == JobState::kCancelled,
         "feedback cancellation reaches cancelled state");
+}
+
+void TestSnapshotDoesNotInvokeRunnerWhileControllerLocked() {
+  auto runner = std::make_shared<FakeRunner>();
+  PipelineController controller(runner);
+  runner->on_agent_ids = [&controller] { (void)controller.Snapshot(); };
+
+  auto snapshot = std::async(std::launch::async,
+                             [&controller] { return controller.Snapshot(); });
+  Check(snapshot.wait_for(std::chrono::milliseconds(500)) ==
+            std::future_status::ready,
+        "Snapshot must not call StageRunner while holding controller state");
+  Check(snapshot.get().agents == std::vector<char>({'A', 'B'}),
+        "Snapshot uses cached immutable agent IDs");
+}
+
+void TestSnapshotDuringFeedbackNotificationDoesNotDeadlock() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->request_alignment_feedback = true;
+  runner->hold_mutex_during_feedback = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "lock inversion regression job submitted");
+
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(500);
+  while (!runner->feedback_mutex_held.load() &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  Check(runner->feedback_mutex_held.load(),
+        "runner entered feedback lock inversion window");
+
+  auto snapshot = std::async(std::launch::async,
+                             [&controller] { return controller.Snapshot(); });
+  Check(snapshot.wait_for(std::chrono::milliseconds(500)) ==
+            std::future_status::ready,
+        "Snapshot remains bounded while runner state is locked");
+  Check(snapshot.get().job.has_value(),
+        "concurrent Snapshot returns controller state");
+
+  runner->allow_feedback_notification.store(true);
+  std::optional<AlignmentFeedbackSnapshot> request;
+  const auto feedback_deadline = std::chrono::steady_clock::now() +
+                                 std::chrono::milliseconds(500);
+  while (!(request = controller.GetAlignmentFeedbackSnapshot()) &&
+         std::chrono::steady_clock::now() < feedback_deadline) {
+    std::this_thread::yield();
+  }
+  Check(request.has_value(), "feedback notification completes after Snapshot");
+  Check(controller.RespondToAlignment(
+            job.Value(), {request->proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+        "feedback response accepted after concurrent Snapshot");
+  Check(controller.Wait(job.Value()).IsOk(),
+        "feedback job completes without lock inversion");
+}
+
+void TestEventCallbackCanUnsubscribeReenterAndThrow() {
+  auto runner = std::make_shared<FakeRunner>();
+  PipelineController controller(runner);
+  std::optional<ExecutionEventSubscription> subscription;
+  std::atomic<int> callback_count{0};
+  subscription.emplace(controller.SubscribeEvents(
+      [&](const ExecutionEvent&) {
+        ++callback_count;
+        (void)controller.Snapshot();
+        subscription->Reset();
+        throw std::runtime_error("observer failure");
+      }));
+  auto job = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  Check(job && controller.Wait(job.Value()),
+        "subscriber exception does not fail pipeline job");
+  Check(callback_count.load() == 1,
+        "self-unsubscribe prevents later callbacks without deadlock");
 }
 
 void TestControllerCoordinatorFullFallbackIntegration() {
@@ -432,6 +654,7 @@ void TestControllerCoordinatorTimeoutIntegration() {
 
 int main() {
   TestRunAllAndArtifacts();
+  TestConcurrentSubmissionsAreSerialized();
   TestRerunInvalidatesDownstream();
   TestFailureStopsPipeline();
   TestBoundaryCancellation();
@@ -439,9 +662,13 @@ int main() {
   TestNodeCommandsAndMetadata();
   TestConfigApplyInvalidation();
   TestNodeCancellationRollsBackArtifacts();
+  TestManagedSessionMetadataIsAuthoritative();
   TestSessionRunnerReplacement();
   TestAlignmentFeedbackAcceptAndStaleResponse();
   TestAlignmentFeedbackCancellation();
+  TestSnapshotDoesNotInvokeRunnerWhileControllerLocked();
+  TestSnapshotDuringFeedbackNotificationDoesNotDeadlock();
+  TestEventCallbackCanUnsubscribeReenterAndThrow();
   TestControllerCoordinatorFullFallbackIntegration();
   TestControllerCoordinatorTimeoutIntegration();
   std::cout << "pipeline controller tests passed\n";

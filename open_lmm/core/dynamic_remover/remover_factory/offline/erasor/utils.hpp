@@ -35,7 +35,8 @@ namespace common {
 struct Config {
  public:
   //   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  Config();
+  Config() = default;
+  explicit Config(const open_lmm::Config& config);
   ~Config() = default;
 
  public:

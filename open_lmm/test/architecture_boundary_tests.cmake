@@ -13,6 +13,44 @@ function(assert_file_excludes relative_path)
   endforeach()
 endfunction()
 
+# The contracts/common layer may depend on third-party value types, but must
+# never reach upward into a concrete core implementation.
+file(GLOB_RECURSE common_sources
+  "${OPEN_LMM_SOURCE_DIR}/common/*.cpp"
+  "${OPEN_LMM_SOURCE_DIR}/common/*.hpp"
+  "${OPEN_LMM_SOURCE_DIR}/common/*.h")
+foreach(source IN LISTS common_sources)
+  file(READ "${source}" contents)
+  string(FIND "${contents}" "open_lmm/core/" found_core_include)
+  if(NOT found_core_include EQUAL -1)
+    file(RELATIVE_PATH relative_source "${OPEN_LMM_SOURCE_DIR}" "${source}")
+    message(FATAL_ERROR
+      "${relative_source} reaches upward into an open_lmm/core implementation")
+  endif()
+endforeach()
+
+# Core algorithms and built-in plugins consume validated snapshots only. The
+# mutable global configuration remains a runtime bootstrap concern.
+file(GLOB_RECURSE core_sources
+  "${OPEN_LMM_SOURCE_DIR}/core/*.cpp"
+  "${OPEN_LMM_SOURCE_DIR}/core/*.hpp"
+  "${OPEN_LMM_SOURCE_DIR}/core/*.h")
+foreach(source IN LISTS core_sources)
+  file(READ "${source}" contents)
+  foreach(pattern
+      "GlobalConfig"
+      "load_module_from_so"
+      "create_descriptor_kdtree_module"
+      "create_dynamic_remover_module")
+    string(FIND "${contents}" "${pattern}" found)
+    if(NOT found EQUAL -1)
+      file(RELATIVE_PATH relative_source "${OPEN_LMM_SOURCE_DIR}" "${source}")
+      message(FATAL_ERROR
+        "${relative_source} bypasses typed config/plugin ABI v1 with ${pattern}")
+    endif()
+  endforeach()
+endforeach()
+
 assert_file_excludes(
   "common/pipeline.hpp"
   "spdlog/"
@@ -71,11 +109,84 @@ assert_file_excludes(
   "add_compile_options($<$<CONFIG:Release>:-O3>)"
 )
 
+# MapServer is the stable StageRunner API only; mutable session/runtime
+# responsibilities belong to the internal StageExecutor and SessionManager.
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/map_server.hpp" map_server_header)
+foreach(expected
+    "std::unique_ptr<StageExecutor> executor_"
+    "class MapServer final : public StageRunner")
+  string(FIND "${map_server_header}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "MapServer façade must contain: ${expected}")
+  endif()
+endforeach()
+foreach(forbidden "SessionManager" "OutputRepository" "state_mutex_")
+  string(FIND "${map_server_header}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "MapServer façade must not own runtime detail: ${forbidden}")
+  endif()
+endforeach()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/cmake/options.cmake" build_options)
+foreach(expected
+    "OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT"
+    "OPEN_LMM_BUILD_DESCRIPTOR_SOLID"
+    "OPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS"
+    "OPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP"
+    "OPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD"
+    "OPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM"
+    "OPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR"
+    "OPEN_LMM_ENABLE_ASAN_UBSAN"
+    "OPEN_LMM_ENABLE_TSAN")
+  string(FIND "${build_options}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "required build option is missing: ${expected}")
+  endif()
+endforeach()
+
 file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/CMakeLists.txt" ros_cmake)
+string(FIND "${ros_cmake}" "find_package(open_lmm CONFIG REQUIRED)"
+  found_open_lmm_package)
+if(found_open_lmm_package EQUAL -1)
+  message(FATAL_ERROR "ROS must consume the installed open_lmm package")
+endif()
+string(FIND "${ros_cmake}" "add_subdirectory(" found_ros_subdirectory)
+if(NOT found_ros_subdirectory EQUAL -1)
+  message(FATAL_ERROR "ROS must not embed open_lmm with add_subdirectory")
+endif()
 string(FIND "${ros_cmake}"
   "set(CMAKE_CXX_FLAGS \"\${CMAKE_CXX_FLAGS} -O3\")" found_ros_o3)
 if(NOT found_ros_o3 EQUAL -1)
   message(FATAL_ERROR "ROS CMake must not append a global -O3 flag")
+endif()
+
+# A component is a command adapter, not a hidden batch launcher. The
+# standalone open_lmm_batch executable owns the direct synchronous path.
+assert_file_excludes(
+  "../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
+  "map_server->process()"
+  "gui_auto_run")
+file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
+  ros_adapter)
+foreach(expected
+    "\"~/start\""
+    "\"~/cancel\""
+    "\"~/status\""
+    "\"~/progress\""
+    "\"~/result\""
+    "controller_->SubmitRunAll()"
+    "controller_->Cancel(")
+  string(FIND "${ros_adapter}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "ROS command adapter must contain: ${expected}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/CMakeLists.txt" core_cmake)
+string(FIND "${core_cmake}" "add_executable(open_lmm_batch main.cpp)"
+  found_batch_launcher)
+if(found_batch_launcher EQUAL -1)
+  message(FATAL_ERROR "standalone open_lmm_batch launcher must be built")
 endif()
 
 file(READ "${OPEN_LMM_SOURCE_DIR}/../docker/open_lmm.Dockerfile" dockerfile)

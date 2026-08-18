@@ -6,25 +6,19 @@
 namespace open_lmm {
 
 Result<std::unique_ptr<LoopDetectorBase>> LoopDetectorBase::createInstance(
-    Config config) {
-  std::string loop_detector_type =
-      config.param<std::string>("loop_detector", "loop_detector_type", "");
-  if (loop_detector_type == "kdtree") {
-    KdtreeParams params(config);
+    const LoopDetectorConfig& config) {
+  if (config.type == "kdtree") {
     auto module = LoopDetectorKdtree::loadModule(
-        "libcreate_" + params.model + ".so");
+        "libcreate_" + config.model + ".so", config.plugin_config_json);
     if (!module) {
       return Result<std::unique_ptr<LoopDetectorBase>>::Failure(module.GetError());
     }
     return Result<std::unique_ptr<LoopDetectorBase>>::Ok(
-        std::make_unique<LoopDetectorKdtree>(params, std::move(module).Value()));
-  } else if (loop_detector_type == "hashmap") {
-    return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
-        Error::InvalidArgument("Hashmap loop detector is not implemented"));
+        std::make_unique<LoopDetectorKdtree>(config, std::move(module).Value()));
   }
   return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
       Error::InvalidArgument("Unknown loop_detector_type: '" +
-                             loop_detector_type + "'. Supported: kdtree"));
+                             config.type + "'. Supported: kdtree"));
 };
 
 }  // namespace open_lmm

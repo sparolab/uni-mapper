@@ -266,12 +266,12 @@ void TestManualValidationRetries() {
 
 void TestDescriptorConsensusRejectsOutlier() {
   PoseVec odometry(4, Eigen::Isometry3d::Identity());
-  std::map<char, AgentOptimizedData> optimized;
-  optimized['A'].agent_id = 'A';
+  AgentOptimizedData optimized_agent;
+  optimized_agent.agent_id = 'A';
   LoopPairVec loops;
   const double translations[] = {0.8, 1.0, 1.2, 100.0};
   for (int i = 0; i < 4; ++i) {
-    optimized['A'].optimized_poses.emplace_back(
+    optimized_agent.optimized_poses.emplace_back(
         i, Eigen::Isometry3d::Identity());
     LoopPair loop;
     loop.to = {'A', static_cast<std::size_t>(i)};
@@ -280,6 +280,9 @@ void TestDescriptorConsensusRejectsOutlier() {
     loop.init_rel_pose.translation().x() = translations[i];
     loops.push_back(loop);
   }
+  AgentOptimizedDataMap optimized;
+  optimized['A'] =
+      std::make_shared<const AgentOptimizedData>(std::move(optimized_agent));
   DescriptorAlignmentDiagnostics diagnostics;
   const auto proposal = DescriptorAlignmentProposer(10.0, 20.0 * M_PI / 180.0).Propose(
       'A', 'B', odometry, optimized, loops, &diagnostics);

@@ -1,0 +1,5 @@
+# OpenNI2 is a prebuilt, non-instrumented system dependency. Its process-exit
+# cleanup unlocks an internal mutex in a way that GCC ThreadSanitizer reports as
+# an unlock by the wrong thread. Keep the suppression scoped to that DSO so
+# OpenLMM and every other dependency remain fully checked.
+mutex:libOpenNI2.so

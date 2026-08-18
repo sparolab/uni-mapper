@@ -1,5 +1,5 @@
 
-add_library(open_lmm_common STATIC)
+add_library(open_lmm_common SHARED)
 target_sources(open_lmm_common PRIVATE
   pose_conversion.cpp
   registration.cpp

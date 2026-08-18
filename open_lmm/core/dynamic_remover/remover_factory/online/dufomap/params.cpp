@@ -1,8 +1,6 @@
 #include "params.hpp"
 
-DUFOMapParams::DUFOMapParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_dynamic_remover"));
+DUFOMapParams::DUFOMapParams(const open_lmm::Config& config) {
   replace_intensity = config.param<bool>("dynamic_remover", "replace_intensity", false);
   map.resolution = config.param<double>("dynamic_remover", "resolution", 0.2);
   map.levels = config.param<int>("dynamic_remover", "levels", 20);
@@ -31,9 +29,14 @@ DUFOMapParams::DUFOMapParams() {
   integration.parallel = config.param<bool>("dynamic_remover", "parallel", true);
   integration.num_threads = config.param<int>("dynamic_remover", "num_threads", 16);
   integration.only_valid = config.param<bool>("dynamic_remover", "only_valid", false);
+  if (map.resolution <= 0.0 || map.levels <= 0 ||
+      integration.hit_depth < 0 || integration.miss_depth < 0 ||
+      integration.inflate_unknown < 0.0 ||
+      integration.inflate_hits_dist < 0.0 || integration.num_threads < 0) {
+    throw std::invalid_argument("DUFOMap parameters are out of range");
+  }
   
   // integration.ray_casting_depth = config.param<int>("dynamic_remover", "ray_casting_depth", 0)
   // propagate = config.param<bool>("dynamic_remover", "propagate", false);
   // ray_casting_method = config.param<std::string>("dynamic_remover", "ray_casting_method", "simple");
 }
-

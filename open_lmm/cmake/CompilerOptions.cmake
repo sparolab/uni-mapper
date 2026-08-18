@@ -22,8 +22,26 @@
 # SOFTWARE.
 
 function(openlmm_set_global_target_properties target)
-  target_compile_features(${target} PUBLIC cxx_std_17)
+  target_compile_features(${target} PUBLIC cxx_std_20)
   target_compile_definitions(${target} PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:_USE_MATH_DEFINES>)
+  if(OPEN_LMM_ENABLE_ASAN_UBSAN)
+    # Eigen changes its allocator strategy when __SANITIZE_ADDRESS__ is set.
+    # Keep allocations crossing into the prebuilt system GTSAM DSO compatible
+    # with that DSO's normal glibc/Eigen build contract.
+    target_compile_definitions(${target} PRIVATE
+      EIGEN_MALLOC_ALREADY_ALIGNED=1)
+    target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fsanitize=address,undefined>
+      $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fno-omit-frame-pointer>)
+    target_link_options(${target} PRIVATE
+      $<$<LINK_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fsanitize=address,undefined>)
+  elseif(OPEN_LMM_ENABLE_TSAN)
+    target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fsanitize=thread>
+      $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fno-omit-frame-pointer>)
+    target_link_options(${target} PRIVATE
+      $<$<LINK_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fsanitize=thread>)
+  endif()
   target_compile_options(
     ${target}
     PRIVATE # MSVC

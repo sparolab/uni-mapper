@@ -13,9 +13,7 @@
 
 namespace common {
 
-Config::Config() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_dynamic_remover"));
+Config::Config(const open_lmm::Config& config) {
   max_range_ = config.param<double>("dynamic_remover", "max_range", 80.0);
   num_rings_ = config.param<int>("dynamic_remover", "num_rings", 20);
   num_sectors_ = config.param<int>("dynamic_remover", "num_sectors", 108);

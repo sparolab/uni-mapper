@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(open_lmm_ros VERSION 1.0.0 LANGUAGES CXX)
+project(open_lmm_ros VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 # set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -33,18 +33,16 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 ### open_lmm ###
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../open_lmm/ AND NOT IS_SYMLINK ${CMAKE_CURRENT_SOURCE_DIR})
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../open_lmm ${CMAKE_CURRENT_BINARY_DIR}/open_lmm)
-endif()
+find_package(open_lmm CONFIG REQUIRED)
 
 ### open_lmm_ros ###
 ament_auto_add_library(open_lmm_ros SHARED
   ${ros_version}/open_lmm_ros/open_lmm_ros.cpp
 )
 target_link_libraries(open_lmm_ros
-  open_lmm_utils
-  open_lmm_map_server
-  open_lmm_gui_core
+  open_lmm::utils
+  open_lmm::runtime
+  open_lmm::gui
 )
 rclcpp_components_register_nodes(open_lmm_ros "open_lmm::OpenLMMROS")
 

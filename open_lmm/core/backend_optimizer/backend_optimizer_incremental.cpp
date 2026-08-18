@@ -8,6 +8,7 @@
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
+#include <tqdmcpp/tqdmcpp.hpp>
 
 #include <open_lmm/common/registration.hpp>
 #include <open_lmm/common/profiling.hpp>
@@ -16,32 +17,12 @@
 
 namespace open_lmm {
 
-BackendOptimizerIncremental::BackendOptimizerIncremental(Config config) {
-  parseConfig(config);
+BackendOptimizerIncremental::BackendOptimizerIncremental(OptimizerConfig config)
+    : param_(std::move(config)) {
   initNoise();
 }
 
 BackendOptimizerIncremental::~BackendOptimizerIncremental() {}
-
-void BackendOptimizerIncremental::parseConfig(Config config) {
-  param_.relinearize_threshold =
-      config.param<double>("backend_optimizer", "relinearizeThreshold", 0.1);
-  param_.relinearize_skip =
-      config.param<int>("backend_optimizer", "relinearizeSkip", 1);
-  param_.isam_extra_updates =
-      config.param<int>("backend_optimizer", "isam_extra_updates", 5);
-  param_.min_loop_frame_gap =
-      config.param<int>("backend_optimizer", "min_loop_frame_gap", 30);
-  param_.icp_search_num =
-      config.param<int>("backend_optimizer", "icp_search_num", 3);
-  if (param_.relinearize_threshold <= 0.0 || param_.relinearize_skip <= 0 ||
-      param_.isam_extra_updates < 0 || param_.min_loop_frame_gap < 0 ||
-      param_.icp_search_num < 0) {
-    throw std::invalid_argument(
-        "backend_optimizer requires relinearizeThreshold > 0, "
-        "relinearizeSkip > 0, and nonnegative update/gap/search values");
-  }
-}
 
 void BackendOptimizerIncremental::Reset() {
   accumulated_graph_.resize(0);
@@ -62,7 +43,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     const AgentRawData&                 raw_data,
     const LoopPairVec&                  intra_loops,
     const LoopPairVec&                  inter_loops,
-    const std::map<char, AgentRawData>& all_raw_data) {
+    const AgentRawDataMap&              all_raw_data) {
   OPEN_LMM_ZONE_N("Optimizer.Process");
   OPEN_LMM_PLOT("optimizer.intra_loop_count", intra_loops.size());
   OPEN_LMM_PLOT("optimizer.inter_loop_count", inter_loops.size());
@@ -146,7 +127,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
       ThrowIfCancellationRequested(cancellation_, "optimizer inter loop");
       gtsam::Symbol node_from(loop.from.first, loop.from.second);
       gtsam::Symbol node_to(loop.to.first,   loop.to.second);
-      const auto& raw_to = all_raw_data.at(loop.to.first);
+      const auto& raw_to = *all_raw_data.at(loop.to.first);
       auto refined = registerPointCloud(
           raw_to.filtered_scans, raw_to.odom_poses,
           raw_data.filtered_scans[loop.from.second], loop, param_.icp_search_num);

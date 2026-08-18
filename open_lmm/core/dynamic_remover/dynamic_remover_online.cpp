@@ -2,6 +2,7 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
+#include <tqdmcpp/tqdmcpp.hpp>
 
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/utils/logging.hpp>
@@ -10,14 +11,6 @@
 #include <small_gicp/util/downsampling_tbb.hpp>
 
 namespace open_lmm {
-
-OnlineParams::OnlineParams() {
-  Config config =
-      Config(GlobalConfig::get_global_config_path("config_dynamic_remover"));
-  dynamic_remover_type =
-      config.param<std::string>("dynamic_remover", "dynamic_remover_type", "");
-  model = config.param<std::string>("dynamic_remover", "model", "");
-}
 
 DynamicRemoverOnline::DynamicRemoverOnline(
     const OnlineParams& params, std::shared_ptr<IOnlineRemoverPlugin> model)
@@ -50,9 +43,9 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::process(
 }
 
 Result<std::shared_ptr<IOnlineRemoverPlugin>> DynamicRemoverOnline::loadModule(
-    const std::string& so_name) {
-  return load_module_from_so<IOnlineRemoverPlugin>(
-      so_name, "create_dynamic_remover_module");
+    const std::string& so_name, const std::string& config_json) {
+  return load_plugin_v1<IOnlineRemoverPlugin>(
+      so_name, "dynamic_remover_online", config_json);
 }
 
 }  // namespace open_lmm

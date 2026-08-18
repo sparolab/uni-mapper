@@ -21,10 +21,70 @@ struct Error {
     kCancelled,
   };
 
+  enum class Severity : uint8_t { kRecoverable, kFatalSession };
+
+  struct Context {
+    std::optional<uint64_t> session_revision;
+    std::string stage;
+    std::string node;
+    std::optional<char> agent;
+    std::string plugin;
+    std::string config;
+  };
+
   Code        code;
   std::string message;
+  Severity severity = Severity::kRecoverable;
+  Context context;
 
   [[nodiscard]] const std::string& Message() const { return message; }
+
+  Error& MarkFatalSession() & {
+    severity = Severity::kFatalSession;
+    return *this;
+  }
+  Error&& MarkFatalSession() && {
+    severity = Severity::kFatalSession;
+    return std::move(*this);
+  }
+  Error& WithSessionRevision(uint64_t revision) & {
+    context.session_revision = revision;
+    return *this;
+  }
+  Error&& WithSessionRevision(uint64_t revision) && {
+    context.session_revision = revision;
+    return std::move(*this);
+  }
+  Error& WithExecution(std::string stage_name, std::string node_name = {},
+                       std::optional<char> agent_id = std::nullopt) & {
+    context.stage = std::move(stage_name);
+    context.node = std::move(node_name);
+    context.agent = agent_id;
+    return *this;
+  }
+  Error&& WithExecution(std::string stage_name, std::string node_name = {},
+                        std::optional<char> agent_id = std::nullopt) && {
+    context.stage = std::move(stage_name);
+    context.node = std::move(node_name);
+    context.agent = agent_id;
+    return std::move(*this);
+  }
+  Error& WithPlugin(std::string plugin_name) & {
+    context.plugin = std::move(plugin_name);
+    return *this;
+  }
+  Error&& WithPlugin(std::string plugin_name) && {
+    context.plugin = std::move(plugin_name);
+    return std::move(*this);
+  }
+  Error& WithConfig(std::string config_name) & {
+    context.config = std::move(config_name);
+    return *this;
+  }
+  Error&& WithConfig(std::string config_name) && {
+    context.config = std::move(config_name);
+    return std::move(*this);
+  }
 
   static Error FileNotFound(std::string_view path) {
     return {Code::kFileNotFound, "File not found: " + std::string(path)};

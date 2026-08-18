@@ -1,15 +1,18 @@
 
-add_subdirectory(scan_context)
-add_subdirectory(solid)
+if(OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT)
+  add_subdirectory(scan_context)
+endif()
+if(OPEN_LMM_BUILD_DESCRIPTOR_SOLID)
+  add_subdirectory(solid)
+endif()
 
 add_library(descriptor_kdtree STATIC)
 target_sources(descriptor_kdtree PRIVATE
   database_kdtree.cpp
 )
-target_link_libraries(descriptor_kdtree PUBLIC
-  scan_context
-  solid
+target_link_libraries(descriptor_kdtree PRIVATE
+  Eigen3::Eigen
+  PCL::PCL
   nanoflann::nanoflann
-  open_lmm_utils
 )
 openlmm_set_global_target_properties(descriptor_kdtree)

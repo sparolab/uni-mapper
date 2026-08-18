@@ -1068,4 +1068,25 @@ void IridescenceGui::DrawStageConfigModal() {
 }
 }  // namespace open_lmm
 
-extern "C" open_lmm::GuiPlugin* create_gui_plugin() { return new open_lmm::IridescenceGui(); }
+#include <open_lmm/common/plugin_api.h>
+
+namespace {
+void* CreateGui(const OpenLmmPluginConfigV1*) noexcept {
+  try {
+    open_lmm::GuiPlugin* plugin = new open_lmm::IridescenceGui();
+    return static_cast<void*>(plugin);
+  } catch (...) {
+    return nullptr;
+  }
+}
+void DestroyGui(void* value) noexcept {
+  delete static_cast<open_lmm::GuiPlugin*>(value);
+}
+const OpenLmmPluginApiV1 kGuiApi{
+    OPEN_LMM_PLUGIN_ABI_VERSION_V1, "gui", "iridescence",
+    &CreateGui, &DestroyGui, "gui:desktop", 1, "open-lmm-1.0"};
+}  // namespace
+
+extern "C" const OpenLmmPluginApiV1* open_lmm_plugin_entry() {
+  return &kGuiApi;
+}

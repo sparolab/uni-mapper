@@ -106,16 +106,24 @@ class PipelineController {
   bool cancellationRequested() const;
   void emit(ExecutionEvent event);
   void finish(uint64_t job_id, const Result<void>& result);
+  bool synchronizeCommittedSession(
+      const std::shared_ptr<StageRunner>& runner);
 
   std::shared_ptr<StageRunner> runner_;
+  // Serializes commands that may replace the worker, runner, or cancellation
+  // token. The state mutex alone cannot protect the check-then-start sequence.
+  mutable std::mutex command_mutex_;
   ArtifactRepository artifacts_;
   mutable std::mutex mutex_;
   std::condition_variable completed_;
   std::optional<JobSnapshot> job_;
+  std::vector<char> agents_;
+  bool maintenance_in_progress_ = false;
   std::shared_ptr<ExecutionEventSubscriberRegistry> event_subscribers_;
   std::vector<ExecutionEvent> recent_events_;
   std::thread worker_;
   std::atomic<bool> cancel_requested_{false};
+  std::atomic<bool> runner_manages_artifacts_{false};
   std::shared_ptr<CancellationToken> cancellation_;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback_;
   uint64_t next_job_id_ = 1;

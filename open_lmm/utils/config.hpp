@@ -8,6 +8,7 @@
 #include <optional>
 #include <iostream>
 #include <mutex>
+#include <string_view>
 
 namespace open_lmm {
 
@@ -21,6 +22,11 @@ public:
    */
   Config(const std::string& config_filename);
   virtual ~Config();
+
+  // Build an immutable in-memory snapshot without consulting the filesystem.
+  static Config FromJson(std::string_view json_text,
+                         std::string source_name = "<memory>");
+  [[nodiscard]] std::string ToJson() const;
 
   [[nodiscard]] bool is_valid() const { return !error_message_.has_value(); }
   [[nodiscard]] const std::string& error_message() const {

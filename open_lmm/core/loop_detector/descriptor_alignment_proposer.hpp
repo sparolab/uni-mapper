@@ -1,6 +1,6 @@
 #pragma once
 
-#include <open_lmm/common/agent_data.hpp>
+#include <open_lmm/common/shared_data.hpp>
 
 #include <map>
 #include <optional>
@@ -29,7 +29,7 @@ class DescriptorAlignmentProposer {
   std::optional<MapAlignmentProposal> Propose(
       char target_agent, char source_agent,
       const PoseVec& source_odometry,
-      const std::map<char, AgentOptimizedData>& optimized_agents,
+      const AgentOptimizedDataMap& optimized_agents,
       const LoopPairVec& descriptor_loops,
       DescriptorAlignmentDiagnostics* diagnostics = nullptr) const;
 

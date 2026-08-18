@@ -7,25 +7,18 @@
 
 #include "database_kdtree.h"
 
-KdtreeParams::KdtreeParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_loop_detector"));
-  num_candidates = config.param<int>("database", "num_candidates", 5);
-  distance_threshold =
-      config.param<double>("database", "distance_threshold", 0.13);
-  kdtree_rebuild_threshold =
-      config.param<int>("database", "rebuild_threshold", 50);
-  descriptor_vector_dim =
-      config.param<int>("database", "descriptor_vector_dim", 128);
-  if (num_candidates <= 0 || distance_threshold < 0.0 ||
-      kdtree_rebuild_threshold <= 0 || descriptor_vector_dim <= 0) {
+DatabaseKdtree::DatabaseKdtree(
+    const DatabaseKdtreeParams& params,
+    std::shared_ptr<IDescriptorKdtree> plugin_owner)
+    : params_(params) {
+  if (params_.num_candidates == 0 || params_.distance_threshold < 0.0 ||
+      params_.kdtree_rebuild_threshold == 0 ||
+      params_.descriptor_vector_dim == 0) {
     throw std::invalid_argument("database KD-tree parameters are out of range");
   }
-}
-
-DatabaseKdtree::DatabaseKdtree(const KdtreeParams& params) : params_(params) {
   kd_tree_ = std::make_shared<KDTree>(params_.descriptor_vector_dim,
                                       tree_descriptor_keys_, KDTreeParams(20));
+  if (plugin_owner) plugin_owners_.push_back(std::move(plugin_owner));
 }
 
 /*********************************************************************************************************************/
@@ -138,12 +131,18 @@ DatabaseKdtree::findDescriptorKeyNeighborsSafe(const std::shared_ptr<IDescriptor
   return neighbors;
 }
 
-void DatabaseKdtree::merge(const DatabaseKdtree& other) {
-  database_.insert(database_.end(), other.database_.begin(),
-                   other.database_.end());
+void DatabaseKdtree::merge(const DescriptorIndex& index) {
+  const auto* other = dynamic_cast<const DatabaseKdtree*>(&index);
+  if (!other) {
+    throw std::invalid_argument("incompatible descriptor index implementation");
+  }
+  database_.insert(database_.end(), other->database_.begin(),
+                   other->database_.end());
+  plugin_owners_.insert(plugin_owners_.end(), other->plugin_owners_.begin(),
+                        other->plugin_owners_.end());
   tree_descriptor_keys_.data.insert(tree_descriptor_keys_.data.end(),
-                                    other.tree_descriptor_keys_.data.begin(),
-                                    other.tree_descriptor_keys_.data.end());
+                                    other->tree_descriptor_keys_.data.begin(),
+                                    other->tree_descriptor_keys_.data.end());
   kd_tree_ = std::make_shared<KDTree>(params_.descriptor_vector_dim,
                                       tree_descriptor_keys_, KDTreeParams(20));
 }

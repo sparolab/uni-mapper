@@ -32,9 +32,14 @@ target_sources(open_lmm_utils PRIVATE
   logging.cpp
   load_module.cpp
 )
-target_link_libraries(open_lmm_utils PUBLIC
+target_link_libraries(open_lmm_utils
+ PUBLIC
   Eigen3::Eigen
+ PRIVATE
   nlohmann_json::nlohmann_json
   spdlog::spdlog
+)
+target_include_directories(open_lmm_utils PUBLIC
+  $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>
 )
 openlmm_set_global_target_properties(open_lmm_utils)

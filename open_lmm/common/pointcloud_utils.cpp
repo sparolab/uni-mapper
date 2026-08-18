@@ -66,9 +66,14 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
       }
     }
 
-    const VOXEL_LOC voxel_idx(static_cast<uint32_t>(loc_xyz[0]),
-                              static_cast<uint32_t>(loc_xyz[1]),
-                              static_cast<uint32_t>(loc_xyz[2]));
+    // Direct float-to-unsigned conversion is undefined for negative voxel
+    // coordinates. Convert through a signed integral type first; the following
+    // signed-to-unsigned conversion is well-defined modulo 2^32 and preserves
+    // the existing VOXEL_LOC bit pattern.
+    const VOXEL_LOC voxel_idx(
+        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[0])),
+        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[1])),
+        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[2])));
     auto iter = voxel_map.find(voxel_idx);
     if (iter != voxel_map.end()) {
       iter->second.xyz[0] += point.x;

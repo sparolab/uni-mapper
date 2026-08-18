@@ -1,26 +1,17 @@
 #pragma once
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
-#include <tqdmcpp/tqdmcpp.hpp>
 
 #include "backend_optimizer_base.hpp"
 
 namespace open_lmm {
 
-struct BackendOptimizerIncrementalParam {
-  std::string backend_optimizer_type;
-  double relinearize_threshold;
-  int    relinearize_skip;
-  int    isam_extra_updates;   // ISAM2 추가 재선형화 횟수 (기본 5)
-  int    min_loop_frame_gap;   // intra-loop 최소 스캔 인덱스 차이 (기본 30)
-  int    icp_search_num;       // registerPointCloud submap 검색 범위 (기본 3)
-};
+using BackendOptimizerIncrementalParam = OptimizerConfig;
 
 class BackendOptimizerIncremental : public BackendOptimizerBase {
  public:
-  explicit BackendOptimizerIncremental(Config config);
+  explicit BackendOptimizerIncremental(OptimizerConfig config);
   ~BackendOptimizerIncremental() override;
-  void parseConfig(Config config) override;
 
   // ISAM2 자체는 Process 호출마다 생성한다. committed graph/values는 agent 간
   // 누적하며, 각 호출은 working copy에서 처리한 후 성공 시에만 commit한다.
@@ -29,7 +20,7 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
       const AgentRawData&                 raw_data,
       const LoopPairVec&                  intra_loops,
       const LoopPairVec&                  inter_loops,
-      const std::map<char, AgentRawData>& all_raw_data) override;
+      const AgentRawDataMap&              all_raw_data) override;
 
   void initNoise();
   void Reset() override;

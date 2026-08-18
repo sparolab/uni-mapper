@@ -46,12 +46,13 @@ class OptimizeNode : public PipelineNodeBase {
       if (raw != db.raw_data.end() && !opt.optimized_poses.empty()) {
         const auto& [index, global_pose] = opt.optimized_poses.front();
         if (index >= 0 &&
-            static_cast<std::size_t>(index) < raw->second.odom_poses.size()) {
+            static_cast<std::size_t>(index) < raw->second->odom_poses.size()) {
           optimized_map_transforms[id] =
-              global_pose * raw->second.odom_poses[index].inverse();
+              global_pose * raw->second->odom_poses[index].inverse();
         }
       }
-      db.optimized_data[id] = std::move(opt);
+      db.optimized_data[id] =
+          std::make_shared<const AgentOptimizedData>(std::move(opt));
     }
     db.descriptor_store.set_agent_map(
         ctx.agent.id, ctx.raw_data->map_points,
@@ -78,8 +79,8 @@ class OptimizeNode : public PipelineNodeBase {
       }
       const auto target = db.raw_data.find(loop.to.first);
       if (target == db.raw_data.end() ||
-          loop.to.second >= target->second.filtered_scans.size() ||
-          loop.to.second >= target->second.odom_poses.size()) {
+          loop.to.second >= target->second->filtered_scans.size() ||
+          loop.to.second >= target->second->odom_poses.size()) {
         return Result<void>::Failure(Error::InvalidArgument(
             "Loop target agent or scan index is invalid"));
       }

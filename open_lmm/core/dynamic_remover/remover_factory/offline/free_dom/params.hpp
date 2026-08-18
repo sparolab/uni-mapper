@@ -3,7 +3,7 @@
 #include <string>
 
 struct FreeDomParams {
-  FreeDomParams();
+  explicit FreeDomParams(const open_lmm::Config& config);
   ~FreeDomParams() = default;
 
   // bool replace_intensity;

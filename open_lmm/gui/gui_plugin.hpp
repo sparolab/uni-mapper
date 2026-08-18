@@ -33,5 +33,4 @@ class GuiPlugin {
   virtual void RequestStop() = 0;
   virtual void Join() = 0;
 };
-inline constexpr const char* kCreateGuiPluginSymbol = "create_gui_plugin";
 }  // namespace open_lmm

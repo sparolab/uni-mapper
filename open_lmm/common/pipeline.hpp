@@ -27,8 +27,8 @@ struct AgentPipelineCtx {
   ControlFlow  flow = ControlFlow::kContinue;
 
   // 각 노드가 채우는 중간 결과
-  std::optional<AgentRawData>       raw_data;
-  std::optional<LoopDetectorOutput> loop_output;
+  AgentRawDataHandle                         raw_data;
+  std::shared_ptr<const LoopDetectorOutput> loop_output;
 };
 
 // 파이프라인 노드 기반 클래스

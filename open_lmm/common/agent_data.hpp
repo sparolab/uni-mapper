@@ -4,10 +4,11 @@
 #include <pcl/point_types.h>
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <open_lmm/common/alignment_types.hpp>
 #include <open_lmm/common/data_types.hpp>
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
+#include <open_lmm/common/descriptor_index.hpp>
 #include <vector>
 
 namespace open_lmm {
@@ -27,12 +28,17 @@ struct AgentOptimizedData {
   pcl::PointCloud<pcl::PointXYZ>                 kdtree_poses;  // 포즈 KD-tree 검색용
 };
 
+using AgentRawDataHandle = std::shared_ptr<const AgentRawData>;
+using AgentOptimizedDataHandle = std::shared_ptr<const AgentOptimizedData>;
+using AgentRawDataMap = std::map<char, AgentRawDataHandle>;
+using AgentOptimizedDataMap = std::map<char, AgentOptimizedDataHandle>;
+
 // LoopDetector의 출력 계약. 구체 detector 구현과 분리해 pipeline 사용자가
 // KISS-Matcher 구현 헤더를 포함하지 않도록 한다.
 struct LoopDetectorOutput {
   LoopPairVec intra_loops;
   LoopPairVec inter_loops;
-  DatabaseKdtree agent_db;
+  DescriptorIndexHandle agent_descriptors;
   std::vector<Eigen::Vector3f> transformed_map_points;
   std::optional<Eigen::Isometry3d> accepted_global_T_agent;
   std::optional<AlignmentMethod> accepted_alignment_method;
@@ -55,7 +61,9 @@ struct AlignedAgentMap {
 
 // LoopDetector 전용 공유 상태 (에이전트 간 순차 누적)
 struct DescriptorStore {
-  DatabaseKdtree               total_db;    // anchor + follower descriptor DB 누적
+  DescriptorIndexHandle total_db;  // anchor + follower descriptor index snapshot
+  std::map<char, DescriptorIndexHandle> per_agent_db;
+  std::vector<char> descriptor_order;
   std::vector<Eigen::Vector3f> merged_map;  // KISSMatcher용 누적 맵 포인트
   std::map<char, AlignedAgentMap> aligned_maps;
 
@@ -64,20 +72,42 @@ struct DescriptorStore {
   }
 
   void clear() {
-    total_db.clear();
+    total_db.reset();
+    per_agent_db.clear();
+    descriptor_order.clear();
     merged_map.clear();
     aligned_maps.clear();
   }
 
   // Descriptor compute 결과는 optimization 이전에 commit할 수 있지만,
   // map target은 OptimizeNode 성공 이후에만 set_agent_map()으로 commit한다.
-  void set_anchor_descriptor(DatabaseKdtree&& db) {
-    total_db = std::move(db);
+  void set_anchor_descriptor(char agent_id, DescriptorIndexHandle index) {
+    per_agent_db.clear();
+    descriptor_order.clear();
+    per_agent_db.emplace(agent_id, std::move(index));
+    descriptor_order.push_back(agent_id);
+    rebuild_descriptor_db();
   }
 
   // follower 처리 후 호출 — 다음 에이전트가 이 follower의 descriptor를 조회 가능
-  void merge_descriptor_db(DatabaseKdtree&& follower_db) {
-    total_db.merge(std::move(follower_db));
+  void merge_descriptor_db(char agent_id, DescriptorIndexHandle index) {
+    if (!per_agent_db.contains(agent_id)) descriptor_order.push_back(agent_id);
+    per_agent_db[agent_id] = std::move(index);
+    rebuild_descriptor_db();
+  }
+
+  void rebuild_descriptor_db() {
+    std::unique_ptr<DescriptorIndex> rebuilt;
+    for (char agent_id : descriptor_order) {
+      const auto found = per_agent_db.find(agent_id);
+      if (found == per_agent_db.end() || !found->second) continue;
+      if (!rebuilt) {
+        rebuilt = found->second->Clone();
+      } else {
+        rebuilt->merge(*found->second);
+      }
+    }
+    total_db = DescriptorIndexHandle(std::move(rebuilt));
   }
 
   void set_agent_map(char agent_id, std::vector<Eigen::Vector3f> original_map,

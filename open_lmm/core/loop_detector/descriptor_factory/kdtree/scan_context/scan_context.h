@@ -18,15 +18,14 @@
 
 #include <Eigen/Dense>
 #include <cstddef>
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/interface_descriptor_kdtree.hpp>
+#include <open_lmm/common/descriptor_index.hpp>
 #include <open_lmm/utils/config.hpp>
 #include <vector>
 
 struct ScanContextParams {
  public:
   //   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  ScanContextParams();
-  // explicit Params(Config config);
+  explicit ScanContextParams(const open_lmm::Config& config);
   ~ScanContextParams() = default;
 
  public:

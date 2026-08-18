@@ -4,9 +4,7 @@
 
 #include <stdexcept>
 
-FreeDomParams::FreeDomParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_dynamic_remover"));
+FreeDomParams::FreeDomParams(const open_lmm::Config& config) {
 
   replace_intensity = config.param<bool>("dynamic_remover", "replace_intensity", true);
   const auto removal_level = config.param<std::string>(
@@ -70,4 +68,10 @@ FreeDomParams::FreeDomParams() {
   fov_mask_path = config.param<std::string>("dynamic_remover", "fov_mask_path", "");
 
   num_threads = config.param<int>("dynamic_remover", "num_threads", 8);
+  if (sensor_min_range < 0.0 || sensor_max_range <= sensor_min_range ||
+      sensor_min_z >= sensor_max_z || sub_voxel_size <= 0.0 ||
+      voxel_depth == 0 || block_depth == 0 || raycast_max_range <= 0.0 ||
+      counts_to_free == 0 || counts_to_revert == 0 || num_threads == 0) {
+    throw std::invalid_argument("FreeDOM parameters are out of range");
+  }
 }

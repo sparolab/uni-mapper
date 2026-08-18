@@ -43,28 +43,28 @@ class LoopDetectNode : public PipelineNodeBase {
                                 : &stored->second,
     };
     try {
-      ctx.loop_output = detector->Process(input);
+      auto output = detector->Process(input);
+      if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
+        return Result<ControlFlow>::Failure(
+            Error::Cancelled("before LoopDetect commit"));
+      }
+
+      // Mutate only the caller-owned working database. The SessionTransaction
+      // installs this descriptor state and per-agent output together.
+      if (ctx.agent.is_anchor()) {
+        db.descriptor_store.set_anchor_descriptor(ctx.agent.id,
+                                                  output.agent_descriptors);
+      } else {
+        db.descriptor_store.merge_descriptor_db(ctx.agent.id,
+                                                output.agent_descriptors);
+      }
+      ctx.loop_output =
+          std::make_shared<const LoopDetectorOutput>(std::move(output));
     } catch (const CancellationException& e) {
-      ctx.loop_output.reset();
       return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
     } catch (const std::exception& e) {
-      ctx.loop_output.reset();
       return Result<ControlFlow>::Failure(
           Error::InvalidArgument("LoopDetect failed: " + std::string(e.what())));
-    }
-    if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-      ctx.loop_output.reset();
-      return Result<ControlFlow>::Failure(
-          Error::Cancelled("before LoopDetect commit"));
-    }
-
-    // DescriptorStore 업데이트 (server 레이어 책임)
-    if (ctx.agent.is_anchor()) {
-      db.descriptor_store.set_anchor_descriptor(
-          std::move(ctx.loop_output->agent_db));
-    } else {
-      db.descriptor_store.merge_descriptor_db(
-          std::move(ctx.loop_output->agent_db));
     }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
