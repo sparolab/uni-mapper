@@ -59,13 +59,16 @@ class InteractivePort final : public test::RuntimePortFixture {
 
   Result<void> ExecuteFixture(const ExecutionCommand&,
                               const ExecutionContext& context) override {
+    if (!context.alignment_feedback->IsEnabled()) return Result<void>::Ok();
     AlignmentFeedbackSnapshot request;
     request.proposal.target_agent = Id("agent");
     request.proposal.source_agent = Id("agent");
     auto response = context.alignment_feedback->Request(std::move(request),
                                                         context.cancellation);
-    return response ? Result<void>::Ok()
-                    : Result<void>::Failure(response.GetError());
+    if (!response) return Result<void>::Failure(response.GetError());
+    return response.Value().decision == AlignmentDecision::kCancel
+               ? Result<void>::Failure(Error::Cancelled("alignment feedback cancelled"))
+               : Result<void>::Ok();
   }
 
   Result<VisualizationSnapshot> CreateVisualization(
@@ -181,6 +184,8 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
 
   Check(service.Open({root / "config", "one"}).IsOk(), "open one runtime");
   Check(!service.Open({root / "config", "two"}), "reject a second runtime");
+  Check(service.SetAlignmentFeedbackEnabled(true).IsOk(),
+        "interactive fixture explicitly enables feedback authority");
   std::atomic<uint64_t> queued{0};
   auto subscribed = service.SubscribeEvents([&](const ExecutionEvent& event) {
     if (event.type == EventType::kJobQueued) queued.store(event.job_id);
@@ -206,6 +211,8 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
                             AlignmentDecision::kAccept, std::nullopt}) &&
             service.Wait(first.Value()),
         "feedback and wait target the same unkeyed job handle");
+  const auto last_before_replacement = service.Snapshot().Value()
+                                           .pipeline.recent_events.back().sequence;
 
   auto replacement = ReplacementCandidate(root / "config", root / "output",
                                           root / "replaced-output");
@@ -227,6 +234,12 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
             ReadText(root / "config/config.json").find("replaced-output") !=
                 std::string::npos,
         "replacement atomically exposes new runtime and persisted root config");
+  Check(!snapshot.Value().pipeline.recent_events.empty() &&
+            snapshot.Value().pipeline.recent_events.back().sequence >=
+                last_before_replacement,
+        "replacement preserves the service event journal and sequence");
+  const auto sequence_after_replacement =
+      snapshot.Value().pipeline.recent_events.back().sequence;
   auto second = service.Submit(one_stage);
   Check(second && second.Value().value != first.Value().value,
         "handles are never reused after controller replacement");
@@ -241,8 +254,51 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
                              AlignmentDecision::kAccept, std::nullopt}) &&
             service.Wait(second.Value()),
         "new runtime executes through the same public API");
+  const auto after_second = service.Snapshot().Value().pipeline.recent_events;
+  Check(!after_second.empty() &&
+            after_second.back().sequence > sequence_after_replacement,
+        "replacement events continue the same public sequence");
   subscription.Reset();
   Check(service.Close().IsOk() && !service.IsOpen(), "close retires sole runtime");
+  fs::remove_all(root);
+}
+
+void TestHeadlessFeedbackAndDisableCancellation() {
+  const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_feedback";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<InteractivePort>());
+      });
+  Check(service.Open({root / "config", "headless"}).IsOk(),
+        "headless feedback fixture opens");
+  ExecutionRequest request;
+  request.kind = ExecutionRequestKind::kStage;
+  request.stage = StageId::kDataLoad;
+  auto headless = service.Submit(request);
+  Check(headless && service.Wait(headless.Value()),
+        "feedback-disabled runtime never waits for interactive input");
+  Check(!service.AlignmentFeedback().Value().has_value(),
+        "headless runtime has no published feedback request");
+
+  Check(service.SetAlignmentFeedbackEnabled(true).IsOk(),
+        "authority can be enabled for an interactive owner");
+  auto interactive = service.Submit(request);
+  Check(interactive.IsOk(), "interactive fixture submits");
+  WaitUntil([&] {
+    auto feedback = service.AlignmentFeedback();
+    return feedback && feedback.Value().has_value();
+  }, "interactive feedback request becomes visible");
+  Check(service.SetAlignmentFeedbackEnabled(false).IsOk(),
+        "disabling authority cancels the active request");
+  Check(!service.Wait(interactive.Value()),
+        "cancelled feedback request terminates its waiting command");
+  Check(!service.AlignmentFeedback().Value().has_value(),
+        "disabled authority leaves no active feedback request");
+  Check(service.Close().IsOk(), "headless feedback fixture closes");
   fs::remove_all(root);
 }
 
@@ -311,6 +367,78 @@ void TestSubscriptionResetBarrier() {
   fs::remove_all(root);
 }
 
+void TestSubscriptionOutlivesRuntime() {
+  const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_subscription_lifetime";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  std::optional<ExecutionEventSubscription> subscription;
+  {
+    auto service = std::make_unique<RuntimeService>(
+        1, [](const BootstrapConfigSnapshot&, const fs::path&)
+               -> Result<std::shared_ptr<StageRuntimePort>> {
+          return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+              std::make_shared<SuccessPort>());
+        });
+    Check(service->Open({root / "config", "subscription-lifetime"}).IsOk(),
+          "subscription lifetime fixture opens");
+    auto subscribed = service->SubscribeEvents([](const ExecutionEvent&) {});
+    Check(subscribed.IsOk(), "subscription lifetime fixture subscribes");
+    subscription.emplace(std::move(subscribed).Value());
+  }
+  subscription->Reset();
+  subscription.reset();
+  fs::remove_all(root);
+}
+
+void TestSubscriptionResetWaitsForCopiedCallback() {
+  const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_subscription_barrier";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<SuccessPort>());
+      });
+  Check(service.Open({root / "config", "subscription-barrier"}).IsOk(),
+        "subscription barrier fixture opens");
+  std::atomic<bool> callback_entered{false};
+  std::atomic<bool> release_callback{false};
+  std::atomic<bool> reset_returned{false};
+  std::atomic<unsigned> calls{0};
+  auto subscribed = service.SubscribeEvents([&](const ExecutionEvent&) {
+    const auto call = calls.fetch_add(1, std::memory_order_relaxed);
+    if (call != 0) return;
+    callback_entered.store(true, std::memory_order_release);
+    while (!release_callback.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  });
+  Check(subscribed.IsOk(), "subscription barrier fixture subscribes");
+  auto subscription = std::move(subscribed).Value();
+  Result<JobHandle> job = Result<JobHandle>::Failure(Error::InvalidArgument("not run"));
+  std::thread submitter([&] {
+    job = service.Submit({ExecutionRequestKind::kStage, StageId::kDataLoad});
+  });
+  WaitUntil([&] { return callback_entered.load(std::memory_order_acquire); },
+            "first callback was copied and entered");
+  std::thread resetter([&] {
+    subscription.Reset();
+    reset_returned.store(true, std::memory_order_release);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  Check(!reset_returned.load(std::memory_order_acquire),
+        "subscription reset waits for an already copied callback");
+  release_callback.store(true, std::memory_order_release);
+  submitter.join();
+  resetter.join();
+  Check(job && service.Wait(job.Value()), "barrier fixture command completes");
+  Check(calls.load(std::memory_order_relaxed) == 1,
+        "no callback runs after reset returns");
+  Check(service.Close().IsOk(), "subscription barrier fixture closes");
+  fs::remove_all(root);
+}
+
 void TestOpenCloseTransitionCancellation() {
   const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_open_close";
   fs::remove_all(root);
@@ -368,8 +496,11 @@ void TestConcurrentOpenReservesTransitionBeforeBootstrap() {
 
 int main() {
   TestSingleRuntimeLifecycleAndJobIdentity();
+  TestHeadlessFeedbackAndDisableCancellation();
   TestReplacementAndCloseRejectBusyRuntime();
   TestSubscriptionResetBarrier();
+  TestSubscriptionOutlivesRuntime();
+  TestSubscriptionResetWaitsForCopiedCallback();
   TestOpenCloseTransitionCancellation();
   TestConcurrentOpenReservesTransitionBeforeBootstrap();
   std::cout << "runtime service single-runtime tests passed\n";

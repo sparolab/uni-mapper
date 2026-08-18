@@ -125,6 +125,11 @@ class AlignmentFeedbackBroker {
   void SetEnabled(bool enabled) {
     std::lock_guard lock(mutex_);
     enabled_ = enabled;
+    if (!enabled && active_) {
+      response_ = AlignmentResponse{active_->proposal.request_id,
+                                    AlignmentDecision::kCancel, std::nullopt};
+      condition_.notify_all();
+    }
   }
 
   [[nodiscard]] bool IsEnabled() const {

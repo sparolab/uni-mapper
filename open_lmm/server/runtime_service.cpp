@@ -44,6 +44,12 @@ struct RuntimeService::SubscriberSlot {
   std::function<void(const ExecutionEvent&)> callback;
 };
 
+struct RuntimeService::SubscriberRegistry {
+  std::mutex mutex;
+  bool closing = false;
+  std::map<uint64_t, std::shared_ptr<SubscriberSlot>> slots;
+};
+
 struct RuntimeService::RuntimeInstance {
   explicit RuntimeInstance(uint64_t runtime_epoch) : epoch(runtime_epoch) {}
 
@@ -91,7 +97,8 @@ RuntimeService::RuntimeService(std::size_t max_agent_tasks,
                      std::move(port_factory)) {}
 
 RuntimeService::RuntimeService(ResourceBudget budget, PortFactory port_factory)
-    : governor_(std::make_shared<ResourceGovernor>(budget)),
+    : subscribers_(std::make_shared<SubscriberRegistry>()),
+      governor_(std::make_shared<ResourceGovernor>(budget)),
       port_factory_(std::move(port_factory)) {
   if (!port_factory_) {
     port_factory_ = [governor = governor_](
@@ -108,7 +115,14 @@ RuntimeService::RuntimeService(ResourceBudget budget, PortFactory port_factory)
   }
 }
 
-RuntimeService::~RuntimeService() { (void)Close(CloseMode::kCancelAndWait); }
+RuntimeService::~RuntimeService() {
+  (void)Close(CloseMode::kCancelAndWait);
+  const auto subscribers = std::move(subscribers_);
+  if (!subscribers) return;
+  std::lock_guard lock(subscribers->mutex);
+  subscribers->closing = true;
+  subscribers->slots.clear();
+}
 
 std::string RuntimeService::GenerateOutputNamespace() {
   std::random_device source;
@@ -190,7 +204,12 @@ RuntimeService::BuildInstance(const BootstrapRequest& request,
   instance->output_directory = output_directory;
   instance->port = std::move(port).Value();
   instance->controller = std::make_shared<PipelineController>(instance->port);
-  instance->controller->SetAlignmentFeedbackEnabled(true);
+  bool feedback_enabled = false;
+  {
+    std::lock_guard lock(mutex_);
+    feedback_enabled = feedback_enabled_;
+  }
+  instance->controller->SetAlignmentFeedbackEnabled(feedback_enabled);
   instance->state = RuntimeStatus::kReady;
   rollback.committed = true;
   return Result<std::shared_ptr<RuntimeInstance>>::Ok(std::move(instance));
@@ -596,6 +615,8 @@ Result<RuntimeSnapshot> RuntimeService::Snapshot() const {
     };
     if (pipeline.job) translate(pipeline.job->id);
     for (auto& event : pipeline.recent_events) translate(event.job_id);
+    pipeline.recent_events.assign(recent_public_events_.begin(),
+                                  recent_public_events_.end());
   }
   return Result<RuntimeSnapshot>::Ok(
       {instance->label, instance->state, instance->output_directory,
@@ -642,6 +663,14 @@ Result<void> RuntimeService::RespondToAlignment(JobHandle job,
 Result<void> RuntimeService::SetAlignmentFeedbackEnabled(bool enabled) {
   auto lease = AcquireOperation(false);
   if (!lease) return Result<void>::Failure(lease.GetError());
+  {
+    std::lock_guard lock(mutex_);
+    if (lifecycle_ != LifecycleState::kReady || active_ != lease.Value().instance) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("runtime changed while setting feedback availability"));
+    }
+    feedback_enabled_ = enabled;
+  }
   lease.Value().instance->controller->SetAlignmentFeedbackEnabled(enabled);
   return Result<void>::Ok();
 }
@@ -663,7 +692,16 @@ void RuntimeService::DispatchEvent(const std::shared_ptr<RuntimeInstance>& insta
     if (event.job_id != 0) {
       event.job_id = MapPublicJobLocked(instance->epoch, event.job_id);
     }
-    for (const auto& [id, slot] : subscribers_) {
+    event.sequence = next_public_event_sequence_++;
+    recent_public_events_.push_back(event);
+    if (recent_public_events_.size() > 256) recent_public_events_.pop_front();
+  }
+  const auto subscribers = subscribers_;
+  if (!subscribers) return;
+  {
+    std::lock_guard lock(subscribers->mutex);
+    if (subscribers->closing) return;
+    for (const auto& [id, slot] : subscribers->slots) {
       (void)id;
       targets.push_back(slot);
     }
@@ -704,6 +742,11 @@ Result<ExecutionEventSubscription> RuntimeService::SubscribeEvents(
   if (!active) return Result<ExecutionEventSubscription>::Failure(active.GetError());
   auto slot = std::make_shared<SubscriberSlot>();
   slot->callback = std::move(callback);
+  const auto subscribers = subscribers_;
+  if (!subscribers) {
+    return Result<ExecutionEventSubscription>::Failure(
+        Error::InvalidArgument("runtime event subscriptions are closed"));
+  }
   uint64_t id = 0;
   {
     std::lock_guard lock(mutex_);
@@ -711,16 +754,22 @@ Result<ExecutionEventSubscription> RuntimeService::SubscribeEvents(
       return Result<ExecutionEventSubscription>::Failure(Error::InvalidArgument(
           "runtime changed while subscribing"));
     }
+    std::lock_guard subscribers_lock(subscribers->mutex);
+    if (subscribers->closing) {
+      return Result<ExecutionEventSubscription>::Failure(
+          Error::InvalidArgument("runtime event subscriptions are closed"));
+    }
     id = next_subscriber_id_++;
-    subscribers_.emplace(id, slot);
+    subscribers->slots.emplace(id, slot);
   }
   return Result<ExecutionEventSubscription>::Ok(ExecutionEventSubscription(
-      [this, weak = std::weak_ptr<SubscriberSlot>(slot), id] {
+      [weak_registry = std::weak_ptr<SubscriberRegistry>(subscribers),
+       weak = std::weak_ptr<SubscriberSlot>(slot), id] {
         auto slot = weak.lock();
         if (!slot) return;
-        {
-          std::lock_guard lock(mutex_);
-          subscribers_.erase(id);
+        if (auto registry = weak_registry.lock()) {
+          std::lock_guard lock(registry->mutex);
+          registry->slots.erase(id);
         }
         std::unique_lock lock(slot->mutex);
         slot->active = false;

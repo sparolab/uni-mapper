@@ -9,6 +9,7 @@
 
 #include <filesystem>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -67,6 +68,7 @@ class RuntimeService {
  private:
   enum class LifecycleState { kClosed, kOpening, kReady, kReplacing, kClosing };
   struct RuntimeInstance;
+  struct SubscriberRegistry;
   struct SubscriberSlot;
   struct OperationLease;
   struct PublicJob;
@@ -106,7 +108,10 @@ class RuntimeService {
   std::map<std::pair<uint64_t, JobId>, uint64_t> public_job_ids_;
   std::map<uint64_t, PublicJob> public_jobs_;
   uint64_t next_subscriber_id_ = 1;
-  std::map<uint64_t, std::shared_ptr<SubscriberSlot>> subscribers_;
+  std::shared_ptr<SubscriberRegistry> subscribers_;
+  bool feedback_enabled_ = false;
+  uint64_t next_public_event_sequence_ = 1;
+  std::deque<ExecutionEvent> recent_public_events_;
   std::shared_ptr<ResourceGovernor> governor_;
   PortFactory port_factory_;
   mutable std::mutex submit_mutex_;

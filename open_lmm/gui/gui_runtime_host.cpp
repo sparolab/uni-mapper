@@ -2,6 +2,7 @@
 
 #include <open_lmm/gui/gui_controller_bridge.hpp>
 #include <open_lmm/gui/gui_plugin_host.hpp>
+#include <open_lmm/server/runtime_client.hpp>
 
 #include <utility>
 
@@ -14,7 +15,7 @@ struct GuiRuntimeHost::Impl {
 
 GuiRuntimeHost::GuiRuntimeHost(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
-GuiRuntimeHost::~GuiRuntimeHost() = default;
+GuiRuntimeHost::~GuiRuntimeHost() { Stop(); }
 GuiRuntimeHost::GuiRuntimeHost(GuiRuntimeHost&&) noexcept = default;
 GuiRuntimeHost& GuiRuntimeHost::operator=(GuiRuntimeHost&&) noexcept = default;
 
@@ -33,9 +34,14 @@ Result<std::unique_ptr<GuiRuntimeHost>> GuiRuntimeHost::LoadAndStart(
   auto impl = std::make_unique<Impl>();
   impl->runtime = std::move(runtime);
   impl->plugin = std::move(loaded).Value();
+  auto feedback = impl->runtime->SetAlignmentFeedbackEnabled(true);
+  if (!feedback) {
+    return Result<std::unique_ptr<GuiRuntimeHost>>::Failure(feedback.GetError());
+  }
   auto started = impl->plugin->Start(
       MakeGuiServices(impl->runtime, std::move(config_file_path)));
   if (!started) {
+    (void)impl->runtime->SetAlignmentFeedbackEnabled(false);
     return Result<std::unique_ptr<GuiRuntimeHost>>::Failure(
         started.GetError());
   }
@@ -44,7 +50,9 @@ Result<std::unique_ptr<GuiRuntimeHost>> GuiRuntimeHost::LoadAndStart(
 }
 
 void GuiRuntimeHost::Stop() {
-  if (impl_ && impl_->plugin) impl_->plugin->Stop();
+  if (!impl_) return;
+  if (impl_->plugin) impl_->plugin->Stop();
+  if (impl_->runtime) (void)impl_->runtime->SetAlignmentFeedbackEnabled(false);
 }
 
 bool GuiRuntimeHost::IsOpen() const {

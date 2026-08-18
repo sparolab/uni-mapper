@@ -164,7 +164,6 @@ void TestSessionFreeBridgeAndModelReplacement() {
   std::atomic<uint64_t> queued{0};
   auto subscription = services.subscribe_events([&](const open_lmm::ExecutionEvent& event) {
     if (event.type == open_lmm::EventType::kJobQueued) queued.store(event.job_id);
-    model.Apply(event);
   });
   Require(subscription.IsOk(), "bridge subscribes without a runtime key");
   auto events = std::move(subscription).Value();
@@ -175,6 +174,7 @@ void TestSessionFreeBridgeAndModelReplacement() {
   }
   Require(queued.load() == job.Value() && runtime->Wait({job.Value()}).IsOk(),
           "submitted handle and every queued event use one namespace");
+  model.Synchronize(services.snapshot());
 
   auto root_document = open_lmm::ConfigEditorDocument::Load(root / "config/config.json");
   Require(root_document.IsOk(), "root replacement document loads");
@@ -198,18 +198,22 @@ void TestSessionFreeBridgeAndModelReplacement() {
               .IsOk(),
           "GUI uses atomic root replacement rather than config pre-write");
 
-  // The new controller restarts event sequence numbering.  Reset and
-  // synchronize before accepting its events so the GUI never drops them as
-  // stale events from the prior runtime epoch.
+  // RuntimeService owns one monotonic public event stream across controller
+  // replacement. Synchronization therefore retains the latest public sequence
+  // instead of treating the new controller's local sequence as a new epoch.
   model.Synchronize(services.snapshot());
-  Require(model.LastSequence() == 0 &&
+  const auto sequence_after_replacement = model.LastSequence();
+  Require(sequence_after_replacement > 0 &&
               services.runtime_snapshot().Value().output_directory.parent_path() ==
                   root / "output-two",
-          "replacement resets the GUI model epoch and exposes new output");
+          "replacement preserves public event sequence and exposes new output");
   auto second = services.submit_run_all();
   Require(second && second.Value() != job.Value() &&
               runtime->Wait({second.Value()}).IsOk(),
           "job identity remains unique after GUI replacement");
+  model.Synchronize(services.snapshot());
+  Require(model.LastSequence() > sequence_after_replacement,
+          "GUI accepts replacement runtime events after synchronization");
   events.Reset();
   Require(runtime->Close().IsOk(), "GUI-owned runtime closes");
   fs::remove_all(root);
