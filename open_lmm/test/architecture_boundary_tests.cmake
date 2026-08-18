@@ -192,7 +192,8 @@ foreach(expected
     "class RuntimeService"
     "CloseMode"
     "std::shared_ptr<RuntimeInstance> active_"
-    "replacement_in_progress_")
+    "LifecycleState"
+    "transition_generation_")
   string(FIND "${runtime_service_header}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "RuntimeService contract must contain: ${expected}")

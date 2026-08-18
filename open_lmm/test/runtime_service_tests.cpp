@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -102,6 +103,46 @@ class SuccessPort final : public test::RuntimePortFixture {
                               const ExecutionContext&) override {
     return Result<void>::Ok();
   }
+};
+
+class OpenLatch {
+ public:
+  Result<std::shared_ptr<StageRuntimePort>> Create() {
+    {
+      std::lock_guard lock(mutex_);
+      ++calls_;
+      entered_ = true;
+    }
+    entered_changed_.notify_all();
+    std::unique_lock lock(mutex_);
+    released_.wait(lock, [&] { return release_; });
+    return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+        std::make_shared<SuccessPort>());
+  }
+
+  void WaitForEntry() {
+    std::unique_lock lock(mutex_);
+    entered_changed_.wait(lock, [&] { return entered_; });
+  }
+  void Release() {
+    {
+      std::lock_guard lock(mutex_);
+      release_ = true;
+    }
+    released_.notify_all();
+  }
+  [[nodiscard]] unsigned Calls() const {
+    std::lock_guard lock(mutex_);
+    return calls_;
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::condition_variable entered_changed_;
+  std::condition_variable released_;
+  bool entered_ = false;
+  bool release_ = false;
+  unsigned calls_ = 0;
 };
 
 template <typename Predicate>
@@ -270,12 +311,67 @@ void TestSubscriptionResetBarrier() {
   fs::remove_all(root);
 }
 
+void TestOpenCloseTransitionCancellation() {
+  const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_open_close";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  auto latch = std::make_shared<OpenLatch>();
+  RuntimeService service(
+      1, [latch](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> { return latch->Create(); });
+
+  Result<void> opened = Result<void>::Failure(Error::InvalidArgument("not run"));
+  std::thread opening([&] { opened = service.Open({root / "config", "opening"}); });
+  latch->WaitForEntry();
+  std::atomic<bool> close_returned{false};
+  Result<void> closed = Result<void>::Failure(Error::InvalidArgument("not run"));
+  std::thread closing([&] {
+    closed = service.Close();
+    close_returned.store(true, std::memory_order_release);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  Check(!close_returned.load(std::memory_order_acquire),
+        "close waits for an opening runtime transition");
+  latch->Release();
+  opening.join();
+  closing.join();
+  Check(!opened && closed && !service.IsOpen(),
+        "cancelled open never publishes an active runtime");
+  Check(service.Open({root / "config", "reopen"}).IsOk(),
+        "runtime can open after cancelled opening transition");
+  Check(service.Close().IsOk(), "reopened runtime closes");
+  fs::remove_all(root);
+}
+
+void TestConcurrentOpenReservesTransitionBeforeBootstrap() {
+  const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_open_race";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  auto latch = std::make_shared<OpenLatch>();
+  RuntimeService service(
+      1, [latch](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> { return latch->Create(); });
+  Result<void> first = Result<void>::Failure(Error::InvalidArgument("not run"));
+  std::thread opening([&] { first = service.Open({root / "config", "first"}); });
+  latch->WaitForEntry();
+  auto second = service.Open({root / "config", "second"});
+  Check(!second && latch->Calls() == 1,
+        "second open is rejected before it can bootstrap a candidate");
+  latch->Release();
+  opening.join();
+  Check(first && service.IsOpen(), "reserved first open publishes exactly one runtime");
+  Check(service.Close().IsOk(), "concurrent-open fixture closes");
+  fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
   TestSingleRuntimeLifecycleAndJobIdentity();
   TestReplacementAndCloseRejectBusyRuntime();
   TestSubscriptionResetBarrier();
+  TestOpenCloseTransitionCancellation();
+  TestConcurrentOpenReservesTransitionBeforeBootstrap();
   std::cout << "runtime service single-runtime tests passed\n";
   return 0;
 }

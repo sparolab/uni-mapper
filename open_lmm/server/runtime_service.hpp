@@ -1,12 +1,14 @@
 #pragma once
 
 #include <open_lmm/common/runtime_api.hpp>
+#include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/runtime_contracts.hpp>
 #include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 #include <open_lmm/server/pipeline_controller.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 
 #include <filesystem>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
@@ -16,6 +18,8 @@
 #include <vector>
 
 namespace open_lmm {
+
+class PendingOutputSet;
 
 // Owns exactly one externally visible runtime. A root/DataLoad replacement
 // builds one private candidate and atomically swaps it for active_ only after
@@ -61,6 +65,7 @@ class RuntimeService {
   }
 
  private:
+  enum class LifecycleState { kClosed, kOpening, kReady, kReplacing, kClosing };
   struct RuntimeInstance;
   struct SubscriberSlot;
   struct OperationLease;
@@ -78,7 +83,9 @@ class RuntimeService {
   Result<OperationLease> AcquireOperation(bool require_ready) const;
   Result<PublicJob> ResolveJob(JobHandle job) const;
   Result<void> AttachEventSource(const std::shared_ptr<RuntimeInstance>& instance);
-  Result<void> InstallRootConfig(const RuntimeInstance& candidate) const;
+  Result<void> StageRootConfig(const RuntimeInstance& candidate,
+                               PendingOutputSet& pending) const;
+  void FinishTransitionLocked(uint64_t generation, LifecycleState next);
   void DispatchEvent(const std::shared_ptr<RuntimeInstance>& instance,
                      const ExecutionEvent& event);
   uint64_t MapPublicJobLocked(uint64_t epoch, JobId local_job);
@@ -88,8 +95,11 @@ class RuntimeService {
   static std::string GenerateOutputNamespace();
 
   mutable std::mutex mutex_;
+  std::condition_variable lifecycle_changed_;
   std::shared_ptr<RuntimeInstance> active_;
-  bool replacement_in_progress_ = false;
+  LifecycleState lifecycle_ = LifecycleState::kClosed;
+  uint64_t transition_generation_ = 0;
+  std::shared_ptr<CancellationToken> transition_cancellation_;
   uint64_t epoch_ = 0;
   uint64_t next_public_job_ = 1;
   std::optional<std::pair<uint64_t, uint64_t>> pending_public_job_;

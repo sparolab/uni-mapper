@@ -227,17 +227,21 @@ Result<std::shared_ptr<RuntimeService::RuntimeInstance>> RuntimeService::Active(
 
 Result<RuntimeService::OperationLease> RuntimeService::AcquireOperation(
     bool require_ready) const {
-  auto active = Active();
-  if (!active) return Result<OperationLease>::Failure(active.GetError());
-  const auto instance = active.Value();
-  {
-    std::lock_guard runtime_lock(mutex_);
-    if (replacement_in_progress_ || active_ != instance) {
-      return Result<OperationLease>::Failure(
-          Error::InvalidArgument("runtime replacement is in progress"));
-    }
+  // The service lock must remain held until the operation count is acquired.
+  // Otherwise replacement can observe zero in-flight operations in the gap.
+  std::unique_lock runtime_lock(mutex_);
+  if (lifecycle_ != LifecycleState::kReady || !active_) {
+    return Result<OperationLease>::Failure(Error::InvalidArgument(
+        lifecycle_ == LifecycleState::kReplacing
+            ? "runtime replacement is in progress"
+            : "single runtime is not ready for operations"));
   }
-  std::lock_guard instance_lock(instance->mutex);
+  const auto instance = active_;
+  std::unique_lock instance_lock(instance->mutex);
+  if (lifecycle_ != LifecycleState::kReady || active_ != instance) {
+    return Result<OperationLease>::Failure(
+        Error::InvalidArgument("runtime changed while acquiring operation"));
+  }
   const auto pipeline = instance->controller->Snapshot();
   instance->state = DeriveState(*instance, pipeline);
   if (instance->closing ||
@@ -248,6 +252,14 @@ Result<RuntimeService::OperationLease> RuntimeService::AcquireOperation(
   }
   ++instance->operations_in_progress;
   return Result<OperationLease>::Ok(OperationLease(instance, instance->epoch));
+}
+
+void RuntimeService::FinishTransitionLocked(uint64_t generation,
+                                            LifecycleState next) {
+  if (transition_generation_ != generation) return;
+  lifecycle_ = next;
+  transition_cancellation_.reset();
+  lifecycle_changed_.notify_all();
 }
 
 Result<void> RuntimeService::AttachEventSource(
@@ -262,87 +274,126 @@ Result<void> RuntimeService::AttachEventSource(
 }
 
 Result<void> RuntimeService::Open(const BootstrapRequest& request) {
-  auto loaded = LoadBootstrapConfig(request.config_directory);
-  if (!loaded) return Result<void>::Failure(loaded.GetError());
-  std::unique_lock lock(mutex_);
-  if (active_ || replacement_in_progress_) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "single runtime is already open or being replaced"));
+  uint64_t generation = 0;
+  std::shared_ptr<CancellationToken> cancellation;
+  {
+    std::lock_guard lock(mutex_);
+    if (lifecycle_ != LifecycleState::kClosed || active_) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "single runtime is already open or a transition is in progress"));
+    }
+    generation = ++transition_generation_;
+    lifecycle_ = LifecycleState::kOpening;
+    cancellation = std::make_shared<CancellationToken>();
+    transition_cancellation_ = cancellation;
   }
-  const uint64_t next_epoch = epoch_ + 1;
-  lock.unlock();
+  const auto fail = [&](const Error& error) {
+    std::lock_guard lock(mutex_);
+    FinishTransitionLocked(generation, LifecycleState::kClosed);
+    return Result<void>::Failure(error);
+  };
+  auto loaded = LoadBootstrapConfig(request.config_directory);
+  if (!loaded) return fail(loaded.GetError());
+  if (cancellation->IsCancellationRequested()) {
+    return fail(Error::Cancelled("runtime opening was cancelled"));
+  }
+  const uint64_t next_epoch = [&] {
+    std::lock_guard lock(mutex_);
+    return epoch_ + 1;
+  }();
   auto built = BuildInstance(request, std::move(loaded).Value(), next_epoch);
-  if (!built) return Result<void>::Failure(built.GetError());
+  if (!built) return fail(built.GetError());
   auto attached = AttachEventSource(built.Value());
-  if (!attached) return attached;
-  lock.lock();
-  if (active_ || replacement_in_progress_) {
+  if (!attached) return fail(attached.GetError());
+  std::unique_lock lock(mutex_);
+  if (transition_generation_ != generation || lifecycle_ != LifecycleState::kOpening ||
+      cancellation->IsCancellationRequested() || active_) {
     lock.unlock();
     built.Value()->event_source.Reset();
-    return Result<void>::Failure(Error::InvalidArgument(
-        "single runtime changed while opening"));
+    return fail(Error::Cancelled("runtime opening was cancelled"));
   }
   active_ = built.Value();
   epoch_ = next_epoch;
+  FinishTransitionLocked(generation, LifecycleState::kReady);
   return Result<void>::Ok();
 }
 
 Result<void> RuntimeService::Open(const BootstrapRequest& request,
                                   const ConfigCandidate& root_candidate) {
-  std::unique_lock lock(mutex_);
-  if (active_ || replacement_in_progress_) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "single runtime is already open or being replaced"));
+  uint64_t generation = 0;
+  std::shared_ptr<CancellationToken> cancellation;
+  {
+    std::lock_guard lock(mutex_);
+    if (lifecycle_ != LifecycleState::kClosed || active_) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "single runtime is already open or a transition is in progress"));
+    }
+    generation = ++transition_generation_;
+    lifecycle_ = LifecycleState::kOpening;
+    cancellation = std::make_shared<CancellationToken>();
+    transition_cancellation_ = cancellation;
   }
-  const uint64_t next_epoch = epoch_ + 1;
-  lock.unlock();
+  const auto fail = [&](const Error& error) {
+    std::lock_guard lock(mutex_);
+    FinishTransitionLocked(generation, LifecycleState::kClosed);
+    return Result<void>::Failure(error);
+  };
+  const uint64_t next_epoch = [&] {
+    std::lock_guard lock(mutex_);
+    return epoch_ + 1;
+  }();
   auto built = BuildInstance(request, root_candidate, next_epoch);
-  if (!built) return Result<void>::Failure(built.GetError());
+  if (!built) return fail(built.GetError());
+  if (cancellation->IsCancellationRequested()) {
+    return fail(Error::Cancelled("runtime opening was cancelled"));
+  }
   auto attached = AttachEventSource(built.Value());
-  if (!attached) return attached;
-  lock.lock();
-  if (active_ || replacement_in_progress_) {
+  if (!attached) return fail(attached.GetError());
+  std::unique_lock lock(mutex_);
+  if (transition_generation_ != generation || lifecycle_ != LifecycleState::kOpening ||
+      cancellation->IsCancellationRequested() || active_) {
     lock.unlock();
     built.Value()->event_source.Reset();
-    return Result<void>::Failure(Error::InvalidArgument(
-        "single runtime changed while opening"));
+    return fail(Error::Cancelled("runtime opening was cancelled"));
   }
   active_ = built.Value();
   epoch_ = next_epoch;
+  FinishTransitionLocked(generation, LifecycleState::kReady);
   return Result<void>::Ok();
 }
 
-Result<void> RuntimeService::InstallRootConfig(
-    const RuntimeInstance& candidate) const {
-  OutputRepository outputs;
-  auto pending = outputs.Begin();
-  auto staged = StageConfigFile(candidate.bootstrap_config->ConfigDirectory() /
-                                    "config.json",
-                                candidate.bootstrap_config->Root().CanonicalJson(),
-                                pending);
-  if (!staged) return Result<void>::Failure(staged.GetError());
-  return pending.Commit();
+Result<void> RuntimeService::StageRootConfig(
+    const RuntimeInstance& candidate, PendingOutputSet& pending) const {
+  return StageConfigFile(candidate.bootstrap_config->ConfigDirectory() /
+                             "config.json",
+                         candidate.bootstrap_config->Root().CanonicalJson(),
+                         pending);
 }
 
+/*
+ * Root replacement reserves kReplacing before candidate preparation.  The
+ * staged file is committed only while that reservation is still authoritative;
+ * after Commit() succeeds the pointer swap below contains no fallible work.
+ */
 Result<RuntimeReplaceReceipt> RuntimeService::ReplaceRootConfig(
     const BootstrapRequest& request, const ConfigCandidate& root_candidate,
     const ExpectedRevision& expected) {
-  auto current = Active();
-  if (!current) {
-    return Result<RuntimeReplaceReceipt>::Failure(current.GetError());
-  }
-  const auto previous = current.Value();
-  if (previous->controller->IsInEventCallback()) {
-    return Result<RuntimeReplaceReceipt>::Failure(Error::InvalidArgument(
-        "cannot replace runtime from its event callback"));
-  }
+  std::shared_ptr<RuntimeInstance> previous;
+  uint64_t generation = 0;
+  uint64_t next_epoch = 0;
+  std::shared_ptr<CancellationToken> cancellation;
   {
-    std::lock_guard lock(mutex_);
-    if (replacement_in_progress_ || active_ != previous) {
+    std::unique_lock lock(mutex_);
+    if (lifecycle_ != LifecycleState::kReady || !active_) {
       return Result<RuntimeReplaceReceipt>::Failure(Error::InvalidArgument(
-          "runtime replacement is already in progress"));
+          "single runtime is not ready for root replacement"));
     }
-    std::lock_guard instance_lock(previous->mutex);
+    previous = active_;
+    if (previous->controller->IsInEventCallback()) {
+      return Result<RuntimeReplaceReceipt>::Failure(Error::InvalidArgument(
+          "cannot replace runtime from its event callback"));
+    }
+    std::unique_lock instance_lock(previous->mutex);
     const auto pipeline = previous->controller->Snapshot();
     previous->state = DeriveState(*previous, pipeline);
     if (previous->operations_in_progress != 0 ||
@@ -355,31 +406,31 @@ Result<RuntimeReplaceReceipt> RuntimeService::ReplaceRootConfig(
       return Result<RuntimeReplaceReceipt>::Failure(Error::InvalidArgument(
           "root replacement expected revision does not match committed runtime"));
     }
-    replacement_in_progress_ = true;
-  }
-  struct ReplacementGuard {
-    RuntimeService& service;
-    bool committed = false;
-    ~ReplacementGuard() {
-      if (committed) return;
-      std::lock_guard lock(service.mutex_);
-      service.replacement_in_progress_ = false;
-    }
-  } guard{*this};
-  auto callbacks_idle = previous->controller->WaitForEventCallbacks();
-  if (!callbacks_idle) {
-    return Result<RuntimeReplaceReceipt>::Failure(callbacks_idle.GetError());
-  }
-  uint64_t next_epoch = 0;
-  {
-    std::lock_guard lock(mutex_);
+    generation = ++transition_generation_;
     next_epoch = epoch_ + 1;
+    lifecycle_ = LifecycleState::kReplacing;
+    cancellation = std::make_shared<CancellationToken>();
+    transition_cancellation_ = cancellation;
+  }
+  const auto abort = [&](const Error& error) {
+    std::lock_guard lock(mutex_);
+    if (transition_generation_ == generation) {
+      // Close may have requested cancellation while preparation ran.  The
+      // previous runtime remains active and Close will continue from kReady.
+      FinishTransitionLocked(generation, LifecycleState::kReady);
+    }
+    return Result<RuntimeReplaceReceipt>::Failure(error);
+  };
+  auto callbacks_idle = previous->controller->WaitForEventCallbacks();
+  if (!callbacks_idle) return abort(callbacks_idle.GetError());
+  if (cancellation->IsCancellationRequested()) {
+    return abort(Error::Cancelled("runtime replacement was cancelled"));
   }
   auto built = BuildInstance(request, root_candidate, next_epoch,
                              expected.runtime_revision + 1,
                              expected.config_revision + 1);
-  if (!built) return Result<RuntimeReplaceReceipt>::Failure(built.GetError());
-  auto candidate = built.Value();
+  if (!built) return abort(built.GetError());
+  const auto candidate = built.Value();
   struct CandidateOutputRollback {
     fs::path path;
     bool committed = false;
@@ -389,33 +440,42 @@ Result<RuntimeReplaceReceipt> RuntimeService::ReplaceRootConfig(
       fs::remove_all(path, ignored);
     }
   } candidate_output{candidate->output_directory};
+  if (cancellation->IsCancellationRequested()) {
+    return abort(Error::Cancelled("runtime replacement was cancelled"));
+  }
+  const auto candidate_snapshot = candidate->controller->Snapshot();
+  if (candidate_snapshot.runtime_revision != expected.runtime_revision + 1 ||
+      candidate_snapshot.config_revision != expected.config_revision + 1) {
+    return abort(Error::InvalidArgument(
+        "replacement candidate did not preserve monotonic revisions"));
+  }
   auto attached = AttachEventSource(candidate);
-  if (!attached) return Result<RuntimeReplaceReceipt>::Failure(attached.GetError());
-  auto installed = InstallRootConfig(*candidate);
-  if (!installed) {
+  if (!attached) return abort(attached.GetError());
+  PendingOutputSet pending;
+  auto staged = StageRootConfig(*candidate, pending);
+  if (!staged) {
     candidate->event_source.Reset();
-    return Result<RuntimeReplaceReceipt>::Failure(installed.GetError());
+    return abort(staged.GetError());
   }
   {
-    std::lock_guard lock(mutex_);
-    if (active_ != previous) {
+    std::unique_lock lock(mutex_);
+    if (transition_generation_ != generation || lifecycle_ != LifecycleState::kReplacing ||
+        cancellation->IsCancellationRequested() || active_ != previous) {
+      lock.unlock();
       candidate->event_source.Reset();
-      return Result<RuntimeReplaceReceipt>::Failure(Error::InvalidArgument(
-          "runtime changed while replacement was prepared"));
+      return abort(Error::Cancelled("runtime replacement was cancelled"));
     }
-    const auto candidate_snapshot = candidate->controller->Snapshot();
-    if (candidate_snapshot.runtime_revision != expected.runtime_revision + 1 ||
-        candidate_snapshot.config_revision != expected.config_revision + 1) {
+    auto committed = pending.Commit();
+    if (!committed) {
+      lock.unlock();
       candidate->event_source.Reset();
-      return Result<RuntimeReplaceReceipt>::Failure(Error::InvalidArgument(
-          "replacement candidate did not preserve monotonic revisions"));
+      return abort(committed.GetError());
     }
     active_ = candidate;
     epoch_ = next_epoch;
-    replacement_in_progress_ = false;
+    FinishTransitionLocked(generation, LifecycleState::kReady);
   }
   previous->event_source.Reset();
-  guard.committed = true;
   candidate_output.committed = true;
   return Result<RuntimeReplaceReceipt>::Ok(
       {expected.runtime_revision, expected.config_revision,
@@ -671,29 +731,54 @@ Result<ExecutionEventSubscription> RuntimeService::SubscribeEvents(
 }
 
 Result<void> RuntimeService::Close(CloseMode mode) {
-  auto active = Active();
-  if (!active) return Result<void>::Ok();
-  auto instance = active.Value();
-  if (instance->controller->IsInEventCallback()) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "cannot close runtime from its event callback"));
-  }
+  std::shared_ptr<RuntimeInstance> instance;
   std::optional<JobSnapshot> active_job;
-  {
-    std::lock_guard runtime_lock(mutex_);
-    if (replacement_in_progress_ || active_ != instance) {
-      return Result<void>::Failure(Error::InvalidArgument(
-          "runtime replacement is in progress"));
+  for (;;) {
+    std::unique_lock runtime_lock(mutex_);
+    if (lifecycle_ == LifecycleState::kClosed && !active_) {
+      return Result<void>::Ok();
     }
-    std::lock_guard instance_lock(instance->mutex);
+    if (lifecycle_ == LifecycleState::kOpening) {
+      if (transition_cancellation_) transition_cancellation_->Request();
+      lifecycle_ = LifecycleState::kClosing;
+      lifecycle_changed_.wait(runtime_lock, [&] {
+        return lifecycle_ != LifecycleState::kClosing;
+      });
+      continue;
+    }
+    if (lifecycle_ == LifecycleState::kReplacing) {
+      if (transition_cancellation_) transition_cancellation_->Request();
+      lifecycle_changed_.wait(runtime_lock, [&] {
+        return lifecycle_ != LifecycleState::kReplacing;
+      });
+      continue;
+    }
+    if (lifecycle_ == LifecycleState::kClosing) {
+      lifecycle_changed_.wait(runtime_lock, [&] {
+        return lifecycle_ != LifecycleState::kClosing;
+      });
+      continue;
+    }
+    if (lifecycle_ != LifecycleState::kReady || !active_) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("runtime lifecycle is not closable"));
+    }
+    instance = active_;
+    if (instance->controller->IsInEventCallback()) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "cannot close runtime from its event callback"));
+    }
+    std::unique_lock instance_lock(instance->mutex);
     const auto pipeline = instance->controller->Snapshot();
     instance->state = DeriveState(*instance, pipeline);
     if (pipeline.job && IsActive(pipeline.job->state)) active_job = pipeline.job;
     if (active_job && mode == CloseMode::kRejectIfRunning) {
       return Result<void>::Failure(Error::InvalidArgument("runtime has an active job"));
     }
+    lifecycle_ = LifecycleState::kClosing;
     instance->closing = true;
     instance->state = RuntimeStatus::kClosing;
+    break;
   }
   // Cancel first. Waiting for in-flight Wait() before cancellation would
   // deadlock a job waiting for interactive alignment feedback.
@@ -706,11 +791,23 @@ Result<void> RuntimeService::Close(CloseMode mode) {
     instance->idle.wait(lock, [&] { return instance->operations_in_progress == 0; });
   }
   auto callbacks = instance->controller->WaitForEventCallbacks();
-  if (!callbacks) return callbacks;
+  if (!callbacks) {
+    std::lock_guard lock(mutex_);
+    if (active_ == instance) {
+      std::lock_guard instance_lock(instance->mutex);
+      instance->closing = false;
+      lifecycle_ = LifecycleState::kReady;
+      lifecycle_changed_.notify_all();
+    }
+    return callbacks;
+  }
   instance->event_source.Reset();
   {
     std::lock_guard lock(mutex_);
     if (active_ == instance) active_.reset();
+    lifecycle_ = LifecycleState::kClosed;
+    transition_cancellation_.reset();
+    lifecycle_changed_.notify_all();
   }
   return Result<void>::Ok();
 }
