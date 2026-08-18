@@ -47,14 +47,14 @@ Result<void> ValidateNodeTarget(const SessionState& state, NodeId node,
 }  // namespace
 
 StageExecutor::StageExecutor(
-    std::filesystem::path config_directory,
+    BootstrapConfigSnapshot bootstrap_config,
     std::optional<std::filesystem::path> output_directory,
     std::shared_ptr<ResourceGovernor> resource_governor)
     : resource_governor_(std::move(resource_governor)) {
   InitializeLogging();
   SessionBootstrapper bootstrap;
   auto initialized = bootstrap.Bootstrap(
-      {std::move(config_directory), std::move(output_directory), {}});
+      {std::move(bootstrap_config), std::move(output_directory), {}});
   if (!initialized) {
     initialization_error_ = initialized.GetError();
     return;
@@ -244,6 +244,40 @@ Result<ExecutionReceipt> StageExecutor::Execute(
   return Result<ExecutionReceipt>::Ok(
       {base->revision, after.revision,
        ArtifactRevisionAffectedAgents(before, after)});
+}
+
+Result<ConfigApplyReceipt> StageExecutor::ApplyConfig(
+    const ConfigCandidate& candidate, const ExpectedRevision& expected,
+    const ExecutionContext& context) {
+  ExecutionLease execution(execution_active_);
+  if (!execution) {
+    return Result<ConfigApplyReceipt>::Failure(
+        Error::InvalidArgument("another MapServer operation is active"));
+  }
+  auto ready = EnsureReady();
+  if (!ready) {
+    return Result<ConfigApplyReceipt>::Failure(ready.GetError());
+  }
+  if (!context.cancellation) {
+    return Result<ConfigApplyReceipt>::Failure(
+        Error::InvalidArgument("execution cancellation token is required"));
+  }
+  const auto base = CommittedState();
+  if (context.base_revision != base->revision ||
+      expected.session_revision != base->revision ||
+      !base->config || expected.config_revision != base->config->revision) {
+    return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+        "config transaction revision does not match committed session"));
+  }
+  auto applied = coordinator_->ApplyConfig(base, candidate, expected, context);
+  if (!applied) return applied;
+  if (candidate.domain == ConfigDomain::kLoopDetector ||
+      candidate.domain == ConfigDomain::kOptimizer) {
+    PublishEmptyVisualization();
+  } else {
+    PublishVisualization(false);
+  }
+  return applied;
 }
 
 }  // namespace open_lmm

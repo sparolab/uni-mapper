@@ -30,6 +30,10 @@ if(_open_lmm_need_heavy AND NOT TARGET PCL::PCL)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/open_lmmTargets.cmake")
+if(TARGET open_lmm::runtime)
+  target_link_options(open_lmm::runtime INTERFACE
+    "LINKER:-rpath-link,${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@")
+endif()
 foreach(_open_lmm_component IN ITEMS
     contracts client plugin_sdk common config descriptor alignment core runtime gui utils)
   if(TARGET open_lmm::${_open_lmm_component})

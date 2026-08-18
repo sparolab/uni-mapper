@@ -55,7 +55,8 @@ add_subdirectory(gui)
 add_library(open_lmm_client SHARED server/runtime_client.cpp)
 add_dependencies(open_lmm_client open_lmm_map_server)
 target_link_libraries(open_lmm_client PUBLIC open_lmm_contracts PRIVATE
-  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_map_server>>")
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_map_server>>"
+  nlohmann_json::nlohmann_json)
 target_include_directories(open_lmm_client PRIVATE
   "$<TARGET_PROPERTY:Eigen3::Eigen,INTERFACE_INCLUDE_DIRECTORIES>"
   "$<TARGET_PROPERTY:PCL::PCL,INTERFACE_INCLUDE_DIRECTORIES>"
@@ -68,12 +69,8 @@ set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
 add_library(open_lmm_core INTERFACE)
 target_link_libraries(open_lmm_core INTERFACE
   open_lmm_algorithm_config
-  open_lmm_data_loader
   open_lmm_descriptor
   open_lmm_alignment
-  open_lmm_loop_detector
-  open_lmm_backend_optimizer
-  open_lmm_dynamic_remover
 )
 set_target_properties(open_lmm_core PROPERTIES EXPORT_NAME core)
 
@@ -133,12 +130,8 @@ install(TARGETS
   open_lmm_common
   open_lmm_algorithm_config
   open_lmm_utils
-  open_lmm_data_loader
   open_lmm_descriptor
   open_lmm_alignment
-  open_lmm_loop_detector
-  open_lmm_backend_optimizer
-  open_lmm_dynamic_remover
   open_lmm_map_server
   open_lmm_gui_core
   open_lmm_core
@@ -148,6 +141,26 @@ install(TARGETS
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+# Runtime implementation DSOs are installed for DT_NEEDED resolution but are
+# not CMake package targets. Their headers and link contracts remain internal.
+install(TARGETS
+  open_lmm_data_loader
+  open_lmm_loop_detector
+  open_lmm_backend_optimizer
+  open_lmm_dynamic_remover
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
+)
+
+# Runtime implementation detail: installed because public runtime libraries
+# have a DT_NEEDED edge, but deliberately absent from open_lmmTargets.cmake.
+install(TARGETS open_lmm_plugin_host
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
 )
 
 install(TARGETS open_lmm_batch
@@ -170,18 +183,76 @@ if(_open_lmm_plugin_support_targets)
   )
 endif()
 
-foreach(public_header_dir common core gui server utils)
-  install(DIRECTORY ${PROJECT_SOURCE_DIR}/${public_header_dir}/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/${public_header_dir}
-    COMPONENT Development
-    FILES_MATCHING
-      PATTERN "*.hpp"
-      PATTERN "*.h"
-      PATTERN "plugin_api_v2.h" EXCLUDE
-      PATTERN "stage_executor.hpp" EXCLUDE
-  )
+# Package API allowlist.  Do not replace this with install(DIRECTORY): headers
+# under server/execution, server/session, plugin support/host, and concrete
+# algorithms are implementation details and must not become accidental ABI.
+set(_open_lmm_public_headers
+  common/agent_context.hpp
+  common/agent_data.hpp
+  common/agent_id.hpp
+  common/algorithm_execution_context.hpp
+  common/alignment_feedback.hpp
+  common/alignment_types.hpp
+  common/cancellation.hpp
+  common/data_types.hpp
+  common/descriptor_index.hpp
+  common/result.hpp
+  common/runtime_contracts.hpp
+  core/alignment/alignment_decision_policy.hpp
+  core/alignment/alignment_proposer.hpp
+  core/alignment/loop_constraint_builder.hpp
+  core/descriptor/descriptor_artifact.hpp
+  core/descriptor/descriptor_engine.hpp
+  server/runtime_client.hpp
+  utils/config_schema.hpp
+)
+foreach(public_header IN LISTS _open_lmm_public_headers)
+  get_filename_component(public_header_directory "${public_header}" DIRECTORY)
+  install(FILES "${PROJECT_SOURCE_DIR}/${public_header}"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/${public_header_directory}"
+    COMPONENT Development)
 endforeach()
-install(FILES ${PROJECT_SOURCE_DIR}/common/plugin_api_v2.h
+
+# Remove only paths owned by the former recursive OpenLMM header install. This
+# makes an in-place upgrade converge to the allowlist without touching unknown
+# files that a user may keep below include/open_lmm.
+file(GLOB_RECURSE _open_lmm_source_headers
+  RELATIVE "${PROJECT_SOURCE_DIR}"
+  "${PROJECT_SOURCE_DIR}/common/*.h"
+  "${PROJECT_SOURCE_DIR}/common/*.hpp"
+  "${PROJECT_SOURCE_DIR}/core/*.h"
+  "${PROJECT_SOURCE_DIR}/core/*.hpp"
+  "${PROJECT_SOURCE_DIR}/gui/*.h"
+  "${PROJECT_SOURCE_DIR}/gui/*.hpp"
+  "${PROJECT_SOURCE_DIR}/server/*.h"
+  "${PROJECT_SOURCE_DIR}/server/*.hpp"
+  "${PROJECT_SOURCE_DIR}/utils/*.h"
+  "${PROJECT_SOURCE_DIR}/utils/*.hpp")
+include("${PROJECT_SOURCE_DIR}/cmake/open_lmm-legacy-installed-headers-1.x.cmake")
+set(_open_lmm_owned_stale_headers
+  ${_open_lmm_source_headers}
+  ${_open_lmm_legacy_installed_headers_1_x})
+list(REMOVE_ITEM _open_lmm_owned_stale_headers
+  ${_open_lmm_public_headers}
+  common/plugin_api.h
+  common/plugin_api_v2.h)
+list(REMOVE_DUPLICATES _open_lmm_owned_stale_headers)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/open_lmm-clean-stale-headers.cmake.in"
+  "${PROJECT_BINARY_DIR}/open_lmm-clean-stale-headers.cmake" @ONLY)
+install(SCRIPT "${PROJECT_BINARY_DIR}/open_lmm-clean-stale-headers.cmake"
+  COMPONENT Development)
+
+string(REPLACE ";" "\n" _open_lmm_public_header_manifest
+  "${_open_lmm_public_headers};common/plugin_api.h;common/plugin_api_v2.h")
+file(WRITE "${PROJECT_BINARY_DIR}/open_lmm-public-headers.txt"
+  "${_open_lmm_public_header_manifest}\n")
+install(FILES "${PROJECT_BINARY_DIR}/open_lmm-public-headers.txt"
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
+  COMPONENT Development)
+install(FILES
+  ${PROJECT_SOURCE_DIR}/common/plugin_api.h
+  ${PROJECT_SOURCE_DIR}/common/plugin_api_v2.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/common
   COMPONENT PluginSDK)
 install(FILES

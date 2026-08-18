@@ -188,16 +188,28 @@ Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
     }
     entry.installed = true;
   }
+  std::ostringstream cleanup_failures;
+  bool cleanup_failed = false;
   for (auto& entry : entries) {
     if (!entry.had_original) continue;
     std::error_code error;
     if (!fs::remove(entry.backup, error) || error) {
-      const std::string reason =
-          "failed to clean committed file backup " + entry.backup.string() +
-          ": " + (error ? error.message() : "backup was not removed");
-      return Result<void>::Failure(RecoveryRequired(reason, entries));
+      cleanup_failed = true;
+      cleanup_failures << "failed to clean committed file backup "
+                       << entry.backup << ": "
+                       << (error ? error.message() : "backup was not removed")
+                       << "; ";
+      continue;
     }
     entry.had_original = false;
+  }
+  if (cleanup_failed) {
+    // Every final is already installed at this point. Treat backup deletion as
+    // post-commit recovery housekeeping: reporting failure here would leave
+    // callers believing the old state is authoritative while disk contains
+    // the new file set. RecoveryRequired writes a manifest for the retained
+    // backups; a later transaction remains blocked until they are reconciled.
+    (void)RecoveryRequired(cleanup_failures.str(), entries);
   }
   return Result<void>::Ok();
 }

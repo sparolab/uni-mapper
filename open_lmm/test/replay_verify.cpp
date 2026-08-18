@@ -139,8 +139,9 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  GlobalConfig::instance(argv[1]);
-  MapServer server;
+  auto configured = LoadBootstrapConfig(argv[1]);
+  Require(configured, "load bootstrap configuration");
+  MapServer server(std::move(configured).Value());
   Require(server.ValidateReady(), "validate configuration");
   const AgentId test1 = Id("test1");
   const AgentId test2 = Id("test2");

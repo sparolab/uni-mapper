@@ -6,6 +6,7 @@
 #include <optional>
 
 #include <open_lmm/server/execution/stage_coordinator.hpp>
+#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 #include <open_lmm/server/query/visualization_projector.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 #include <open_lmm/server/session_manager.hpp>
@@ -18,7 +19,7 @@ namespace open_lmm {
 class StageExecutor {
  public:
   StageExecutor(
-      std::filesystem::path config_directory,
+      BootstrapConfigSnapshot bootstrap_config,
       std::optional<std::filesystem::path> output_directory = std::nullopt,
       std::shared_ptr<ResourceGovernor> resource_governor = {});
   ~StageExecutor();
@@ -26,6 +27,9 @@ class StageExecutor {
   [[nodiscard]] CancellationCapability CancellationMetadata() const;
   Result<ExecutionReceipt> Execute(const ExecutionCommand& command,
                                    const ExecutionContext& context);
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected,
+      const ExecutionContext& context);
   [[nodiscard]] CommittedSessionSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const;

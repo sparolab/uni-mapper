@@ -8,6 +8,9 @@ target_link_libraries(open_lmm_descriptor
     Eigen3::Eigen
     PCL::PCL
     open_lmm_common
+  PRIVATE
+    "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_plugin_host>>"
 )
+add_dependencies(open_lmm_descriptor open_lmm_plugin_host)
 openlmm_set_global_target_properties(open_lmm_descriptor)
 set_target_properties(open_lmm_descriptor PROPERTIES EXPORT_NAME descriptor)

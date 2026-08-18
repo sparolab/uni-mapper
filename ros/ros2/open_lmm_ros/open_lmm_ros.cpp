@@ -13,9 +13,9 @@
 
 // open_lmm
 #include <open_lmm/server/map_server.hpp>
+#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 #include <open_lmm/gui/gui_controller_bridge.hpp>
 #include <open_lmm/gui/config_editor.hpp>
-#include <open_lmm/utils/config.hpp>
 #include <open_lmm/utils/logging.hpp>
 // open_lmm_ros
 #include "open_lmm_ros.hpp"
@@ -155,10 +155,10 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
                   "/" + config_path;
   }
 
-  auto* global_config = open_lmm::GlobalConfig::instance(config_path);
-  if (!global_config->is_valid()) {
-    throw std::runtime_error("Global config failed: " +
-                             global_config->error_message());
+  auto bootstrap = open_lmm::LoadBootstrapConfig(config_path);
+  if (!bootstrap) {
+    throw std::runtime_error("Bootstrap config failed: " +
+                             bootstrap.GetError().Message());
   }
 
   this->declare_parameter<std::string>("gui_plugin_path", "");
@@ -168,7 +168,8 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
   const bool gui_enabled = this->get_parameter("gui_enabled").as_bool() ||
                            !gui_plugin_path.empty();
 
-  auto map_server = std::make_shared<open_lmm::MapServer>();
+  auto map_server = std::make_shared<open_lmm::MapServer>(
+      std::move(bootstrap).Value());
   controller_ = std::make_shared<open_lmm::PipelineController>(map_server);
 
   progress_publisher_ = this->create_publisher<std_msgs::msg::String>(
@@ -232,19 +233,16 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions &options)
     }
     auto document = open_lmm::ConfigEditorDocument::Load(config_file);
     if (!document) return open_lmm::Result<void>::Failure(document.GetError());
-    const auto previous_directory = open_lmm::GlobalConfig::config_directory();
-    auto reloaded = open_lmm::GlobalConfig::reload(config_file.parent_path().string());
-    if (!reloaded) return reloaded;
-    auto runner = std::make_shared<open_lmm::MapServer>();
+    auto loaded = open_lmm::LoadBootstrapConfig(config_file.parent_path());
+    if (!loaded)
+      return open_lmm::Result<void>::Failure(loaded.GetError());
+    auto runner = std::make_shared<open_lmm::MapServer>(
+        std::move(loaded).Value());
     auto ready = runner->ValidateReady();
     if (!ready) {
-      if (!previous_directory.empty())
-        open_lmm::GlobalConfig::reload(previous_directory);
       return ready;
     }
     auto replaced = controller->ReplacePorts(runner, runner);
-    if (!replaced && !previous_directory.empty())
-      open_lmm::GlobalConfig::reload(previous_directory);
     return replaced;
   };
   auto started = gui_host_->Start(std::move(services));

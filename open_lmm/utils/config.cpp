@@ -3,42 +3,14 @@
 #include "config_schema.hpp"
 #include <open_lmm/utils/logging.hpp>
 
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <limits>
+#include <sys/stat.h>
+#include <unistd.h>
+
 namespace open_lmm {
-
-GlobalConfig* GlobalConfig::inst = nullptr;
-std::mutex GlobalConfig::inst_mutex;
-
-GlobalConfig::GlobalConfig(const std::string& global_config_path)
-    : Config(global_config_path) {
-  if (!is_valid()) return;
-  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
-      ConfigDocumentKind::kRoot, ToJson(), global_config_path);
-  if (!validated) {
-    error_message_ = validated.GetError().Message();
-    return;
-  }
-  config = validated.Value().Document();
-}
-
-Result<void> GlobalConfig::reload(const std::string& config_path) {
-  auto candidate = std::unique_ptr<GlobalConfig>(
-      new GlobalConfig(config_path + "/config.json"));
-  if (!candidate->is_valid()) {
-    return Result<void>::Failure(Error::ParseError(candidate->error_message()));
-  }
-  candidate->override_param("global", "config_path", config_path);
-  candidate->date = candidate->create_date();
-  std::lock_guard lock(inst_mutex);
-  delete inst;
-  inst = candidate.release();
-  return Result<void>::Ok();
-}
-
-std::string GlobalConfig::config_directory() {
-  std::lock_guard lock(inst_mutex);
-  if (!inst) return {};
-  return inst->param<std::string>("global", "config_path", "");
-}
 
 Config::Config(const std::string& config_filename)
 : config_path(config_filename)
@@ -77,6 +49,116 @@ Config Config::FromJson(std::string_view json_text, std::string source_name) {
     LogError(*result.error_message_);
   }
   return result;
+}
+
+Result<Config> LoadConfigFileBounded(const std::filesystem::path& path,
+                                     std::size_t maximum_bytes) {
+  const std::string source = path.string();
+  if (path.empty()) {
+    return Result<Config>::Failure(
+        Error::InvalidArgument("config file path must be non-empty"));
+  }
+
+  const int raw_fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (raw_fd < 0) {
+    const int error = errno;
+    Error result = error == ENOENT
+                       ? Error::FileNotFound(source)
+                       : Error::IoError("failed to open config file " + source +
+                                        ": " + std::strerror(error));
+    return Result<Config>::Failure(std::move(result).WithConfig(source));
+  }
+  struct Descriptor {
+    int value;
+    ~Descriptor() { ::close(value); }
+  } descriptor{raw_fd};
+
+  struct stat before {};
+  if (::fstat(descriptor.value, &before) != 0) {
+    const int error = errno;
+    return Result<Config>::Failure(
+        Error::IoError("failed to inspect config file " + source + ": " +
+                       std::strerror(error))
+            .WithConfig(source));
+  }
+  if (!S_ISREG(before.st_mode)) {
+    return Result<Config>::Failure(
+        Error::InvalidArgument("config file must be a regular file: " + source)
+            .WithConfig(source));
+  }
+  if (before.st_size < 0 ||
+      static_cast<uintmax_t>(before.st_size) >
+          static_cast<uintmax_t>(maximum_bytes) ||
+      static_cast<uintmax_t>(before.st_size) >
+          static_cast<uintmax_t>(std::numeric_limits<std::size_t>::max())) {
+    return Result<Config>::Failure(
+        Error::InvalidArgument("config file exceeds byte limit " +
+                               std::to_string(maximum_bytes) + ": " + source)
+            .WithConfig(source));
+  }
+
+  const auto expected = static_cast<std::size_t>(before.st_size);
+  std::string contents(expected, '\0');
+  std::size_t offset = 0;
+  while (offset < expected) {
+    const ssize_t count =
+        ::read(descriptor.value, contents.data() + offset, expected - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0) {
+      const int error = errno;
+      return Result<Config>::Failure(
+          Error::IoError("failed to read config file " + source + ": " +
+                         std::strerror(error))
+              .WithConfig(source));
+    }
+    if (count == 0) {
+      return Result<Config>::Failure(
+          Error::IoError("config file became shorter while reading: " + source)
+              .WithConfig(source));
+    }
+    offset += static_cast<std::size_t>(count);
+  }
+
+  char extra = 0;
+  ssize_t extra_count;
+  do {
+    extra_count = ::read(descriptor.value, &extra, 1);
+  } while (extra_count < 0 && errno == EINTR);
+  if (extra_count < 0) {
+    const int error = errno;
+    return Result<Config>::Failure(
+        Error::IoError("failed to finish reading config file " + source +
+                       ": " + std::strerror(error))
+            .WithConfig(source));
+  }
+
+  struct stat after {};
+  if (::fstat(descriptor.value, &after) != 0) {
+    const int error = errno;
+    return Result<Config>::Failure(
+        Error::IoError("failed to re-inspect config file " + source + ": " +
+                       std::strerror(error))
+            .WithConfig(source));
+  }
+  const bool metadata_changed =
+      before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
+      before.st_size != after.st_size ||
+      before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+      before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+      before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+      before.st_ctim.tv_nsec != after.st_ctim.tv_nsec;
+  if (extra_count != 0 || metadata_changed) {
+    return Result<Config>::Failure(
+        Error::IoError("config file changed while reading: " + source)
+            .WithConfig(source));
+  }
+
+  Config parsed = Config::FromJson(contents, source);
+  if (!parsed.is_valid()) {
+    return Result<Config>::Failure(
+        Error::ParseError(parsed.error_message()).WithConfig(source));
+  }
+  return Result<Config>::Ok(std::move(parsed));
 }
 
 std::string Config::ToJson() const {

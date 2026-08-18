@@ -128,17 +128,19 @@ struct traits<std::vector<Eigen::Isometry3d>> {
 }  // namespace
 
 template <typename T>
-std::optional<T> Config::param(const std::string& module_name, const std::string& param_name) const {
+T Config::param_cast(const std::string& module_name, const std::string& param_name) const {
   const auto& json = std::any_cast<const nlohmann::json&>(config);
 
   auto module = json.find(module_name);
   if (module == json.end()) {
-    return std::nullopt;
+    throw std::runtime_error("required config parameter " + module_name +
+                             "/" + param_name + " not found");
   }
 
   auto parameter = module->find(param_name);
   if (parameter == module->end()) {
-    return std::nullopt;
+    throw std::runtime_error("required config parameter " + module_name +
+                             "/" + param_name + " not found");
   }
 
   try {
@@ -147,136 +149,14 @@ std::optional<T> Config::param(const std::string& module_name, const std::string
     if (!converted) {
       throw std::runtime_error("invalid value shape");
     }
-    return converted;
+    return *converted;
   } catch (const std::exception& e) {
     throw std::runtime_error("invalid config parameter " + config_path + ":" +
                              module_name + "/" + param_name + ": " + e.what());
   }
 }
 
-template <typename T>
-T Config::param(const std::string& module_name, const std::string& param_name, const T& default_value) const {
-  auto found = param<T>(module_name, param_name);
-  if (!found) {
-    LogWarning("param " + module_name + "/" + param_name + " not found");
-    LogWarning("use default_value=" + convert_to_string(default_value));
-    return default_value;
-  }
-
-  LogDebug("param " + module_name + "/" + param_name + "=" +
-           convert_to_string(found.value()));
-  return found.value();
-}
-
-template <typename T>
-T Config::param_cast(const std::string& module_name, const std::string& param_name) const {
-  auto found = param<T>(module_name, param_name);
-  if (!found) {
-    throw std::runtime_error("required config parameter " + module_name +
-                             "/" + param_name + " not found");
-  }
-
-  LogDebug("param " + module_name + "/" + param_name + "=" +
-           convert_to_string(found.value()));
-  return *found;
-}
-
-template <typename T>
-bool Config::override_param(const std::string& module_name, const std::string& param_name, const T& value) {
-  auto& json = std::any_cast<nlohmann::json&>(config);
-  json[module_name][param_name] = traits<T>::invert(value);
-
-  return true;
-}
-
-template <typename T>
-std::optional<T> Config::param_nested(const std::vector<std::string>& nested_module_names, const std::string& param_name) const {
-  if (nested_module_names.empty()) {
-    throw std::invalid_argument(
-        "config nested path must contain at least one module");
-  }
-  for (const auto& module_name : nested_module_names) {
-    if (module_name.empty()) {
-      throw std::invalid_argument(
-          "config nested path must not contain an empty module");
-    }
-  }
-  if (param_name.empty()) {
-    throw std::invalid_argument("config nested parameter name must not be empty");
-  }
-  const auto& json = std::any_cast<const nlohmann::json&>(config);
-
-  nlohmann::json::const_iterator itr = json.find(nested_module_names[0]);
-  if (itr == json.end()) {
-    return std::nullopt;
-  }
-
-  for (unsigned int i = 1; i < nested_module_names.size(); i++) {
-    const auto next = itr->find(nested_module_names[i]);
-    if (next == itr->end()) {
-      return std::nullopt;
-    }
-
-    itr = next;
-  }
-
-  auto parameter = itr->find(param_name);
-  if (parameter == itr->end()) {
-    return std::nullopt;
-  }
-
-  try {
-    auto converted = traits<T>::convert(
-        parameter->get<typename traits<T>::InType>());
-    if (!converted) {
-      throw std::runtime_error("invalid value shape");
-    }
-    return converted;
-  } catch (const std::exception& e) {
-    std::stringstream full_name;
-    for (const auto& name : nested_module_names) full_name << name << "/";
-    throw std::runtime_error("invalid config parameter " + config_path + ":" +
-                             full_name.str() + param_name + ": " + e.what());
-  }
-}
-
-template <typename T>
-T Config::param_nested(const std::vector<std::string>& nested_module_names, const std::string& param_name, const T& default_value) const {
-  auto found = param_nested<T>(nested_module_names, param_name);
-  if (!found) {
-    std::stringstream param_name;
-    for (const auto& module_name : nested_module_names) {
-      param_name << module_name << "/";
-    }
-    LogWarning("param " + param_name.str() + " not found");
-    LogWarning("use default_value=" + convert_to_string(default_value));
-    return default_value;
-  }
-
-  return found.value();
-}
-
-template <typename T>
-T Config::param_cast_nested(const std::vector<std::string>& nested_module_names, const std::string& param_name) const {
-  auto found = param_nested<T>(nested_module_names, param_name);
-  if (!found) {
-    std::stringstream param_name;
-    for (const auto& module_name : nested_module_names) {
-      param_name << module_name << "/";
-    }
-    throw std::runtime_error("required config parameter " + param_name.str() +
-                             " not found");
-  }
-  return *found;
-}
-
-#define DEFINE_CONFIG_IO_SPECIALIZATION(TYPE)                                                                                                  \
-  template std::optional<TYPE> Config::param(const std::string& module_name, const std::string& param_name) const;                             \
-  template TYPE Config::param(const std::string&, const std::string&, const TYPE&) const;                                                      \
-  template TYPE Config::param_cast(const std::string&, const std::string&) const;                                                              \
-  template std::optional<TYPE> Config::param_nested(const std::vector<std::string>& nested_module_names, const std::string& param_name) const; \
-  template TYPE Config::param_nested(const std::vector<std::string>&, const std::string&, const TYPE&) const;                                  \
-  template TYPE Config::param_cast_nested(const std::vector<std::string>&, const std::string&) const;                                          \
-  template bool Config::override_param(const std::string&, const std::string&, const TYPE&);
+#define DEFINE_CONFIG_IO_SPECIALIZATION(TYPE)                                  \
+  template TYPE Config::param_cast(const std::string&, const std::string&) const;
 
 }  // namespace open_lmm

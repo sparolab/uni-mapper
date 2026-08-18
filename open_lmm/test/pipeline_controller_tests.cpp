@@ -26,6 +26,9 @@ void Check(bool condition, const char* message) {
 class FakeRunner final : public test::RuntimePortFixture {
  public:
   enum class ReceiptFault { kNone, kBase, kCommitted, kNoMutation };
+  enum class ConfigReceiptFault {
+    kNone, kBaseSession, kCommittedSession, kPreviousConfig, kCommittedConfig
+  };
   explicit FakeRunner(
       std::vector<AgentId> agents = {Id("A"), Id("B")})
       : RuntimePortFixture(std::move(agents)) {}
@@ -156,6 +159,29 @@ class FakeRunner final : public test::RuntimePortFixture {
     }
     return receipt;
   }
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected,
+      const ExecutionContext& context) override {
+    auto applied = RuntimePortFixture::ApplyConfig(candidate, expected, context);
+    if (!applied) return applied;
+    auto receipt = std::move(applied).Value();
+    switch (config_receipt_fault) {
+      case ConfigReceiptFault::kNone: break;
+      case ConfigReceiptFault::kBaseSession:
+        ++receipt.base_session_revision;
+        break;
+      case ConfigReceiptFault::kCommittedSession:
+        ++receipt.session_revision;
+        break;
+      case ConfigReceiptFault::kPreviousConfig:
+        ++receipt.previous_config_revision;
+        break;
+      case ConfigReceiptFault::kCommittedConfig:
+        ++receipt.config_revision;
+        break;
+    }
+    return Result<ConfigApplyReceipt>::Ok(std::move(receipt));
+  }
   mutable std::mutex mutex;
   std::vector<StageId> calls;
   std::optional<StageId> fail_stage;
@@ -163,6 +189,7 @@ class FakeRunner final : public test::RuntimePortFixture {
   bool replay_fails = false;
   bool fail_reconfigure = false;
   ReceiptFault receipt_fault = ReceiptFault::kNone;
+  ConfigReceiptFault config_receipt_fault = ConfigReceiptFault::kNone;
   std::optional<ConfigDomain> reconfigured_domain;
   bool block_node_until_cancel = false;
   std::atomic<bool> node_entered{false};
@@ -306,6 +333,37 @@ void TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession() {
   const auto recovered = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(recovered && controller.Wait(recovered.Value()),
         "replacement session accepts commands after protocol failure");
+}
+
+void TestMalformedConfigCandidateReceiptsPoisonCommittedSession() {
+  for (const auto fault : {
+           FakeRunner::ConfigReceiptFault::kBaseSession,
+           FakeRunner::ConfigReceiptFault::kCommittedSession,
+           FakeRunner::ConfigReceiptFault::kPreviousConfig,
+           FakeRunner::ConfigReceiptFault::kCommittedConfig}) {
+    auto runner = std::make_shared<FakeRunner>();
+    runner->config_receipt_fault = fault;
+    PipelineController controller(runner);
+    ConfigCandidate candidate;
+    candidate.domain = ConfigDomain::kMapSave;
+    candidate.document_json = "{}";
+    auto applied = controller.ApplyConfig(candidate, {1, 1});
+    Check(!applied &&
+              applied.GetError().severity == Error::Severity::kFatalSession,
+          "malformed config candidate receipt is a fatal protocol error");
+    const auto snapshot = controller.Snapshot();
+    Check(snapshot.session_revision == 2 && snapshot.config_revision == 2,
+          "malformed config receipt still resynchronizes committed revisions");
+    Check(std::none_of(snapshot.recent_events.begin(),
+                       snapshot.recent_events.end(),
+                       [](const ExecutionEvent& event) {
+                         return event.type == EventType::kArtifactInvalidated &&
+                                event.message == "config applied";
+                       }),
+          "malformed config receipt cannot publish success");
+    Check(!controller.ApplyConfig(candidate, {2, 2}),
+          "protocol-poisoned controller rejects later config candidates");
+  }
 }
 
 void TestConcurrentSubmissionsAreSerialized() {
@@ -987,6 +1045,7 @@ int main() {
   TestRunAllAndArtifacts();
   TestMalformedExecutionReceiptsCannotPublishSuccess();
   TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession();
+  TestMalformedConfigCandidateReceiptsPoisonCommittedSession();
   TestConcurrentSubmissionsAreSerialized();
   TestRerunInvalidatesDownstream();
   TestFailureStopsPipeline();

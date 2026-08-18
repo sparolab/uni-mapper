@@ -29,8 +29,7 @@ foreach(source IN LISTS common_sources)
   endif()
 endforeach()
 
-# Core algorithms and built-in plugins consume validated snapshots only. The
-# mutable global configuration remains a runtime bootstrap concern.
+# Core algorithms and built-in plugins consume validated snapshots only.
 file(GLOB_RECURSE core_sources
   "${OPEN_LMM_SOURCE_DIR}/core/*.cpp"
   "${OPEN_LMM_SOURCE_DIR}/core/*.hpp"
@@ -111,7 +110,41 @@ endforeach()
 assert_file_excludes(
   "CMakeLists.txt"
   "add_compile_options($<$<CONFIG:Release>:-O3>)"
-)
+  "install(DIRECTORY \${PROJECT_SOURCE_DIR}/\${public_header_dir}/")
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/common/CMakeLists.txt" common_cmake)
+string(REGEX MATCH
+  "add_library\\(open_lmm_contracts SHARED[^)]*\\)" contracts_sources
+  "${common_cmake}")
+foreach(forbidden "plugin_host_v2.cpp" "CMAKE_DL_LIBS")
+  string(FIND "${contracts_sources}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "contracts target contains runtime plugin-host dependency: ${forbidden}")
+  endif()
+endforeach()
+string(FIND "${common_cmake}"
+  "target_link_libraries(open_lmm_contracts" contracts_link_dependencies)
+if(NOT contracts_link_dependencies EQUAL -1)
+  message(FATAL_ERROR
+    "contracts target must not publish or link runtime dependencies")
+endif()
+
+file(READ
+  "${OPEN_LMM_SOURCE_DIR}/test/package_consumer/public_header_allowlist.txt"
+  public_header_allowlist)
+foreach(forbidden
+    "plugin_host_v2.hpp"
+    "plugin_support.hpp"
+    "stage_executor.hpp"
+    "session_state.hpp"
+    "server/execution/")
+  string(FIND "${public_header_allowlist}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "public header allowlist exposes implementation detail: ${forbidden}")
+  endif()
+endforeach()
 
 # MapServer is the stable command/query port façade only; mutable
 # session/runtime responsibilities belong to StageExecutor and SessionManager.
@@ -132,8 +165,14 @@ foreach(forbidden "SessionManager" "OutputRepository" "state_mutex_")
   endif()
 endforeach()
 
-# Session execution owns immutable config state. GlobalConfig is permitted only
-# in the legacy MapServer entry constructor for config-directory discovery.
+# Session execution owns an injected immutable bootstrap configuration. No
+# process-global configuration singleton is allowed in production code.
+assert_file_excludes(
+  "utils/config.hpp"
+  "GlobalConfig")
+assert_file_excludes(
+  "utils/config.cpp"
+  "GlobalConfig")
 assert_file_excludes(
   "server/stage_executor.hpp"
   "GlobalConfig")

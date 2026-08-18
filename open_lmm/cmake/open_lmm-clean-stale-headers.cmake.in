@@ -1,0 +1,7 @@
+# Generated list of package-owned paths from OpenLMM's former recursive header
+# installation. Unknown files are intentionally not enumerated or removed.
+set(_open_lmm_owned_stale_headers "@_open_lmm_owned_stale_headers@")
+foreach(_open_lmm_stale_header IN LISTS _open_lmm_owned_stale_headers)
+  file(REMOVE
+    "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_INCLUDEDIR@/open_lmm/${_open_lmm_stale_header}")
+endforeach()

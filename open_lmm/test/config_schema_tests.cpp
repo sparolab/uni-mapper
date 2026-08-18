@@ -1,8 +1,10 @@
 #include <open_lmm/utils/config_schema.hpp>
+#include <open_lmm/utils/config.hpp>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -47,6 +49,47 @@ int main() {
   const std::filesystem::path config_root =
       std::filesystem::path(OPEN_LMM_SOURCE_DIR) / "config";
 
+  const auto replacement_root = std::filesystem::temp_directory_path() /
+                                "open_lmm_config_snapshot_replacement_test";
+  std::filesystem::remove_all(replacement_root);
+  std::filesystem::create_directories(replacement_root);
+  const auto selected = replacement_root / "module.json";
+  const auto replacement = replacement_root / "replacement.json";
+  {
+    std::ofstream(selected)
+        << R"({"map_server":{"enable_map_updater":false}})";
+    std::ofstream(replacement)
+        << R"({"map_server":{"enable_map_updater":true}})";
+  }
+  auto bounded_snapshot = open_lmm::LoadConfigFileBounded(
+      selected, open_lmm::SchemaLimits{}.maximum_document_bytes);
+  std::filesystem::rename(replacement, selected);
+  auto snapshot_document = bounded_snapshot
+      ? registry.ParseAndValidate(ConfigDocumentKind::kMapServer,
+                                  bounded_snapshot.Value().ToJson(),
+                                  selected.string())
+      : open_lmm::Result<open_lmm::ValidatedConfigDocument>::Failure(
+            bounded_snapshot.GetError());
+  auto replacement_snapshot = open_lmm::LoadConfigFileBounded(
+      selected, open_lmm::SchemaLimits{}.maximum_document_bytes);
+  auto replacement_document = replacement_snapshot
+      ? registry.ParseAndValidate(ConfigDocumentKind::kMapServer,
+                                  replacement_snapshot.Value().ToJson(),
+                                  selected.string())
+      : open_lmm::Result<open_lmm::ValidatedConfigDocument>::Failure(
+            replacement_snapshot.GetError());
+  Expect(snapshot_document && replacement_document &&
+             !snapshot_document.Value().Document()
+                  .at("map_server")
+                  .at("enable_map_updater")
+                  .get<bool>() &&
+             replacement_document.Value().Document()
+                  .at("map_server")
+                  .at("enable_map_updater")
+                  .get<bool>(),
+         "atomic path replacement must not mutate an acquired config snapshot");
+  std::filesystem::remove_all(replacement_root);
+
   ValidateFile(registry, ConfigDocumentKind::kRoot,
                config_root / "config.json");
   ValidateFile(registry, ConfigDocumentKind::kMapServer,
@@ -67,6 +110,70 @@ int main() {
                      .at("alignment")
                      .at("headless_policy") == "kiss_then_descriptor",
          "loop schema must materialize kiss_then_descriptor as its default");
+  auto migrated_loop_policy = registry.ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector,
+      R"({"loop_detector":{"loop_detector_type":"kdtree","model":"scan_context"},"alignment":{"headless_policy":"legacy_combined"}})");
+  Expect(migrated_loop_policy &&
+             migrated_loop_policy.Value().Document()
+                     .at("alignment")
+                     .at("headless_policy") == "kiss_then_descriptor" &&
+             migrated_loop_policy.Value().Warnings().size() == 1,
+         "loop schema must migrate legacy_combined in the canonical document");
+  open_lmm::ValidationOptions no_value_migration;
+  no_value_migration.migrate_deprecated_keys = false;
+  auto rejected_legacy_policy = registry.ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector,
+      R"({"loop_detector":{"loop_detector_type":"kdtree","model":"scan_context"},"alignment":{"headless_policy":"legacy_combined"}})",
+      "legacy policy", no_value_migration);
+  Expect(!rejected_legacy_policy,
+         "deprecated policy value must be rejected when migration is disabled");
+  auto invalid_solid_fov = registry.ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector,
+      R"({"loop_detector":{"loop_detector_type":"kdtree","model":"solid","fov_d":5.0,"fov_u":2.0}})");
+  Expect(!invalid_solid_fov,
+         "SOLiD cross-field constraints must be owned by the schema");
+  auto fractional_solid_distance = registry.ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector,
+      R"({"loop_detector":{"loop_detector_type":"kdtree","model":"solid","min_distance":3.5}})");
+  Expect(!fractional_solid_distance,
+         "SOLiD integer distance representation must reject fractions");
+  auto zero_extrinsic_quaternion = registry.ParseAndValidate(
+      ConfigDocumentKind::kDataLoader,
+      R"({"data_loader":{"data_loader_type":"file_based","extrinsic":[0,0,0,0,0,0,0]}})");
+  Expect(!zero_extrinsic_quaternion,
+         "zero extrinsic quaternion must be rejected by the schema");
+  auto near_zero_extrinsic_quaternion = registry.ParseAndValidate(
+      ConfigDocumentKind::kDataLoader,
+      R"({"data_loader":{"data_loader_type":"file_based","extrinsic":[0,0,0,1e-14,0,0,0]}})");
+  Expect(!near_zero_extrinsic_quaternion,
+         "near-zero extrinsic quaternion must be rejected by the schema");
+  auto non_finite_extrinsic_item = registry.Validate(
+      ConfigDocumentKind::kDataLoader,
+      nlohmann::json{{"data_loader",
+                      {{"data_loader_type", "file_based"},
+                       {"extrinsic",
+                        {std::numeric_limits<double>::infinity(), 0, 0, 0, 0,
+                         0, 1}}}}});
+  Expect(!non_finite_extrinsic_item,
+         "extrinsic array items must all be finite");
+  auto oversized_loader_float = registry.ParseAndValidate(
+      ConfigDocumentKind::kDataLoader,
+      R"({"data_loader":{"data_loader_type":"file_based","voxel_size":1e300}})");
+  Expect(!oversized_loader_float,
+         "float-backed loader fields must reject values above FLT_MAX");
+  auto oversized_alignment_float = registry.ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector,
+      R"({"loop_detector":{"loop_detector_type":"kdtree","model":"scan_context"},"alignment":{"kiss_voxel_size":1e300}})");
+  Expect(!oversized_alignment_float,
+         "float-backed alignment fields must reject values above FLT_MAX");
+  auto oversized_optimizer_int = registry.Validate(
+      ConfigDocumentKind::kBackendOptimizer,
+      nlohmann::json{{"backend_optimizer",
+                      {{"relinearizeSkip",
+                        static_cast<uint64_t>(
+                            std::numeric_limits<int>::max()) + 1ULL}}}});
+  Expect(!oversized_optimizer_int,
+         "int-backed UInt must reject values above INT_MAX");
   for (const char* name : {"dufomap.json", "erasor.json", "free_dom.json",
                            "hmm_mos.json", "otd.json"}) {
     ValidateFile(registry, ConfigDocumentKind::kDynamicRemover,
@@ -86,6 +193,11 @@ int main() {
     Expect(migrated.Value().Warnings().size() == 1,
            "FreeDOM migration must emit one warning");
   }
+  auto invalid_free_dom_depth = registry.ParseAndValidate(
+      ConfigDocumentKind::kDynamicRemover,
+      R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"free_dom","voxel_depth":0}})");
+  Expect(!invalid_free_dom_depth,
+         "FreeDOM positive depth constraint must be owned by the schema");
 
   auto unknown = registry.ParseAndValidate(
       ConfigDocumentKind::kMapServer,

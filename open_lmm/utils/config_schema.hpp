@@ -56,6 +56,12 @@ struct DeprecationInfo {
   uint32_t since_version = 0;
 };
 
+struct ValueMigration {
+  nlohmann::json deprecated_value;
+  nlohmann::json replacement_value;
+  uint32_t since_version = 0;
+};
+
 struct ConstraintSet {
   std::optional<double> minimum;
   std::optional<double> maximum;
@@ -73,6 +79,14 @@ struct ConstraintSet {
   std::optional<SchemaValueType> item_type;
   bool items_non_empty = false;
   bool unique_items = false;
+
+  struct ArraySliceNorm {
+    std::size_t offset = 0;
+    std::size_t count = 0;
+    double minimum = 0.0;
+    bool exclusive_minimum = true;
+  };
+  std::optional<ArraySliceNorm> array_slice_norm;
 };
 
 struct FieldSpec {
@@ -83,6 +97,7 @@ struct FieldSpec {
   ConstraintSet constraints;
   UiHint ui;
   DeprecationInfo deprecation;
+  std::vector<ValueMigration> value_migrations;
   bool secret = false;
   bool allow_unknown_children = false;
 };

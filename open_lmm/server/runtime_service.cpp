@@ -1,8 +1,7 @@
 #include "runtime_service.hpp"
 
 #include <open_lmm/server/map_server.hpp>
-#include <open_lmm/utils/config.hpp>
-#include <open_lmm/utils/config_schema.hpp>
+#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 
 #include <algorithm>
 #include <array>
@@ -41,7 +40,7 @@ struct RuntimeService::RuntimeSession {
   explicit RuntimeSession(SessionId session_id) : id(std::move(session_id)) {}
   SessionId id;
   std::string label;
-  fs::path config_directory;
+  std::shared_ptr<const BootstrapConfigSnapshot> bootstrap_config;
   fs::path output_directory;
   std::shared_ptr<StageRuntimePort> port;
   std::shared_ptr<PipelineController> controller;
@@ -63,10 +62,10 @@ RuntimeService::RuntimeService(ResourceBudget budget,
       port_factory_(std::move(port_factory)) {
   if (!port_factory_) {
     port_factory_ = [governor = governor_](
-                          const BootstrapRequest& request,
+                          const BootstrapConfigSnapshot& bootstrap,
                           const fs::path& output_directory)
         -> Result<std::shared_ptr<StageRuntimePort>> {
-      auto port = std::make_shared<MapServer>(request.config_directory,
+      auto port = std::make_shared<MapServer>(bootstrap,
                                               output_directory, governor);
       auto ready = port->ValidateReady();
       if (!ready) {
@@ -112,19 +111,11 @@ Result<SessionId> RuntimeService::CreateSession(
     }
   } admission{*governor_};
 
-  Config root((request.config_directory / "config.json").string());
-  if (!root.is_valid()) {
-    return Result<SessionId>::Failure(Error::ParseError(root.error_message()));
-  }
-  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
-      ConfigDocumentKind::kRoot, root.ToJson(),
-      (request.config_directory / "config.json").string());
-  if (!validated) {
-    return Result<SessionId>::Failure(validated.GetError());
-  }
-  Config canonical = Config::FromJson(validated.Value().Document().dump());
-  fs::path output_root = request.output_root.value_or(
-      canonical.param<std::string>("directory", "root_save_dir", ""));
+  auto loaded = LoadBootstrapConfig(request.config_directory);
+  if (!loaded) return Result<SessionId>::Failure(loaded.GetError());
+  auto bootstrap = std::make_shared<const BootstrapConfigSnapshot>(
+      std::move(loaded).Value());
+  fs::path output_root = request.output_root.value_or(bootstrap->OutputRoot());
   if (output_root.empty()) {
     return Result<SessionId>::Failure(
         Error::InvalidArgument("session output root must be non-empty"));
@@ -139,13 +130,13 @@ Result<SessionId> RuntimeService::CreateSession(
       std::lock_guard lock(registry_mutex_);
       if (sessions_.contains(id)) continue;
     }
-    auto created = port_factory_(request, output_directory);
+    auto created = port_factory_(*bootstrap, output_directory);
     if (!created) {
       return Result<SessionId>::Failure(created.GetError());
     }
     auto session = std::make_shared<RuntimeSession>(id);
     session->label = request.label;
-    session->config_directory = request.config_directory;
+    session->bootstrap_config = bootstrap;
     session->output_directory = output_directory;
     session->port = std::move(created).Value();
     session->controller =

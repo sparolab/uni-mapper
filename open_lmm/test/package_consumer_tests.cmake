@@ -26,6 +26,19 @@ file(MAKE_DIRECTORY "${consumer_source}")
 file(COPY "${OPEN_LMM_SOURCE_DIR}/test/package_consumer/"
      DESTINATION "${consumer_source}")
 
+# Model an upgrade from the former recursive header installation. The known
+# package-owned header must disappear, while an unknown user file must survive.
+file(MAKE_DIRECTORY
+  "${install_prefix}/include/open_lmm/server"
+  "${install_prefix}/include/open_lmm/core/loop_detector")
+file(WRITE "${install_prefix}/include/open_lmm/server/stage_executor.hpp"
+  "// stale package-owned header\n")
+file(WRITE
+  "${install_prefix}/include/open_lmm/core/loop_detector/scan_context_v2_adapter.hpp"
+  "// deleted historical package-owned header\n")
+file(WRITE "${install_prefix}/include/open_lmm/user-owned.hpp"
+  "// must survive package cleanup\n")
+
 execute_process(
   COMMAND "${CMAKE_COMMAND}" --install "${OPEN_LMM_BUILD_DIR}"
           --prefix "${install_prefix}"
@@ -38,6 +51,34 @@ set(targets_file
   "${install_prefix}/share/open_lmm/cmake/open_lmmTargets.cmake")
 if(NOT EXISTS "${targets_file}")
   message(FATAL_ERROR "installed target export is missing: ${targets_file}")
+endif()
+if(EXISTS "${install_prefix}/include/open_lmm/server/stage_executor.hpp")
+  message(FATAL_ERROR "upgrade left a stale package-owned public header")
+endif()
+if(EXISTS
+    "${install_prefix}/include/open_lmm/core/loop_detector/scan_context_v2_adapter.hpp")
+  message(FATAL_ERROR
+    "upgrade left a deleted historical package-owned public header")
+endif()
+if(NOT EXISTS "${install_prefix}/include/open_lmm/user-owned.hpp")
+  message(FATAL_ERROR "upgrade cleanup removed an unknown user file")
+endif()
+file(REMOVE "${install_prefix}/include/open_lmm/user-owned.hpp")
+
+# The installed SDK surface is a reviewed golden list, not a recursive copy of
+# source headers.  Any addition requires an intentional package API decision.
+file(GLOB_RECURSE installed_headers
+  RELATIVE "${install_prefix}/include/open_lmm"
+  "${install_prefix}/include/open_lmm/*.h"
+  "${install_prefix}/include/open_lmm/*.hpp")
+list(SORT installed_headers)
+file(STRINGS
+  "${consumer_source}/public_header_allowlist.txt" expected_headers)
+list(SORT expected_headers)
+if(NOT installed_headers STREQUAL expected_headers)
+  message(FATAL_ERROR
+    "installed public headers differ from golden allowlist\n"
+    "expected: ${expected_headers}\nactual: ${installed_headers}")
 endif()
 set(batch_launcher "${install_prefix}/bin/open_lmm_batch")
 if(NOT EXISTS "${batch_launcher}")
@@ -77,6 +118,7 @@ endforeach()
 
 set(versioned_runtime_libraries
   open_lmm_contracts
+  open_lmm_plugin_host
   open_lmm_client
   open_lmm_common
   open_lmm_algorithm_config
@@ -119,7 +161,8 @@ foreach(plugin IN ITEMS create_scan_context create_free_dom)
 endforeach()
 
 execute_process(
-  COMMAND "${batch_launcher}" --help
+  COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
+          "${batch_launcher}" --help
   RESULT_VARIABLE batch_help_result)
 if(NOT batch_help_result EQUAL 0)
   message(FATAL_ERROR
@@ -130,6 +173,66 @@ string(FIND "${targets_contents}" "${OPEN_LMM_SOURCE_DIR}" source_reference)
 if(NOT source_reference EQUAL -1)
   message(FATAL_ERROR "installed targets retain a source-tree reference")
 endif()
+string(FIND "${targets_contents}" "open_lmm_plugin_host"
+  exported_plugin_host)
+if(NOT exported_plugin_host EQUAL -1)
+  message(FATAL_ERROR
+    "internal plugin host must not be part of the package target surface")
+endif()
+string(REGEX MATCHALL
+  "add_library\\(open_lmm::[A-Za-z0-9_]+" exported_target_declarations
+  "${targets_contents}")
+set(exported_targets)
+foreach(declaration IN LISTS exported_target_declarations)
+  string(REPLACE "add_library(open_lmm::" "" target_name "${declaration}")
+  list(APPEND exported_targets "${target_name}")
+endforeach()
+list(SORT exported_targets)
+file(STRINGS "${consumer_source}/exported_target_allowlist.txt"
+  expected_exported_targets)
+list(SORT expected_exported_targets)
+if(NOT exported_targets STREQUAL expected_exported_targets)
+  message(FATAL_ERROR
+    "exported target surface differs from golden allowlist\n"
+    "expected: ${expected_exported_targets}\nactual: ${exported_targets}")
+endif()
+
+# Every installed OpenLMM/plugin DSO must resolve from the install prefix and
+# use the relocatable local-library runpath without ambient workspace paths.
+find_program(OPEN_LMM_LDD ldd REQUIRED)
+# Inspect every real shared object installed by the package, including plugin
+# support libraries (Map, remover implementations, and small_gicp), rather
+# than only the stable facade and create_* entry points.
+file(GLOB installed_dso_candidates "${install_prefix}/lib/*.so*")
+set(installed_dsos)
+foreach(installed_dso_candidate IN LISTS installed_dso_candidates)
+  if(NOT IS_SYMLINK "${installed_dso_candidate}")
+    list(APPEND installed_dsos "${installed_dso_candidate}")
+  endif()
+endforeach()
+if(NOT installed_dsos)
+  message(FATAL_ERROR "installed package contains no shared objects")
+endif()
+foreach(installed_dso IN LISTS installed_dsos)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
+            "${OPEN_LMM_LDD}" "${installed_dso}"
+    RESULT_VARIABLE ldd_result
+    OUTPUT_VARIABLE ldd_output
+    ERROR_VARIABLE ldd_error)
+  if(NOT ldd_result EQUAL 0 OR ldd_output MATCHES "not found")
+    message(FATAL_ERROR
+      "installed DSO has unresolved dependencies: ${installed_dso}\n"
+      "${ldd_output}${ldd_error}")
+  endif()
+  execute_process(COMMAND "${OPEN_LMM_READELF}" -d "${installed_dso}"
+    RESULT_VARIABLE dso_readelf_result OUTPUT_VARIABLE dso_dynamic_section)
+  if(NOT dso_readelf_result EQUAL 0 OR
+     NOT dso_dynamic_section MATCHES "(RPATH|RUNPATH).*\\[\\$ORIGIN\\]")
+    message(FATAL_ERROR
+      "installed DSO lacks exact relocatable $ORIGIN runpath: ${installed_dso}")
+  endif()
+endforeach()
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -S "${consumer_source}" -B "${consumer_build}"
@@ -167,15 +270,43 @@ foreach(light_consumer IN ITEMS
   endif()
 endforeach()
 
+set(header_build "${OPEN_LMM_PACKAGE_TEST_ROOT}/header-self-containment-build")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}"
+          -S "${consumer_source}/header_self_containment"
+          -B "${header_build}"
+          "-DCMAKE_PREFIX_PATH=${install_prefix}"
+          ${consumer_compiler_args}
+  RESULT_VARIABLE header_configure_result)
+if(NOT header_configure_result EQUAL 0)
+  message(FATAL_ERROR
+    "public-header self-containment configure failed: ${header_configure_result}")
+endif()
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" --build "${header_build}" --parallel 1
+  RESULT_VARIABLE header_build_result)
+if(NOT header_build_result EQUAL 0)
+  message(FATAL_ERROR
+    "public-header self-containment build failed: ${header_build_result}")
+endif()
+
 # Configure each lightweight surface independently. This catches accidental
 # package-config discovery of Eigen/PCL/GTSAM for contracts/client/plugin SDK.
 foreach(component IN ITEMS contracts client plugin_sdk)
   set(component_build "${OPEN_LMM_PACKAGE_TEST_ROOT}/${component}-only-build")
+  set(lightweight_dependency_guards)
+  if(component STREQUAL "contracts" OR component STREQUAL "plugin_sdk")
+    list(APPEND lightweight_dependency_guards
+      -DCMAKE_DISABLE_FIND_PACKAGE_Eigen3=TRUE
+      -DCMAKE_DISABLE_FIND_PACKAGE_PCL=TRUE
+      -DCMAKE_DISABLE_FIND_PACKAGE_GTSAM=TRUE)
+  endif()
   execute_process(
     COMMAND "${CMAKE_COMMAND}"
             -S "${consumer_source}/${component}_only"
             -B "${component_build}"
             "-DCMAKE_PREFIX_PATH=${install_prefix}"
+            ${lightweight_dependency_guards}
             ${consumer_compiler_args}
     RESULT_VARIABLE component_configure_result)
   if(NOT component_configure_result EQUAL 0)

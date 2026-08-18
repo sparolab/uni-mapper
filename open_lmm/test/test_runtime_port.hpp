@@ -72,6 +72,28 @@ class RuntimePortFixture : public StageRuntimePort {
          std::move(affected).Value()}));
   }
 
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected,
+      const ExecutionContext& context) override {
+    std::lock_guard lock(mutex_);
+    if (context.base_revision != snapshot_.revision ||
+        expected.session_revision != snapshot_.revision ||
+        expected.config_revision != snapshot_.config_revision) {
+      return Result<ConfigApplyReceipt>::Failure(
+          Error::InvalidArgument("fixture config revision mismatch"));
+    }
+    const uint64_t previous_config = snapshot_.config_revision;
+    const uint64_t base_session = snapshot_.revision;
+    artifacts_.Restore(snapshot_.artifacts);
+    artifacts_.ApplyConfig(candidate.domain, previous_config + 1);
+    ++snapshot_.config_revision;
+    ++snapshot_.revision;
+    snapshot_.artifacts = artifacts_.Snapshot();
+    return Result<ConfigApplyReceipt>::Ok(
+        {previous_config, snapshot_.config_revision, base_session,
+         snapshot_.revision, agents_});
+  }
+
   [[nodiscard]] CommittedSessionSnapshot Snapshot() const override {
     std::lock_guard lock(mutex_);
     return snapshot_;

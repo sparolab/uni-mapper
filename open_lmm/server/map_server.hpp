@@ -5,6 +5,7 @@
 #include <optional>
 
 #include <open_lmm/server/stage_ports.hpp>
+#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 
 namespace open_lmm {
 
@@ -16,9 +17,8 @@ class ResourceGovernor;
 // internal StageExecutor component.
 class MapServer final : public StageRuntimePort {
  public:
-  MapServer();
   explicit MapServer(
-      std::filesystem::path config_directory,
+      BootstrapConfigSnapshot bootstrap_config,
       std::optional<std::filesystem::path> output_directory = std::nullopt,
       std::shared_ptr<ResourceGovernor> resource_governor = {});
   ~MapServer() override;
@@ -30,6 +30,9 @@ class MapServer final : public StageRuntimePort {
   [[nodiscard]] CancellationCapability CancellationMetadata() const override;
   Result<ExecutionReceipt> Execute(
       const ExecutionCommand& command,
+      const ExecutionContext& context) override;
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context) override;
   [[nodiscard]] CommittedSessionSnapshot Snapshot() const override;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(

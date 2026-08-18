@@ -1,6 +1,7 @@
 #include <open_lmm/common/plugin_host_v2.hpp>
 #include <open_lmm/core/descriptor/built_in_descriptor_engine.hpp>
 #include <open_lmm/core/descriptor/generic_descriptor_v2_adapter.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 #include <open_lmm/utils/load_module.hpp>
 
 #include <cmath>
@@ -20,6 +21,19 @@ void Check(bool condition, const char* message) {
   if (condition) return;
   std::cerr << "FAILED: " << message << '\n';
   std::exit(EXIT_FAILURE);
+}
+
+std::string DescriptorConfig(std::string model,
+                             nlohmann::json overrides = {}) {
+  nlohmann::json document = {
+      {"loop_detector", {{"loop_detector_type", "kdtree"},
+                         {"model", std::move(model)}}}};
+  for (auto& [key, value] : overrides.items())
+    document["loop_detector"][key] = std::move(value);
+  auto validated = BuiltinConfigSchemaRegistry().Validate(
+      ConfigDocumentKind::kLoopDetector, document, "descriptor ABI fixture");
+  Check(validated.IsOk(), "descriptor fixture config must validate");
+  return validated.Value().CanonicalJson();
 }
 
 AlgorithmExecutionContext Context() {
@@ -48,8 +62,8 @@ std::vector<pcl::PointXYZI> Scan(double yaw) {
 
 void TestGenericAndV1Parity(const char* scan_library,
                             const char* solid_library) {
-  const std::string scan_config = R"({"loop_detector":{"num_sector":60,"num_ring":20,"max_range":80.0}})";
-  const std::string solid_config = R"({"loop_detector":{}})";
+  const std::string scan_config = DescriptorConfig("scan_context");
+  const std::string solid_config = DescriptorConfig("solid");
   auto scan_engine =
       LoadGenericDescriptorV2Adapter(scan_library, scan_config).Value();
   auto second_scan_engine =
@@ -57,7 +71,7 @@ void TestGenericAndV1Parity(const char* scan_library,
   auto solid_engine =
       LoadGenericDescriptorV2Adapter(solid_library, solid_config).Value();
   const std::string twelve_ring_config =
-      R"({"loop_detector":{"num_sector":60,"num_ring":12,"max_range":80.0}})";
+      DescriptorConfig("scan_context", {{"num_ring", 12}});
   auto twelve_ring_engine =
       LoadGenericDescriptorV2Adapter(scan_library, twelve_ring_config).Value();
   Check(scan_engine->IndexMetadata().index_dimension == 20 &&

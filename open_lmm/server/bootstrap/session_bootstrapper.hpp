@@ -6,6 +6,7 @@
 
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/result.hpp>
+#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 #include <open_lmm/server/session_state.hpp>
 
@@ -14,7 +15,7 @@ namespace open_lmm {
 class AlgorithmFactory;
 
 struct SessionBootstrapRequest {
-  std::filesystem::path config_directory;
+  BootstrapConfigSnapshot bootstrap_config;
   std::optional<std::filesystem::path> output_directory;
   std::shared_ptr<CancellationToken> cancellation;
 };

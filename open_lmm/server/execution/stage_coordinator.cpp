@@ -1,8 +1,16 @@
 #include "stage_coordinator.hpp"
 
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 
 #include <open_lmm/server/execution/alignment_artifact_store.hpp>
@@ -33,6 +41,76 @@ std::string HexFingerprint(uint64_t hash) {
   std::ostringstream output;
   output << std::hex << std::setfill('0') << std::setw(16) << hash;
   return output.str();
+}
+
+const SessionConfigDocument* ConfigDocumentFor(
+    const SessionConfigDocuments& documents, ConfigDomain domain) {
+  switch (domain) {
+    case ConfigDomain::kLoopDetector: return &documents.loop_detector;
+    case ConfigDomain::kOptimizer: return &documents.optimizer;
+    case ConfigDomain::kDynamicRemover: return &documents.dynamic_remover;
+    case ConfigDomain::kMapSave: return &documents.map_server;
+    case ConfigDomain::kGlobal:
+    case ConfigDomain::kDataLoader: return nullptr;
+  }
+  return nullptr;
+}
+
+Result<void> StageConfigDocument(const SessionConfigDocument& document,
+                                 PendingOutputSet& pending) {
+  static std::atomic<uint64_t> sequence{0};
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  std::filesystem::path temporary = document.path;
+  temporary += ".open_lmm_candidate_" + std::to_string(nonce) + "_" +
+               std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)) +
+               ".tmp";
+  const int raw_fd = ::open(temporary.c_str(),
+                            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                            S_IRUSR | S_IWUSR);
+  if (raw_fd < 0) {
+    return Result<void>::Failure(Error::IoError(
+        "failed to create config transaction file " + temporary.string() +
+        ": " + std::strerror(errno)));
+  }
+  struct Descriptor {
+    int value;
+    ~Descriptor() {
+      if (value >= 0) ::close(value);
+    }
+  } descriptor{raw_fd};
+  const std::string contents = document.canonical_json + '\n';
+  std::size_t offset = 0;
+  while (offset < contents.size()) {
+    const ssize_t count =
+        ::write(descriptor.value, contents.data() + offset,
+                contents.size() - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) {
+      const int error_number = errno;
+      descriptor.value = -1;
+      ::close(raw_fd);
+      std::error_code ignored;
+      std::filesystem::remove(temporary, ignored);
+      return Result<void>::Failure(Error::IoError(
+          "failed to write config transaction file " + temporary.string() +
+          ": " + std::strerror(error_number)));
+    }
+    offset += static_cast<std::size_t>(count);
+  }
+  int error_number = 0;
+  if (::fsync(descriptor.value) != 0) error_number = errno;
+  if (::close(descriptor.value) != 0 && error_number == 0) error_number = errno;
+  if (error_number != 0) {
+    descriptor.value = -1;
+    std::error_code ignored;
+    std::filesystem::remove(temporary, ignored);
+    return Result<void>::Failure(Error::IoError(
+        "failed to finalize config transaction file " + temporary.string() +
+        ": " + std::strerror(error_number)));
+  }
+  descriptor.value = -1;
+  pending.Add(std::move(temporary), document.path);
+  return Result<void>::Ok();
 }
 
 Result<void> ValidateInvocation(const std::shared_ptr<const SessionState>& base,
@@ -339,6 +417,82 @@ Result<void> StageCoordinator::ExecuteReconfigure(
         artifacts.ApplyConfig(domain, next_config->revision);
         return Result<void>::Ok();
       });
+}
+
+Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
+    std::shared_ptr<const SessionState> base,
+    const ConfigCandidate& candidate, const ExpectedRevision& expected,
+    const ExecutionContext& context) {
+  auto valid = ValidateInvocation(base, context);
+  if (!valid) return Result<ConfigApplyReceipt>::Failure(valid.GetError());
+  if (expected.session_revision != base->revision ||
+      expected.config_revision != base->config->revision) {
+    return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+        "config transaction expected revision does not match committed state"));
+  }
+  if (base->revision == std::numeric_limits<uint64_t>::max() ||
+      base->config->revision == std::numeric_limits<uint64_t>::max()) {
+    return Result<ConfigApplyReceipt>::Failure(
+        Error::InvalidArgument("config transaction revision is exhausted"));
+  }
+  if (candidate.domain == ConfigDomain::kGlobal ||
+      candidate.domain == ConfigDomain::kDataLoader) {
+    return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+        "data/global config requires a new pipeline session"));
+  }
+
+  const uint64_t next_config_revision = base->config->revision + 1;
+  auto prepared =
+      reconfigurer_.Prepare(base, candidate, next_config_revision);
+  if (!prepared) {
+    return Result<ConfigApplyReceipt>::Failure(prepared.GetError());
+  }
+  const auto next_config = prepared.Value().config;
+  if (!next_config || !next_config->documents) {
+    return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+        "config transaction produced no canonical documents"));
+  }
+  const auto* module =
+      ConfigDocumentFor(*next_config->documents, candidate.domain);
+  if (!module) {
+    return Result<ConfigApplyReceipt>::Failure(
+        Error::InvalidArgument("config transaction domain has no document"));
+  }
+
+  auto pending = outputs_.Begin();
+  auto staged = StageConfigDocument(*module, pending);
+  if (!staged)
+    return Result<ConfigApplyReceipt>::Failure(staged.GetError());
+  if (next_config->documents->root.canonical_json !=
+      base->config->documents->root.canonical_json) {
+    staged = StageConfigDocument(next_config->documents->root, pending);
+    if (!staged)
+      return Result<ConfigApplyReceipt>::Failure(staged.GetError());
+  }
+
+  const CommittedSessionSnapshot before{
+      base->revision, base->config->revision, base->ordered_agents,
+      base->artifacts};
+  SessionTransaction transaction(base);
+  transaction.SetPayload(prepared.Value().payload);
+  auto artifacts = ArtifactEditor(*base);
+  transaction.Working().config = next_config;
+  artifacts->ApplyConfig(candidate.domain, next_config_revision);
+  transaction.Working().artifacts = artifacts->Snapshot();
+  auto finalized = std::move(transaction).Finalize(context.cancellation);
+  if (!finalized)
+    return Result<ConfigApplyReceipt>::Failure(finalized.GetError());
+  const auto committed_state = finalized.Value();
+  const CommittedSessionSnapshot after{
+      committed_state->revision, committed_state->config->revision,
+      committed_state->ordered_agents, committed_state->artifacts};
+  auto committed = sessions_.CommitWithBarrier(
+      base, committed_state, [&pending] { return pending.Commit(); });
+  if (!committed)
+    return Result<ConfigApplyReceipt>::Failure(committed.GetError());
+  return Result<ConfigApplyReceipt>::Ok(
+      {base->config->revision, next_config_revision, base->revision,
+       committed_state->revision, ArtifactRevisionAffectedAgents(before, after)});
 }
 
 Result<void> StageCoordinator::CommitSave(

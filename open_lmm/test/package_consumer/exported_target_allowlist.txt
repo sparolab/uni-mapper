@@ -1,0 +1,11 @@
+alignment
+client
+common
+config
+contracts
+core
+descriptor
+gui
+plugin_sdk
+runtime
+utils

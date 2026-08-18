@@ -2,6 +2,7 @@
 
 #include <open_lmm/common/runtime_contracts.hpp>
 #include <open_lmm/server/pipeline_controller.hpp>
+#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 
 #include <compare>
@@ -47,7 +48,7 @@ struct SessionExecutionEvent {
 class RuntimeService {
  public:
   using PortFactory = std::function<Result<std::shared_ptr<StageRuntimePort>>(
-      const BootstrapRequest&, const std::filesystem::path&)>;
+      const BootstrapConfigSnapshot&, const std::filesystem::path&)>;
 
   explicit RuntimeService(std::size_t maximum_sessions = 8,
                           PortFactory port_factory = {});

@@ -67,31 +67,6 @@ thread_local const ExecutionEventSubscriberSlot* active_event_subscriber =
     nullptr;
 thread_local const PipelineController* active_event_controller = nullptr;
 
-ExecutionEventSubscription::ExecutionEventSubscription(
-    std::function<void()> unsubscribe)
-    : unsubscribe_(std::move(unsubscribe)) {}
-
-ExecutionEventSubscription::~ExecutionEventSubscription() { Reset(); }
-
-ExecutionEventSubscription::ExecutionEventSubscription(
-    ExecutionEventSubscription&& other) noexcept
-    : unsubscribe_(std::move(other.unsubscribe_)) {}
-
-ExecutionEventSubscription& ExecutionEventSubscription::operator=(
-    ExecutionEventSubscription&& other) noexcept {
-  if (this != &other) {
-    Reset();
-    unsubscribe_ = std::move(other.unsubscribe_);
-  }
-  return *this;
-}
-
-void ExecutionEventSubscription::Reset() {
-  if (!unsubscribe_) return;
-  auto unsubscribe = std::move(unsubscribe_);
-  unsubscribe();
-}
-
 PipelineController::PipelineController(std::shared_ptr<StageRuntimePort> port)
     : PipelineController(port, port) {}
 
@@ -450,6 +425,97 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
   return Result<void>::Ok();
 }
 
+Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
+    const ConfigCandidate& candidate, const ExpectedRevision& expected) {
+  std::shared_ptr<StageCommandPort> command_port;
+  std::shared_ptr<SessionQueryPort> query_port;
+  std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
+  {
+    std::lock_guard command_lock(command_mutex_);
+    std::lock_guard lock(mutex_);
+    if (maintenance_in_progress_) {
+      return Result<ConfigApplyReceipt>::Failure(
+          Error::InvalidArgument("pipeline maintenance is in progress"));
+    }
+    if (protocol_failure_) {
+      return Result<ConfigApplyReceipt>::Failure(*protocol_failure_);
+    }
+    if (job_ && (job_->state == JobState::kQueued ||
+                 job_->state == JobState::kRunning ||
+                 job_->state == JobState::kWaitingForAlignmentFeedback ||
+                 job_->state == JobState::kCancelling)) {
+      return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+          "cannot apply config while a job is running"));
+    }
+    if (expected.session_revision != committed_session_.revision ||
+        expected.config_revision != committed_session_.config_revision) {
+      return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+          "config expected revision does not match committed session"));
+    }
+    maintenance_in_progress_ = true;
+    command_port = command_port_;
+    query_port = query_port_;
+    alignment_feedback = alignment_feedback_;
+  }
+
+  Result<ConfigApplyReceipt> applied = Result<ConfigApplyReceipt>::Failure(
+      Error::InvalidArgument("pipeline execution ports are unavailable"));
+  try {
+    if (command_port && query_port) {
+      applied = command_port->ApplyConfig(
+          candidate, expected,
+          {std::make_shared<CancellationToken>(), alignment_feedback,
+           expected.session_revision});
+    }
+  } catch (const std::exception& error) {
+    applied = Result<ConfigApplyReceipt>::Failure(
+        Error::InvalidArgument(error.what()));
+  } catch (...) {
+    applied = Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+        "unknown command-port config transaction exception"));
+  }
+  if (!applied) {
+    std::lock_guard lock(mutex_);
+    maintenance_in_progress_ = false;
+    return applied;
+  }
+
+  const auto& receipt = applied.Value();
+  auto accepted = acceptExecutionReceipt(
+      {receipt.base_session_revision, receipt.session_revision,
+       receipt.affected_agents},
+      expected.session_revision, query_port);
+  Error config_protocol_error = Error::InvalidArgument("");
+  bool config_protocol_failed = false;
+  {
+    std::lock_guard lock(mutex_);
+    maintenance_in_progress_ = false;
+    if (accepted &&
+        (receipt.previous_config_revision != expected.config_revision ||
+         receipt.config_revision <= receipt.previous_config_revision ||
+         committed_session_.config_revision != receipt.config_revision)) {
+      config_protocol_error = Error::InvalidArgument(
+          "config transaction receipt does not match committed session");
+      config_protocol_error.MarkFatalSession().WithSessionRevision(
+          committed_session_.revision);
+      protocol_failure_ = config_protocol_error;
+      config_protocol_failed = true;
+    }
+  }
+  if (!accepted) {
+    return Result<ConfigApplyReceipt>::Failure(accepted.GetError());
+  }
+  if (config_protocol_failed) {
+    return Result<ConfigApplyReceipt>::Failure(
+        std::move(config_protocol_error));
+  }
+  ExecutionEvent invalidated{0, EventType::kArtifactInvalidated,
+                             std::nullopt, "config applied"};
+  invalidated.affected_agents = receipt.affected_agents;
+  emit(std::move(invalidated));
+  return applied;
+}
+
 Result<void> PipelineController::ReplacePorts(
     std::shared_ptr<StageCommandPort> command_port,
     std::shared_ptr<SessionQueryPort> query_port) {
@@ -768,6 +834,7 @@ PipelineSnapshot PipelineController::Snapshot() const {
     std::lock_guard lock(mutex_);
     snapshot.job = job_;
     cancellation = cancellation_;
+    snapshot.session_revision = committed_session_.revision;
     snapshot.config_revision = committed_session_.config_revision;
     snapshot.agents = committed_session_.ordered_agents;
     snapshot.artifacts = committed_session_.artifacts;

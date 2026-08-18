@@ -10,11 +10,19 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
 using namespace open_lmm;
 namespace fs = std::filesystem;
+
+static_assert(!std::is_aggregate_v<BootstrapConfigSnapshot>);
+static_assert(std::is_same_v<
+              decltype(std::declval<const BootstrapConfigSnapshot&>()
+                           .OutputRoot()),
+              const fs::path&>);
 
 void Check(bool condition, const char* message) {
   if (condition) return;
@@ -206,14 +214,15 @@ void TestMultiSessionIsolationAndLifecycle() {
   std::vector<fs::path> outputs;
   std::map<std::string, std::shared_ptr<IsolatedRunner>> runners;
   RuntimeService service(
-      2, [&](const BootstrapRequest& request, const fs::path& output)
+      2, [&](const BootstrapConfigSnapshot& bootstrap, const fs::path& output)
              -> Result<std::shared_ptr<StageRuntimePort>> {
-        const bool first = request.label == "one";
+        const bool first =
+            bootstrap.ConfigDirectory().filename() == "config-one";
         auto runner = std::make_shared<IsolatedRunner>(
             first ? Id("agent1") : Id("agent2"), true);
         std::lock_guard lock(factory_mutex);
         outputs.push_back(output);
-        runners.emplace(request.label, runner);
+        runners.emplace(first ? "one" : "two", runner);
         return Result<std::shared_ptr<StageRuntimePort>>::Ok(runner);
       });
 
@@ -316,6 +325,87 @@ void TestMultiSessionIsolationAndLifecycle() {
   fs::remove_all(root);
 }
 
+void TestBootstrapConfigIsAnImmutableValueSnapshot() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_bootstrap_snapshot_tests";
+  fs::remove_all(root);
+  const fs::path config = root / "config";
+  const fs::path first_output = root / "output-first";
+  const fs::path second_output = root / "output-second";
+  WriteRootConfig(config, first_output, "agent1");
+
+  auto loaded = LoadBootstrapConfig(config);
+  Check(loaded && loaded.Value().ConfigDirectory() == config &&
+            loaded.Value().OutputRoot() == first_output &&
+            loaded.Value().DataSubdirectories() ==
+                std::vector<std::string>{"agent1"},
+        "bootstrap loader returns the resolved validated value");
+
+  WriteRootConfig(config, second_output, "agent2");
+  Check(loaded.Value().OutputRoot() == first_output &&
+            loaded.Value().DataSubdirectories() ==
+                std::vector<std::string>{"agent1"},
+        "bootstrap snapshot does not observe later filesystem changes");
+  Check(!LoadBootstrapConfig({}) && !LoadBootstrapConfig(root / "missing"),
+        "bootstrap loader rejects empty and missing roots as Results");
+
+  const fs::path oversized = root / "oversized";
+  fs::create_directories(oversized);
+  {
+    std::ofstream output(oversized / "config.json", std::ios::binary);
+    output << std::string(SchemaLimits{}.maximum_document_bytes + 1U, ' ');
+  }
+  auto oversized_result = LoadBootstrapConfig(oversized);
+  Check(!oversized_result &&
+            oversized_result.GetError().code == Error::Code::kInvalidArgument &&
+            oversized_result.GetError().message.find("byte limit") !=
+                std::string::npos,
+        "bootstrap root is bounded before JSON parsing");
+
+  const fs::path relative_config = root / "relative-config";
+  fs::create_directories(relative_config);
+  {
+    std::ofstream output(relative_config / "config.json");
+    output << R"({
+      "global": {
+        "config_map_server": "modules/map.json",
+        "config_data_loader": "modules/loader.json",
+        "config_loop_detector": "modules/loop.json",
+        "config_backend_optimizer": "modules/optimizer.json",
+        "config_dynamic_remover": "modules/remover.json"
+      },
+      "directory": {
+        "root_dir_path": "data",
+        "sub_dir_list": ["agent-relative"],
+        "root_save_dir": "output"
+      }
+    })";
+  }
+  const fs::path original_cwd = fs::current_path();
+  fs::current_path(root);
+  auto relative = LoadBootstrapConfig("relative-config");
+  fs::current_path(original_cwd);
+  const auto expected_config = fs::weakly_canonical(relative_config);
+  Check(relative && relative.Value().ConfigDirectory() == expected_config &&
+            relative.Value().MapServerConfig() ==
+                expected_config / "modules/map.json" &&
+            relative.Value().DataRoot() == expected_config / "data" &&
+            relative.Value().OutputRoot() == expected_config / "output" &&
+            relative.Value().ConfigDirectory().is_absolute() &&
+            relative.Value().MapServerConfig().is_absolute() &&
+            relative.Value().DataRoot().is_absolute() &&
+            relative.Value().OutputRoot().is_absolute(),
+        "relative bootstrap paths resolve once against the config directory");
+  fs::current_path(fs::temp_directory_path());
+  Check(relative.Value().MapServerConfig() ==
+            expected_config / "modules/map.json" &&
+            relative.Value().DataRoot() == expected_config / "data" &&
+            relative.Value().OutputRoot() == expected_config / "output",
+        "bootstrap path values are invariant under later CWD changes");
+  fs::current_path(original_cwd);
+  fs::remove_all(root);
+}
+
 void TestShutdownStressCancelsAndJoins() {
   const fs::path root = fs::temp_directory_path() /
                         "open_lmm_runtime_service_shutdown_tests";
@@ -324,7 +414,7 @@ void TestShutdownStressCancelsAndJoins() {
   std::shared_ptr<IsolatedRunner> runner;
   {
     RuntimeService service(
-        1, [&](const BootstrapRequest&, const fs::path&)
+        1, [&](const BootstrapConfigSnapshot&, const fs::path&)
                -> Result<std::shared_ptr<StageRuntimePort>> {
           runner = std::make_shared<IsolatedRunner>(Id("agent1"), true);
           return Result<std::shared_ptr<StageRuntimePort>>::Ok(runner);
@@ -346,7 +436,7 @@ void TestFatalStateAndCompletedClose() {
   fs::remove_all(root);
   WriteRootConfig(root / "config", root / "output", "fatal-agent");
   RuntimeService service(
-      1, [](const BootstrapRequest&, const fs::path&)
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
              -> Result<std::shared_ptr<StageRuntimePort>> {
         return Result<std::shared_ptr<StageRuntimePort>>::Ok(
             std::make_shared<FatalRunner>());
@@ -405,6 +495,7 @@ void TestDefaultCloseReleasesResidentReservation() {
 }  // namespace
 
 int main() {
+  TestBootstrapConfigIsAnImmutableValueSnapshot();
   TestMultiSessionIsolationAndLifecycle();
   TestShutdownStressCancelsAndJoins();
   TestFatalStateAndCompletedClose();

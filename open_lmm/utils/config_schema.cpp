@@ -300,6 +300,15 @@ Result<void> ValidateConstraint(const SelectedField& field,
                     "array item " + std::to_string(index) +
                         " has the wrong type");
       }
+      if (constraints.finite && constraints.item_type &&
+          (*constraints.item_type == SchemaValueType::kNumber ||
+           *constraints.item_type == SchemaValueType::kSignedInteger ||
+           *constraints.item_type == SchemaValueType::kUnsignedInteger) &&
+          item.is_number() && !std::isfinite(item.get<double>())) {
+        return fail("finite numeric array items", item.dump(),
+                    "array item " + std::to_string(index) +
+                        " is not finite");
+      }
       if (constraints.items_non_empty && item.is_string() &&
           item.get_ref<const std::string&>().empty()) {
         return fail("non-empty array items", "empty string",
@@ -309,6 +318,39 @@ Result<void> ValidateConstraint(const SelectedField& field,
           !unique_items.insert(item.dump()).second) {
         return fail("unique array items", item.dump(),
                     "array contains a duplicate item");
+      }
+    }
+    if (constraints.array_slice_norm) {
+      const auto& slice = *constraints.array_slice_norm;
+      if (slice.count == 0 || slice.offset > value.size() ||
+          slice.count > value.size() - slice.offset) {
+        return fail("valid array norm slice", value.dump(),
+                    "array norm slice is out of range");
+      }
+      double norm = 0.0;
+      for (std::size_t index = slice.offset;
+           index < slice.offset + slice.count; ++index) {
+        if (!value[index].is_number()) {
+          return fail("numeric array norm slice", value[index].dump(),
+                      "array norm item is non-numeric");
+        }
+        const double item = value[index].get<double>();
+        if (!std::isfinite(item)) {
+          return fail("finite array norm slice", value[index].dump(),
+                      "array norm item is not finite");
+        }
+        norm = std::hypot(norm, item);
+      }
+      const bool valid = slice.exclusive_minimum
+                             ? norm > slice.minimum
+                             : norm >= slice.minimum;
+      if (!valid) {
+        return fail(slice.exclusive_minimum
+                        ? "array slice norm > " +
+                              std::to_string(slice.minimum)
+                        : "array slice norm >= " +
+                              std::to_string(slice.minimum),
+                    std::to_string(norm), "array slice norm is too small");
       }
     }
   }
@@ -482,6 +524,22 @@ Result<SchemaRegistry> SchemaRegistry::Create(
                         field.ui.help.size() + field.ui.group.size() +
                         field.deprecation.replacement_pointer.size();
       if (field.default_value) fragment_bytes += field.default_value->dump().size();
+      std::set<std::string> migrated_values;
+      for (const auto& migration : field.value_migrations) {
+        fragment_bytes += migration.deprecated_value.dump().size() +
+                          migration.replacement_value.dump().size();
+        if (!MatchesType(migration.deprecated_value, field.type) ||
+            !MatchesType(migration.replacement_value, field.type)) {
+          return Result<SchemaRegistry>::Failure(Error::InvalidArgument(
+              "schema value migration type mismatch: " + fragment.id + ":" +
+              field.pointer));
+        }
+        if (!migrated_values.insert(migration.deprecated_value.dump()).second) {
+          return Result<SchemaRegistry>::Failure(Error::InvalidArgument(
+              "duplicate deprecated value migration: " + fragment.id + ":" +
+              field.pointer));
+        }
+      }
       auto pointer = ParsePointer(field.pointer);
       if (!pointer) return Result<SchemaRegistry>::Failure(pointer.GetError());
       if (pointer.Value().size() > limits.maximum_fragment_depth) {
@@ -525,6 +583,15 @@ Result<SchemaRegistry> SchemaRegistry::Create(
               *field.constraints.maximum_items) {
         return Result<SchemaRegistry>::Failure(Error::InvalidArgument(
             "schema array size range is inverted: " + fragment.id + ":" +
+            field.pointer));
+      }
+      if (field.constraints.array_slice_norm &&
+          (field.type != SchemaValueType::kArray ||
+           field.constraints.array_slice_norm->count == 0 ||
+           field.constraints.array_slice_norm->minimum < 0.0 ||
+           !std::isfinite(field.constraints.array_slice_norm->minimum))) {
+        return Result<SchemaRegistry>::Failure(Error::InvalidArgument(
+            "schema array norm constraint is invalid: " + fragment.id + ":" +
             field.pointer));
       }
       if (field.default_value) {
@@ -754,6 +821,33 @@ Result<ValidatedConfigDocument> SchemaRegistry::Validate(
         return Result<ValidatedConfigDocument>::Failure(tokens.GetError());
       if (!FindValue(document, tokens.Value()))
         SetValue(document, tokens.Value(), *field.spec.default_value);
+    }
+  }
+
+  for (const auto& field : fields) {
+    if (field.spec.value_migrations.empty()) continue;
+    auto tokens = ParsePointer(field.spec.pointer);
+    if (!tokens)
+      return Result<ValidatedConfigDocument>::Failure(tokens.GetError());
+    auto* value = FindValue(document, tokens.Value());
+    if (!value) continue;
+    for (const auto& migration : field.spec.value_migrations) {
+      if (*value != migration.deprecated_value) continue;
+      if (!options.migrate_deprecated_keys) {
+        return Result<ValidatedConfigDocument>::Failure(SchemaError(
+            Error::Code::kInvalidArgument,
+            "deprecated config value requires migration: " +
+                field.spec.pointer,
+            source_name, field.spec.pointer,
+            migration.replacement_value.dump(), value->dump(), version,
+            field.plugin));
+      }
+      const std::string old_value = value->dump();
+      *value = migration.replacement_value;
+      warnings.push_back(
+          {field.spec.pointer,
+           "migrated deprecated value " + old_value + " to " + value->dump()});
+      break;
     }
   }
 

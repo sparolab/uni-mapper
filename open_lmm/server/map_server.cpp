@@ -1,18 +1,15 @@
 #include "map_server.hpp"
 
 #include "stage_executor.hpp"
-#include <open_lmm/utils/config.hpp>
 
 namespace open_lmm {
 
-MapServer::MapServer()
-    : MapServer(GlobalConfig::config_directory(), std::nullopt) {}
 MapServer::MapServer(
-    std::filesystem::path config_directory,
+    BootstrapConfigSnapshot bootstrap_config,
     std::optional<std::filesystem::path> output_directory,
     std::shared_ptr<ResourceGovernor> resource_governor)
     : executor_(std::make_unique<StageExecutor>(
-          std::move(config_directory), std::move(output_directory),
+          std::move(bootstrap_config), std::move(output_directory),
           std::move(resource_governor))) {}
 MapServer::~MapServer() = default;
 
@@ -48,6 +45,12 @@ CancellationCapability MapServer::CancellationMetadata() const {
 Result<ExecutionReceipt> MapServer::Execute(
     const ExecutionCommand& command, const ExecutionContext& context) {
   return executor_->Execute(command, context);
+}
+
+Result<ConfigApplyReceipt> MapServer::ApplyConfig(
+    const ConfigCandidate& candidate, const ExpectedRevision& expected,
+    const ExecutionContext& context) {
+  return executor_->ApplyConfig(candidate, expected, context);
 }
 
 CommittedSessionSnapshot MapServer::Snapshot() const {

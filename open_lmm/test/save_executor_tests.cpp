@@ -263,10 +263,8 @@ void TestRecoveryRequiredPropagatesFromFileSet() {
       pending, artifacts);
   Check(prepared.IsOk(), "recovery fixture preparation must succeed");
   auto committed = pending.Commit();
-  Check(!committed &&
-            committed.GetError().severity == Error::Severity::kFatalSession &&
-            committed.GetError().context.node == "recovery_required",
-        "Save commit must propagate recovery-required file failures");
+  Check(committed.IsOk() && fs::is_regular_file(original_map),
+        "Save commit must remain successful after post-install cleanup failure");
   Check(fs::exists(output / "global_map_A.pcd.open_lmm_backup/original"),
         "recovery-required Save must preserve the original backup");
   bool manifest = false;
@@ -277,7 +275,7 @@ void TestRecoveryRequiredPropagatesFromFileSet() {
       break;
     }
   }
-  Check(manifest, "recovery-required Save must retain a manifest");
+  Check(manifest, "post-commit cleanup failure must retain a manifest");
   std::error_code ignored;
   fs::remove_all(output, ignored);
 }

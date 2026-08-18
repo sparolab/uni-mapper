@@ -1,3 +1,4 @@
+#include <open_lmm/common/plugin_api.h>
 #include <open_lmm/common/plugin_api_v2.h>
 
 int main(void) {
@@ -5,5 +6,7 @@ int main(void) {
   descriptor.struct_size = sizeof(descriptor);
   descriptor.abi_major = OPEN_LMM_PLUGIN_ABI_V2_MAJOR;
   descriptor.abi_minor = OPEN_LMM_PLUGIN_ABI_V2_MINOR;
-  return descriptor.abi_major == 2u ? 0 : 1;
+  OpenLmmPluginApiV1 legacy = {0};
+  legacy.abi_version = OPEN_LMM_PLUGIN_ABI_VERSION_V1;
+  return descriptor.abi_major == 2u && legacy.abi_version == 1u ? 0 : 1;
 }

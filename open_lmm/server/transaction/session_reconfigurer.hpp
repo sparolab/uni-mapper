@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include <open_lmm/common/config_transaction.hpp>
 #include <open_lmm/server/bootstrap/algorithm_factory.hpp>
 #include <open_lmm/server/session_state.hpp>
 
@@ -22,8 +23,14 @@ class SessionReconfigurer {
   Result<SessionReconfigureCandidate> Prepare(
       const std::shared_ptr<const SessionState>& base, ConfigDomain domain,
       uint64_t revision) const;
+  Result<SessionReconfigureCandidate> Prepare(
+      const std::shared_ptr<const SessionState>& base,
+      const ConfigCandidate& candidate, uint64_t revision) const;
 
  private:
+  Result<SessionReconfigureCandidate> PrepareImpl(
+      const std::shared_ptr<const SessionState>& base, ConfigDomain domain,
+      uint64_t revision, const ConfigCandidate* candidate) const;
   std::shared_ptr<const AlgorithmFactory> algorithms_;
 };
 

@@ -36,6 +36,10 @@ class StageCoordinator {
   Result<void> ExecuteReconfigure(std::shared_ptr<const SessionState> base,
                                   ConfigDomain domain, uint64_t revision,
                                   const ExecutionContext& context);
+  Result<ConfigApplyReceipt> ApplyConfig(
+      std::shared_ptr<const SessionState> base,
+      const ConfigCandidate& candidate, const ExpectedRevision& expected,
+      const ExecutionContext& context);
 
  private:
   using ArtifactMutation =

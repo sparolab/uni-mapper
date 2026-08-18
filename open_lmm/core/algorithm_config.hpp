@@ -9,7 +9,7 @@
 #include <string_view>
 
 #include <open_lmm/common/result.hpp>
-#include <open_lmm/utils/config.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 
 namespace open_lmm {
 
@@ -80,11 +80,18 @@ struct MapSaveConfig {
   std::size_t max_parallel_agents = 1;
 };
 
-Result<DataLoaderConfig> ParseDataLoaderConfig(const Config& config);
-Result<LoopDetectorConfig> ParseLoopDetectorConfig(const Config& config);
-Result<OptimizerConfig> ParseOptimizerConfig(const Config& config);
-Result<DynamicRemoverConfig> ParseDynamicRemoverConfig(const Config& config);
-Result<MapSaveConfig> ParseMapSaveConfig(const Config& config);
+// Typed decoding accepts only schema-validated, defaulted and migrated input.
+// These functions convert representation; schema and preflight own policy.
+Result<DataLoaderConfig> DecodeDataLoaderConfig(
+    const ValidatedConfigDocument& document);
+Result<LoopDetectorConfig> DecodeLoopDetectorConfig(
+    const ValidatedConfigDocument& document);
+Result<OptimizerConfig> DecodeOptimizerConfig(
+    const ValidatedConfigDocument& document);
+Result<DynamicRemoverConfig> DecodeDynamicRemoverConfig(
+    const ValidatedConfigDocument& document);
+Result<MapSaveConfig> DecodeMapSaveConfig(
+    const ValidatedConfigDocument& document);
 
 // Known built-ins are validated against the target-selection options used for
 // this host build. Unknown names remain eligible for external ABI-v1 loading.

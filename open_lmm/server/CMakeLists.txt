@@ -12,6 +12,7 @@ target_sources(open_lmm_map_server PRIVATE
   execution/save_executor.cpp
   execution/stage_coordinator.cpp
   bootstrap/algorithm_factory.cpp
+  bootstrap/bootstrap_config.cpp
   bootstrap/session_bootstrapper.cpp
   artifact_repository.cpp
   file_set_transaction.cpp
@@ -34,12 +35,28 @@ target_link_libraries(open_lmm_map_server
   open_lmm_common
   open_lmm_algorithm_config
   open_lmm_utils
-  open_lmm_backend_optimizer
  PRIVATE
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_backend_optimizer>>"
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_plugin_host>>"
   open_lmm_profiling
   nlohmann_json::nlohmann_json
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_loop_detector>>"
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_data_loader>>"
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_dynamic_remover>>"
+)
+add_dependencies(open_lmm_map_server
+  open_lmm_plugin_host
+  open_lmm_backend_optimizer
   open_lmm_loop_detector
   open_lmm_data_loader
-  open_lmm_dynamic_remover
-)
+  open_lmm_dynamic_remover)
+# Executables linking the façade must let the linker resolve its private
+# DT_NEEDED libraries from the build tree without publishing them as targets.
+target_link_options(open_lmm_map_server INTERFACE
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_backend_optimizer>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_loop_detector>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_data_loader>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_dynamic_remover>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_descriptor>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_plugin_host>>")
 openlmm_set_global_target_properties(open_lmm_map_server)

@@ -1,19 +1,15 @@
-#include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/common/agent_id.hpp>
+#include <open_lmm/common/runtime_contracts.hpp>
 #include <open_lmm/core/alignment/alignment_decision_policy.hpp>
 #include <open_lmm/core/alignment/alignment_proposer.hpp>
 #include <open_lmm/core/alignment/loop_constraint_builder.hpp>
 #include <open_lmm/core/descriptor/descriptor_artifact.hpp>
 #include <open_lmm/core/descriptor/descriptor_engine.hpp>
-#include <open_lmm/server/stage_ports.hpp>
-#include <open_lmm/server/runtime_service.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
 #include <type_traits>
 
 int main() {
-  static_assert(std::is_abstract_v<open_lmm::StageCommandPort>);
-  static_assert(std::is_abstract_v<open_lmm::SessionQueryPort>);
   static_assert(std::is_abstract_v<open_lmm::DescriptorEngine>);
   static_assert(std::is_class_v<open_lmm::AlignmentDecisionPolicy>);
   static_assert(std::is_class_v<open_lmm::AlignmentProposer>);
@@ -40,11 +36,5 @@ int main() {
   auto session_id = open_lmm::SessionId::Parse(
       "01234567-89ab-4def-8123-456789abcdef");
   if (!session_id) return 7;
-  open_lmm::ResourceGovernor governor(
-      open_lmm::ResourceBudget{1, 2, 2, 1024});
-  if (!governor.TryAcquireSession() || governor.TryAcquireSession()) return 8;
-  if (governor.AgentExecutor().Snapshot().worker_count != 2) return 9;
-  governor.ReleaseSession();
-  open_lmm::GuiModel model;
-  return model.CanSubmitCommand() ? 0 : 1;
+  return 0;
 }

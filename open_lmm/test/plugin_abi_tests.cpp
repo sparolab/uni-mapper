@@ -7,6 +7,7 @@
 #include <open_lmm/core/dynamic_remover/remover_factory/online/interface_online_plugin.hpp>
 #include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
 #include <open_lmm/utils/load_module.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 
 #include <cstdlib>
 #include <iostream>
@@ -19,6 +20,14 @@ void Check(bool condition, const char* message) {
   if (condition) return;
   std::cerr << "FAILED: " << message << '\n';
   std::exit(1);
+}
+
+std::string CanonicalConfig(open_lmm::ConfigDocumentKind kind,
+                            nlohmann::json document) {
+  auto validated = open_lmm::BuiltinConfigSchemaRegistry().Validate(
+      kind, document, "plugin ABI fixture");
+  Check(validated.IsOk(), "built-in plugin fixture config must validate");
+  return validated.Value().CanonicalJson();
 }
 
 }  // namespace
@@ -77,13 +86,10 @@ int main(int argc, char** argv) {
                       argument.substr(separator + 1));
   }
 
-  const std::string scan_context_json = R"({
-    "loop_detector": {
-      "num_sector": 60,
-      "num_ring": 20,
-      "max_range": 80.0
-    }
-  })";
+  const std::string scan_context_json = CanonicalConfig(
+      open_lmm::ConfigDocumentKind::kLoopDetector,
+      {{"loop_detector", {{"loop_detector_type", "kdtree"},
+                          {"model", "scan_context"}}}});
   if (auto path = built_ins.find("create_scan_context");
       path != built_ins.end()) {
     open_lmm::PluginMetadata built_in_metadata;
@@ -109,8 +115,12 @@ int main(int argc, char** argv) {
   }
 
   if (auto path = built_ins.find("create_solid"); path != built_ins.end()) {
+    const auto config = CanonicalConfig(
+        open_lmm::ConfigDocumentKind::kLoopDetector,
+        {{"loop_detector", {{"loop_detector_type", "kdtree"},
+                            {"model", "solid"}}}});
     auto solid = open_lmm::load_plugin_v1<IDescriptorKdtree>(
-        path->second, "descriptor", R"({"loop_detector":{}})");
+        path->second, "descriptor", config);
     Check(solid.IsOk(), "built-in SOLiD must use ABI v1 loader");
   }
 
@@ -118,17 +128,25 @@ int main(int argc, char** argv) {
                              "create_otd"}) {
     auto path = built_ins.find(target);
     if (path == built_ins.end()) continue;
+    const std::string model = std::string(target).substr(7);
+    const auto config = CanonicalConfig(
+        open_lmm::ConfigDocumentKind::kDynamicRemover,
+        {{"dynamic_remover", {{"dynamic_remover_type", "online"},
+                              {"model", model}}}});
     auto plugin = open_lmm::load_plugin_v1<IOnlineRemoverPlugin>(
-        path->second, "dynamic_remover_online",
-        R"({"dynamic_remover":{}})");
+        path->second, "dynamic_remover_online", config);
     Check(plugin.IsOk(), "built-in online remover must use ABI v1 loader");
   }
   for (const char* target : {"create_free_dom", "create_erasor"}) {
     auto path = built_ins.find(target);
     if (path == built_ins.end()) continue;
+    const std::string model = std::string(target).substr(7);
+    const auto config = CanonicalConfig(
+        open_lmm::ConfigDocumentKind::kDynamicRemover,
+        {{"dynamic_remover", {{"dynamic_remover_type", "offline"},
+                              {"model", model}}}});
     auto plugin = open_lmm::load_plugin_v1<IOfflineRemoverPlugin>(
-        path->second, "dynamic_remover_offline",
-        R"({"dynamic_remover":{}})");
+        path->second, "dynamic_remover_offline", config);
     Check(plugin.IsOk(), "built-in offline remover must use ABI v1 loader");
   }
 

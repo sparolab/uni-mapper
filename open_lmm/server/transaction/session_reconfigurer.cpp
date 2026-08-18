@@ -6,6 +6,7 @@
 
 #include <open_lmm/server/session_payload_builder.hpp>
 #include <open_lmm/common/plugin_host_v2.hpp>
+#include <open_lmm/utils/config.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 #include <open_lmm/utils/plugin_schema_registry.hpp>
 
@@ -18,23 +19,117 @@ constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
 constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 struct LoadedDocument {
-  Config config;
   SessionConfigDocument document;
+  ValidatedConfigDocument validated;
 };
 
-Result<Config> LoadRawCandidate(const SessionConfigDocument& source) {
-  std::error_code error;
-  const auto bytes = std::filesystem::file_size(source.path, error);
-  if (error || bytes > SchemaLimits{}.maximum_document_bytes) {
-    return Result<Config>::Failure(Error::InvalidArgument(
-        "candidate plugin config is missing or exceeds byte limit"));
+Result<Config> LoadCandidateSnapshot(const SessionConfigDocument& source) {
+  return LoadConfigFileBounded(source.path,
+                               SchemaLimits{}.maximum_document_bytes);
+}
+
+const char* SelectorFor(ConfigDomain domain) {
+  switch (domain) {
+    case ConfigDomain::kLoopDetector: return "config_loop_detector";
+    case ConfigDomain::kOptimizer: return "config_backend_optimizer";
+    case ConfigDomain::kDynamicRemover: return "config_dynamic_remover";
+    case ConfigDomain::kMapSave: return "config_map_server";
+    case ConfigDomain::kGlobal:
+    case ConfigDomain::kDataLoader: return nullptr;
   }
-  Config disk(source.path.string());
-  if (!disk.is_valid()) {
+  return nullptr;
+}
+
+SessionConfigDocument* DocumentFor(SessionConfigDocuments& documents,
+                                   ConfigDomain domain) {
+  switch (domain) {
+    case ConfigDomain::kLoopDetector: return &documents.loop_detector;
+    case ConfigDomain::kOptimizer: return &documents.optimizer;
+    case ConfigDomain::kDynamicRemover: return &documents.dynamic_remover;
+    case ConfigDomain::kMapSave: return &documents.map_server;
+    case ConfigDomain::kGlobal:
+    case ConfigDomain::kDataLoader: return nullptr;
+  }
+  return nullptr;
+}
+
+Result<Config> CandidateSnapshot(const ConfigCandidate* candidate,
+                                 const SessionConfigDocument& source) {
+  if (!candidate) return LoadCandidateSnapshot(source);
+  if (candidate->document_json.empty() ||
+      candidate->document_json.size() >
+          SchemaLimits{}.maximum_document_bytes) {
     return Result<Config>::Failure(
-        Error::ParseError(disk.error_message()).WithConfig(source.path.string()));
+        Error::InvalidArgument("candidate config is empty or exceeds byte limit")
+            .WithConfig(source.path.string()));
   }
-  return Result<Config>::Ok(std::move(disk));
+  Config parsed = Config::FromJson(candidate->document_json,
+                                   source.path.string() + ":candidate");
+  if (!parsed.is_valid()) {
+    return Result<Config>::Failure(
+        Error::ParseError(parsed.error_message()).WithConfig(
+            source.path.string()));
+  }
+  return Result<Config>::Ok(std::move(parsed));
+}
+
+Result<void> SelectCandidateDocument(
+    SessionConfigDocuments& documents, const ConfigCandidate& candidate,
+    const SchemaRegistry& registry) {
+  auto* document = DocumentFor(documents, candidate.domain);
+  const char* selector = SelectorFor(candidate.domain);
+  if (!document || !selector) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "data/global config requires a new pipeline session"));
+  }
+  if (!candidate.selected_document) return Result<void>::Ok();
+  if (candidate.selected_document->empty()) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("selected config document must be non-empty"));
+  }
+
+  const fs::path config_directory = documents.root.path.parent_path();
+  fs::path selected = *candidate.selected_document;
+  if (selected.is_relative()) selected = config_directory / selected;
+  selected = selected.lexically_normal();
+  std::error_code error;
+  selected = fs::weakly_canonical(selected, error);
+  if (error) {
+    return Result<void>::Failure(
+        Error::IoError("failed to resolve selected config document: " +
+                       error.message()));
+  }
+  if (selected == documents.root.path) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "domain config document must not replace the root config"));
+  }
+  for (const SessionConfigDocument* other :
+       {&documents.map_server, &documents.data_loader,
+        &documents.loop_detector, &documents.optimizer,
+        &documents.dynamic_remover}) {
+    if (other != document && selected == other->path) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "domain config document must not alias another module document"));
+    }
+  }
+  const bool exists = fs::exists(selected, error);
+  if (error || (exists && !fs::is_regular_file(selected, error))) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "selected config document must be a regular file or new file"));
+  }
+  if (!fs::is_directory(selected.parent_path(), error) || error) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "selected config document parent must be an existing directory"));
+  }
+
+  auto root_json = nlohmann::json::parse(documents.root.canonical_json);
+  root_json.at("global").at(selector) = candidate.selected_document->string();
+  auto validated = registry.Validate(ConfigDocumentKind::kRoot, root_json,
+                                     documents.root.path.string());
+  if (!validated) return Result<void>::Failure(validated.GetError());
+  documents.root.canonical_json = validated.Value().CanonicalJson();
+  document->path = std::move(selected);
+  return Result<void>::Ok();
 }
 
 bool HasCompleteV2Symbols(const std::string& library) {
@@ -96,10 +191,14 @@ Result<bool> AdvertisesSchema(const std::string& library) {
 
 Result<std::optional<PluginV2Metadata>> Discover(
     const Config& source, std::string_view section, std::string_view kind) {
-  const std::string model = source.param<std::string>(
-      std::string(section), "model", "");
-  const std::string abi = source.param<std::string>(
-      std::string(section), "plugin_abi", "auto");
+  const auto raw = nlohmann::json::parse(source.ToJson());
+  const auto found = raw.find(std::string(section));
+  const std::string model = found != raw.end() && found->is_object()
+                                ? found->value("model", std::string{})
+                                : std::string{};
+  const std::string abi = found != raw.end() && found->is_object()
+                              ? found->value("plugin_abi", std::string("auto"))
+                              : std::string("auto");
   if (model.empty() || abi == "v1")
     return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
   const std::string library = "libcreate_" + model + ".so";
@@ -165,22 +264,17 @@ Result<void> ValidateCandidateDocuments(const SessionConfigDocuments& documents,
 
 Result<LoadedDocument> LoadCandidate(ConfigDocumentKind kind,
                                      const SessionConfigDocument& source,
+                                     const Config& snapshot,
                                      const SchemaRegistry& registry) {
-  Config disk(source.path.string());
-  if (!disk.is_valid()) {
-    return Result<LoadedDocument>::Failure(
-        Error::ParseError(disk.error_message()).WithConfig(
-            source.path.string()));
-  }
   auto validated = registry.ParseAndValidate(
-      kind, disk.ToJson(), source.path.string());
+      kind, snapshot.ToJson(), source.path.string());
   if (!validated) {
     return Result<LoadedDocument>::Failure(validated.GetError());
   }
-  const std::string canonical = validated.Value().CanonicalJson();
+  auto validated_document = std::move(validated).Value();
+  const std::string canonical = validated_document.CanonicalJson();
   return Result<LoadedDocument>::Ok(
-      {Config::FromJson(canonical, source.path.string()),
-       {source.path, canonical}});
+      {{source.path, canonical}, std::move(validated_document)});
 }
 
 void HashText(uint64_t& hash, const std::string& text) {
@@ -249,6 +343,18 @@ SessionReconfigurer::SessionReconfigurer(
 Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     const std::shared_ptr<const SessionState>& base, ConfigDomain domain,
     uint64_t revision) const {
+  return PrepareImpl(base, domain, revision, nullptr);
+}
+
+Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
+    const std::shared_ptr<const SessionState>& base,
+    const ConfigCandidate& candidate, uint64_t revision) const {
+  return PrepareImpl(base, candidate.domain, revision, &candidate);
+}
+
+Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
+    const std::shared_ptr<const SessionState>& base, ConfigDomain domain,
+    uint64_t revision, const ConfigCandidate* candidate) const {
   if (!base || !base->config || !base->config->documents ||
       !base->config->alignment_artifacts || !base->payload) {
     return Result<SessionReconfigureCandidate>::Failure(
@@ -267,9 +373,16 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
   const SchemaRegistry& registry = base->config->schema_registry
       ? *base->config->schema_registry
       : BuiltinConfigSchemaRegistry();
+  if (candidate) {
+    auto selected =
+        SelectCandidateDocument(*documents, *candidate, registry);
+    if (!selected)
+      return Result<SessionReconfigureCandidate>::Failure(
+          selected.GetError());
+  }
 
   if (domain == ConfigDomain::kLoopDetector) {
-    auto raw = LoadRawCandidate(documents->loop_detector);
+    auto raw = CandidateSnapshot(candidate, documents->loop_detector);
     if (!raw)
       return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
     auto discovered = Discover(raw.Value(), "loop_detector", "descriptor");
@@ -290,11 +403,12 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     next->descriptor_plugin_schema = std::move(descriptor);
     auto loaded = LoadCandidate(ConfigDocumentKind::kLoopDetector,
                                 documents->loop_detector,
+                                raw.Value(),
                                 *next->schema_registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
-    auto typed = ParseLoopDetectorConfig(loaded.Value().config);
+    auto typed = DecodeLoopDetectorConfig(loaded.Value().validated);
     if (!typed) {
       return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
     }
@@ -320,12 +434,15 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     payload = std::move(rebuilt).Value();
     RefreshAlignmentIdentity(*next);
   } else if (domain == ConfigDomain::kOptimizer) {
+    auto raw = CandidateSnapshot(candidate, documents->optimizer);
+    if (!raw)
+      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
     auto loaded = LoadCandidate(ConfigDocumentKind::kBackendOptimizer,
-                                documents->optimizer, registry);
+                                documents->optimizer, raw.Value(), registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
-    auto typed = ParseOptimizerConfig(loaded.Value().config);
+    auto typed = DecodeOptimizerConfig(loaded.Value().validated);
     if (!typed) {
       return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
     }
@@ -346,7 +463,7 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     payload = std::move(rebuilt).Value();
     RefreshAlignmentIdentity(*next);
   } else if (domain == ConfigDomain::kDynamicRemover) {
-    auto raw = LoadRawCandidate(documents->dynamic_remover);
+    auto raw = CandidateSnapshot(candidate, documents->dynamic_remover);
     if (!raw)
       return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
     auto discovered = Discover(raw.Value(), "dynamic_remover",
@@ -368,11 +485,12 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
     next->remover_plugin_schema = std::move(remover);
     auto loaded = LoadCandidate(ConfigDocumentKind::kDynamicRemover,
                                 documents->dynamic_remover,
+                                raw.Value(),
                                 *next->schema_registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
-    auto typed = ParseDynamicRemoverConfig(loaded.Value().config);
+    auto typed = DecodeDynamicRemoverConfig(loaded.Value().validated);
     if (!typed) {
       return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
     }
@@ -385,8 +503,11 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
         std::move(typed).Value());
     documents->dynamic_remover = std::move(loaded).Value().document;
   } else if (domain == ConfigDomain::kMapSave) {
+    auto raw = CandidateSnapshot(candidate, documents->map_server);
+    if (!raw)
+      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
     auto loaded = LoadCandidate(ConfigDocumentKind::kMapServer,
-                                documents->map_server, registry);
+                                documents->map_server, raw.Value(), registry);
     if (!loaded) {
       return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
     }
@@ -411,12 +532,14 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
       return Result<SessionReconfigureCandidate>::Failure(
           session_schema.GetError());
     }
-    auto typed = ParseMapSaveConfig(loaded.Value().config);
+    auto typed = DecodeMapSaveConfig(loaded.Value().validated);
     if (!typed) {
       return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
     }
-    const int anchor = loaded.Value().config.param<int>(
-        "map_server", "anchor_agent_index", 0);
+    const int anchor = loaded.Value().validated.Document()
+                           .at("map_server")
+                           .at("anchor_agent_index")
+                           .get<int>();
     if (anchor != base->config->root.anchor_agent_index) {
       return Result<SessionReconfigureCandidate>::Failure(
           Error::InvalidArgument(

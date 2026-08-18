@@ -83,6 +83,12 @@ class StageCommandPort {
   virtual Result<ExecutionReceipt> Execute(
       const ExecutionCommand& command,
       const ExecutionContext& context) = 0;
+  virtual Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate&, const ExpectedRevision&,
+      const ExecutionContext&) {
+    return Result<ConfigApplyReceipt>::Failure(
+        Error::InvalidArgument("config transactions are not supported"));
+  }
 };
 
 class SessionQueryPort {

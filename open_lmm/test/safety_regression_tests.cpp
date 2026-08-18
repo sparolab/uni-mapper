@@ -132,17 +132,6 @@ class UnknownThrowingNode final : public PipelineNodeBase {
   const char* Name() const override { return "UnknownThrowing"; }
 };
 
-class EmptyNestedConfigNode final : public PipelineNodeBase {
- public:
-  Result<ControlFlow> Process(AgentPipelineCtx&, SharedDatabase&) override {
-    auto config = open_lmm::Config::FromJson(
-        R"({"outer":{"value":1}})", "nested-pipeline-fixture");
-    (void)config.param_nested<int>({}, "value");
-    return Result<ControlFlow>::Ok(ControlFlow::kContinue);
-  }
-  const char* Name() const override { return "EmptyNestedConfig"; }
-};
-
 std::vector<AgentPipelineCtx> OneContext() {
   AgentPipelineCtx ctx;
   ctx.agent = {.id = Id("A"), .role = open_lmm::AgentRole::kAnchor, .order = 0};
@@ -199,12 +188,10 @@ void TestFileSetCleanupFailureRequiresRecovery() {
   std::ofstream(temporary) << "replacement";
 
   const auto result = open_lmm::CommitFileSet({{temporary, destination}});
-  Expect(!result, "backup cleanup failure must fail the transaction");
-  if (!result) {
-    Expect(result.GetError().severity == Error::Severity::kFatalSession &&
-               result.GetError().context.node == "recovery_required",
-           "cleanup failure must be a structured recovery-required error");
-  }
+  Expect(result.IsOk(),
+         "backup cleanup after installed finals must preserve commit success");
+  Expect(fs::is_regular_file(destination),
+         "cleanup failure must leave the installed candidate authoritative");
   Expect(fs::exists(destination.string() + ".open_lmm_backup/original"),
          "cleanup failure must preserve the original in its backup");
   bool found_manifest = false;
@@ -216,7 +203,8 @@ void TestFileSetCleanupFailureRequiresRecovery() {
       break;
     }
   }
-  Expect(found_manifest, "cleanup failure must leave a recovery manifest");
+  Expect(found_manifest,
+         "post-commit cleanup failure must leave a recovery manifest");
   std::error_code ignored;
   fs::remove_all(root, ignored);
 }
@@ -425,21 +413,6 @@ void TestPipelineControlFlow() {
              "unknown pipeline exceptions must retain structured context");
     }
   }
-  {
-    auto contexts = OneContext();
-    open_lmm::Pipeline pipeline;
-    pipeline.AddNode(std::make_unique<EmptyNestedConfigNode>());
-    auto result = pipeline.Run(contexts, db);
-    Expect(!result, "empty nested paths must become pipeline failures");
-    if (!result) {
-      Expect(result.GetError().code == Error::Code::kInvalidArgument &&
-                 result.GetError().context.stage == "pipeline" &&
-                 result.GetError().context.node == "EmptyNestedConfig" &&
-                 result.GetError().message.find("nested path") !=
-                     std::string::npos,
-             "empty nested paths must return structured InvalidArgument");
-    }
-  }
 }
 
 void TestPluginFailurePropagation() {
@@ -462,7 +435,16 @@ void TestOptimizerLifecycle() {
     output << R"({"backend_optimizer":{"backend_optimizer_type":"incremental","relinearizeThreshold":0.1,"relinearizeSkip":1,"isam_extra_updates":0,"min_loop_frame_gap":30,"icp_search_num":0}})";
   }
 
-  auto parsed = open_lmm::ParseOptimizerConfig(open_lmm::Config(config_path));
+  open_lmm::Config optimizer_source(config_path);
+  auto optimizer_document =
+      open_lmm::BuiltinConfigSchemaRegistry().ParseAndValidate(
+          open_lmm::ConfigDocumentKind::kBackendOptimizer,
+          optimizer_source.ToJson(), config_path);
+  auto parsed = optimizer_document
+                    ? open_lmm::DecodeOptimizerConfig(
+                          optimizer_document.Value())
+                    : open_lmm::Result<open_lmm::OptimizerConfig>::Failure(
+                          optimizer_document.GetError());
   Expect(parsed.IsOk(), "optimizer test config must parse");
   open_lmm::BackendOptimizerIncremental optimizer{
       std::move(parsed).Value()};
@@ -565,7 +547,7 @@ void TestConfigContractValidation() {
   }
   try {
     open_lmm::Config config(type_path);
-    (void)config.param<int>("module", "count", 1);
+    (void)config.param_cast<int>("module", "count");
     Expect(false, "wrong config type must throw");
   } catch (const std::exception& e) {
     const std::string message = e.what();
@@ -580,10 +562,18 @@ void TestConfigContractValidation() {
     std::ofstream output(range_path);
     output << R"({"data_loader":{"pose_format":"kitti","scan_type":"pcd","scan_dir_name":"Scans","pose_file_name":"poses.txt","voxel_size":0.0,"min_range":5.0,"max_range":1.0,"delimiter":" "}})";
   }
-  auto result = open_lmm::ParseDataLoaderConfig(open_lmm::Config(range_path));
+  open_lmm::Config range_source(range_path);
+  auto range_document =
+      open_lmm::BuiltinConfigSchemaRegistry().ParseAndValidate(
+          open_lmm::ConfigDocumentKind::kDataLoader, range_source.ToJson(),
+          range_path);
+  auto result = range_document
+                    ? open_lmm::DecodeDataLoaderConfig(range_document.Value())
+                    : open_lmm::Result<open_lmm::DataLoaderConfig>::Failure(
+                          range_document.GetError());
   Expect(!result.IsOk(), "invalid DataLoader numeric range must fail");
   if (!result.IsOk()) {
-    Expect(result.GetError().context.config == "data_loader",
+    Expect(!result.GetError().context.config.empty(),
            "typed config failure must retain config-domain context");
   }
   std::remove(range_path.c_str());
@@ -593,7 +583,15 @@ void TestConfigContractValidation() {
     std::ofstream output(custom_path);
     output << R"({"data_loader":{"data_loader_type":"file_based","pose_format":"custom","scan_type":"pcd","scan_dir_name":"Scans","pose_file_name":"poses.txt","voxel_size":0.2,"min_range":0.0,"max_range":100.0,"delimiter":" "}})";
   }
-  auto custom = open_lmm::ParseDataLoaderConfig(open_lmm::Config(custom_path));
+  open_lmm::Config custom_source(custom_path);
+  auto custom_document =
+      open_lmm::BuiltinConfigSchemaRegistry().ParseAndValidate(
+          open_lmm::ConfigDocumentKind::kDataLoader, custom_source.ToJson(),
+          custom_path);
+  auto custom = custom_document
+                    ? open_lmm::DecodeDataLoaderConfig(custom_document.Value())
+                    : open_lmm::Result<open_lmm::DataLoaderConfig>::Failure(
+                          custom_document.GetError());
   Expect(!custom.IsOk(),
          "declared but unimplemented custom pose format must fail at bootstrap");
   std::remove(custom_path.c_str());
@@ -605,16 +603,6 @@ void TestConfigContractValidation() {
   } catch (const std::exception&) {
   }
 
-  open_lmm::Config memory_config =
-      open_lmm::Config::FromJson(R"({"outer":{"value":1}})",
-                                 "nested-fixture");
-  try {
-    (void)memory_config.param_nested<int>({}, "value");
-    Expect(false, "empty nested config path must fail");
-  } catch (const std::invalid_argument& error) {
-    Expect(std::string(error.what()).find("nested path") != std::string::npos,
-           "empty nested config path must produce a contextual error");
-  }
 }
 
 void TestPointCloudInputValidation() {

@@ -43,6 +43,15 @@ fs::path TemporaryDirectory() {
   return path;
 }
 
+SessionBootstrapRequest Request(
+    const fs::path& config, std::optional<fs::path> output,
+    std::shared_ptr<CancellationToken> cancellation) {
+  auto snapshot = LoadBootstrapConfig(config);
+  Check(snapshot.IsOk(), "test bootstrap config snapshot must load");
+  return {std::move(snapshot).Value(), std::move(output),
+          std::move(cancellation)};
+}
+
 void WriteFixture(const fs::path& root) {
   const fs::path data = root / "data";
   const fs::path output = root / "output";
@@ -194,8 +203,8 @@ void TestBootstrapSnapshotAndCache() {
   const fs::path output = root / "chosen_output";
   auto factory = std::make_shared<TrackingFactory>();
   SessionBootstrapper bootstrapper(factory);
-  const SessionBootstrapRequest request{
-      root / "config", output, std::make_shared<CancellationToken>()};
+  const SessionBootstrapRequest request = Request(
+      root / "config", output, std::make_shared<CancellationToken>());
   auto first = bootstrapper.Bootstrap(request);
   if (!first) std::cerr << first.GetError().Message() << '\n';
   Check(first.IsOk(), "valid fixture must bootstrap");
@@ -277,9 +286,9 @@ void TestExternalPluginSchemaBootstrapsWithoutCentralCatalogEntry() {
                                 {"external_fixture", {{"tuning", 0.75}}}}},
              {"database", {{"descriptor_vector_dim", 1}}}});
   SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
-  auto result = bootstrapper.Bootstrap(
-      {root / "config", root / "external_output",
-       std::make_shared<CancellationToken>()});
+  auto result = bootstrapper.Bootstrap(Request(
+      root / "config", root / "external_output",
+      std::make_shared<CancellationToken>()));
   if (!result) std::cerr << result.GetError().Message() << '\n';
   Check(result && result.Value().initial_state->config->schema_registry,
         "external self-described plugin did not bootstrap");
@@ -326,9 +335,9 @@ void TestPluginSchemaReconfigureIsTransactional() {
   WriteFixture(root);
   auto factory = std::make_shared<TrackingFactory>();
   SessionBootstrapper bootstrapper(factory);
-  auto boot = bootstrapper.Bootstrap(
-      {root / "config", root / "reconfigure_output",
-       std::make_shared<CancellationToken>()});
+  auto boot = bootstrapper.Bootstrap(Request(
+      root / "config", root / "reconfigure_output",
+      std::make_shared<CancellationToken>()));
   Check(boot.IsOk(), "base session for plugin schema reconfigure did not bootstrap");
   const auto base = boot.Value().initial_state;
   const auto prior_registry = base->config->schema_registry;
@@ -366,12 +375,38 @@ void TestCancellationBeforeSideEffects() {
   cancellation->Request();
   SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
   auto result = bootstrapper.Bootstrap(
-      {root / "config", root / "cancelled_output", cancellation});
+      Request(root / "config", root / "cancelled_output", cancellation));
   Check(!result && result.GetError().code == Error::Code::kCancelled &&
             !fs::exists(root / "cancelled_output"),
         "pre-cancelled bootstrap must fail before output side effects");
   std::error_code ignored;
   fs::remove_all(root, ignored);
+}
+
+void TestEveryModuleReadIsBounded() {
+  const std::vector<fs::path> modules = {
+      "config/server/map.json", "config/core/data.json",
+      "config/core/loop.json", "config/core/optimizer.json",
+      "config/core/remover.json"};
+  for (const auto& module : modules) {
+    const fs::path root = TemporaryDirectory();
+    WriteFixture(root);
+    {
+      std::ofstream output(root / module, std::ios::binary | std::ios::trunc);
+      output << std::string(SchemaLimits{}.maximum_document_bytes + 1U, ' ');
+    }
+    SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+    auto result = bootstrapper.Bootstrap(Request(
+        root / "config", root / "bounded_output",
+        std::make_shared<CancellationToken>()));
+    Check(!result &&
+              result.GetError().code == Error::Code::kInvalidArgument &&
+              result.GetError().message.find("byte limit") != std::string::npos &&
+              !fs::exists(root / "bounded_output"),
+          "every module must be bounded before parse and output side effects");
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+  }
 }
 
 void TestInvalidInputsDoNotPublishManifest() {
@@ -384,9 +419,9 @@ void TestInvalidInputsDoNotPublishManifest() {
   fs::remove(root / "data/follower/Scans/000000.pcd");
 
   SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
-  auto existing = bootstrapper.Bootstrap(
-      {root / "config", existing_output,
-       std::make_shared<CancellationToken>()});
+  auto existing = bootstrapper.Bootstrap(Request(
+      root / "config", existing_output,
+      std::make_shared<CancellationToken>()));
   std::ifstream preserved(manifest);
   std::string contents;
   std::getline(preserved, contents);
@@ -395,9 +430,8 @@ void TestInvalidInputsDoNotPublishManifest() {
         "invalid input cardinality must not replace an existing manifest");
 
   const fs::path absent_output = root / "absent_output";
-  auto absent = bootstrapper.Bootstrap(
-      {root / "config", absent_output,
-       std::make_shared<CancellationToken>()});
+  auto absent = bootstrapper.Bootstrap(Request(
+      root / "config", absent_output, std::make_shared<CancellationToken>()));
   Check(!absent && !fs::exists(absent_output),
         "invalid input cardinality must not create an output directory");
 
@@ -415,8 +449,8 @@ void TestManifestPreflightFailureCleansTemporaryFile() {
       << "stale backup\n";
 
   SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
-  auto result = bootstrapper.Bootstrap(
-      {root / "config", output, std::make_shared<CancellationToken>()});
+  auto result = bootstrapper.Bootstrap(Request(
+      root / "config", output, std::make_shared<CancellationToken>()));
   Check(!result && !fs::exists(output / "agent_manifest.json.tmp"),
         "recoverable manifest commit failure must clean its temporary file");
 
@@ -438,6 +472,7 @@ int main() {
   TestExternalPluginSchemaBootstrapsWithoutCentralCatalogEntry();
   TestPluginSchemaReconfigureIsTransactional();
   TestCancellationBeforeSideEffects();
+  TestEveryModuleReadIsBounded();
   TestInvalidInputsDoNotPublishManifest();
   TestManifestPreflightFailureCleansTemporaryFile();
   std::cout << "SessionBootstrapper tests passed\n";

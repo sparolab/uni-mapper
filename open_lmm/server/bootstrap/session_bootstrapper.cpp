@@ -31,8 +31,8 @@ constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
 constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 struct LoadedConfig {
-  Config config;
   SessionConfigDocument document;
+  ValidatedConfigDocument validated;
 };
 
 Result<void> CheckCancelled(const SessionBootstrapRequest& request,
@@ -44,39 +44,20 @@ Result<void> CheckCancelled(const SessionBootstrapRequest& request,
   return Result<void>::Ok();
 }
 
-Result<LoadedConfig> LoadValidated(ConfigDocumentKind kind,
-                                   const fs::path& path,
-                                   const SchemaRegistry& registry =
-                                       BuiltinConfigSchemaRegistry()) {
-  Config source(path.string());
-  if (!source.is_valid()) {
-    return Result<LoadedConfig>::Failure(
-        Error::ParseError(source.error_message()).WithConfig(path.string()));
-  }
-  auto validated = registry.ParseAndValidate(
-      kind, source.ToJson(), path.string());
+Result<LoadedConfig> ValidateSnapshot(ConfigDocumentKind kind,
+                                      const fs::path& path,
+                                      const Config& source,
+                                      const SchemaRegistry& registry =
+                                          BuiltinConfigSchemaRegistry()) {
+  auto validated =
+      registry.ParseAndValidate(kind, source.ToJson(), path.string());
   if (!validated) {
     return Result<LoadedConfig>::Failure(validated.GetError());
   }
-  const std::string canonical = validated.Value().CanonicalJson();
+  auto validated_document = std::move(validated).Value();
+  const std::string canonical = validated_document.CanonicalJson();
   return Result<LoadedConfig>::Ok(
-      {Config::FromJson(canonical, path.string()), {path, canonical}});
-}
-
-Result<Config> LoadRawBounded(const fs::path& path) {
-  std::error_code error;
-  const auto bytes = fs::file_size(path, error);
-  if (error || bytes > SchemaLimits{}.maximum_document_bytes) {
-    return Result<Config>::Failure(Error::InvalidArgument(
-        "plugin config discovery input is missing or exceeds byte limit")
-                                       .WithConfig(path.string()));
-  }
-  Config source(path.string());
-  if (!source.is_valid()) {
-    return Result<Config>::Failure(
-        Error::ParseError(source.error_message()).WithConfig(path.string()));
-  }
-  return Result<Config>::Ok(std::move(source));
+      {{path, canonical}, std::move(validated_document)});
 }
 
 bool HasCompleteV2Symbols(const std::string& library) {
@@ -139,10 +120,14 @@ Result<bool> AdvertisesSchema(const std::string& library) {
 
 Result<std::optional<PluginV2Metadata>> DiscoverPluginSchema(
     const Config& source, std::string_view section, std::string_view kind) {
-  const std::string model = source.param<std::string>(
-      std::string(section), "model", "");
-  const std::string abi = source.param<std::string>(
-      std::string(section), "plugin_abi", "auto");
+  const auto raw = nlohmann::json::parse(source.ToJson());
+  const auto found = raw.find(std::string(section));
+  const std::string model = found != raw.end() && found->is_object()
+                                ? found->value("model", std::string{})
+                                : std::string{};
+  const std::string abi = found != raw.end() && found->is_object()
+                              ? found->value("plugin_abi", std::string("auto"))
+                              : std::string("auto");
   if (model.empty() || abi == "v1")
     return Result<std::optional<PluginV2Metadata>>::Ok(std::nullopt);
   const std::string library = "libcreate_" + model + ".so";
@@ -176,7 +161,7 @@ void HashBytes(uint64_t& hash, const char* data, std::size_t size) {
   }
 }
 
-void HashText(uint64_t& hash, const std::string& text) {
+void HashText(uint64_t& hash, std::string_view text) {
   HashBytes(hash, text.data(), text.size());
 }
 
@@ -202,14 +187,14 @@ std::string HexFingerprint(uint64_t hash) {
   return output.str();
 }
 
-std::string AlignmentConfigFingerprint(const Config& data_loader,
-                                       const Config& loop_detector,
-                                       const Config& optimizer,
+std::string AlignmentConfigFingerprint(std::string_view data_loader,
+                                       std::string_view loop_detector,
+                                       std::string_view optimizer,
                                        int anchor_agent_index) {
   uint64_t hash = kFnvOffset;
-  HashText(hash, data_loader.ToJson());
-  HashText(hash, loop_detector.ToJson());
-  HashText(hash, optimizer.ToJson());
+  HashText(hash, data_loader);
+  HashText(hash, loop_detector);
+  HashText(hash, optimizer);
   HashText(hash, std::to_string(anchor_agent_index));
   return HexFingerprint(hash);
 }
@@ -476,44 +461,28 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   if (!cancelled) {
     return Result<SessionBootstrapResult>::Failure(cancelled.GetError());
   }
-  if (request.config_directory.empty()) {
-    return Result<SessionBootstrapResult>::Failure(
-        Error::InvalidArgument("config directory must be non-empty"));
-  }
+  const auto& bootstrap = request.bootstrap_config;
+  const auto& root_document = bootstrap.Root().Document();
 
-  auto root_loaded = LoadValidated(ConfigDocumentKind::kRoot,
-                                   request.config_directory / "config.json");
-  if (!root_loaded) {
-    return Result<SessionBootstrapResult>::Failure(root_loaded.GetError());
-  }
-  LoadedConfig root = std::move(root_loaded).Value();
-  const auto config_path = [&](const char* name) {
-    return request.config_directory /
-           root.config.param<std::string>("global", name,
-                                           std::string(name) + ".json");
+  const auto load_module = [](const fs::path& path) {
+    return LoadConfigFileBounded(path,
+                                 SchemaLimits{}.maximum_document_bytes);
   };
-  for (const char* name : {"config_map_server", "config_data_loader",
-                           "config_loop_detector",
-                           "config_backend_optimizer",
-                           "config_dynamic_remover"}) {
-    if (root.config.param_cast<std::string>("global", name).empty()) {
-      return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
-          std::string("global/") + name + " must be non-empty"));
+  auto map_source = load_module(bootstrap.MapServerConfig());
+  auto data_source = load_module(bootstrap.DataLoaderConfig());
+  auto loop_source = load_module(bootstrap.LoopDetectorConfig());
+  auto optimizer_source = load_module(bootstrap.BackendOptimizerConfig());
+  auto remover_source = load_module(bootstrap.DynamicRemoverConfig());
+  for (const auto* loaded : {&map_source, &data_source, &loop_source,
+                             &optimizer_source, &remover_source}) {
+    if (!*loaded) {
+      return Result<SessionBootstrapResult>::Failure(loaded->GetError());
     }
   }
-
-  auto raw_loop = LoadRawBounded(config_path("config_loop_detector"));
-  auto raw_remover = LoadRawBounded(config_path("config_dynamic_remover"));
-  if (!raw_loop) {
-    return Result<SessionBootstrapResult>::Failure(raw_loop.GetError());
-  }
-  if (!raw_remover) {
-    return Result<SessionBootstrapResult>::Failure(raw_remover.GetError());
-  }
   auto descriptor_metadata = DiscoverPluginSchema(
-      raw_loop.Value(), "loop_detector", "descriptor");
+      loop_source.Value(), "loop_detector", "descriptor");
   auto remover_metadata = DiscoverPluginSchema(
-      raw_remover.Value(), "dynamic_remover", "dynamic_remover");
+      remover_source.Value(), "dynamic_remover", "dynamic_remover");
   if (!descriptor_metadata) {
     return Result<SessionBootstrapResult>::Failure(
         descriptor_metadata.GetError());
@@ -536,20 +505,25 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
       std::move(registry_result).Value());
 
   auto map_loaded =
-      LoadValidated(ConfigDocumentKind::kMapServer,
-                    config_path("config_map_server"), *session_registry);
+      ValidateSnapshot(ConfigDocumentKind::kMapServer,
+                       bootstrap.MapServerConfig(), map_source.Value(),
+                       *session_registry);
   auto data_loaded =
-      LoadValidated(ConfigDocumentKind::kDataLoader,
-                    config_path("config_data_loader"), *session_registry);
+      ValidateSnapshot(ConfigDocumentKind::kDataLoader,
+                       bootstrap.DataLoaderConfig(), data_source.Value(),
+                       *session_registry);
   auto loop_loaded =
-      LoadValidated(ConfigDocumentKind::kLoopDetector,
-                    config_path("config_loop_detector"), *session_registry);
+      ValidateSnapshot(ConfigDocumentKind::kLoopDetector,
+                       bootstrap.LoopDetectorConfig(), loop_source.Value(),
+                       *session_registry);
   auto optimizer_loaded =
-      LoadValidated(ConfigDocumentKind::kBackendOptimizer,
-                    config_path("config_backend_optimizer"), *session_registry);
+      ValidateSnapshot(ConfigDocumentKind::kBackendOptimizer,
+                       bootstrap.BackendOptimizerConfig(),
+                       optimizer_source.Value(), *session_registry);
   auto remover_loaded =
-      LoadValidated(ConfigDocumentKind::kDynamicRemover,
-                    config_path("config_dynamic_remover"), *session_registry);
+      ValidateSnapshot(ConfigDocumentKind::kDynamicRemover,
+                       bootstrap.DynamicRemoverConfig(), remover_source.Value(),
+                       *session_registry);
   if (!map_loaded)
     return Result<SessionBootstrapResult>::Failure(map_loaded.GetError());
   if (!data_loaded)
@@ -566,9 +540,9 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   LoadedConfig optimizer = std::move(optimizer_loaded).Value();
   LoadedConfig remover = std::move(remover_loaded).Value();
 
-  auto root_schema = session_registry->ParseAndValidate(
-      ConfigDocumentKind::kRoot, root.document.canonical_json,
-      root.document.path.string());
+  auto root_schema = session_registry->Validate(
+      ConfigDocumentKind::kRoot, root_document,
+      (bootstrap.ConfigDirectory() / "config.json").string());
   auto map_schema = session_registry->ParseAndValidate(
       ConfigDocumentKind::kMapServer, map.document.canonical_json,
       map.document.path.string());
@@ -584,12 +558,9 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
     return Result<SessionBootstrapResult>::Failure(session_schema.GetError());
   }
 
-  const fs::path root_data = root.config.param_cast<std::string>(
-      "directory", "root_dir_path");
-  const auto subdirectories = root.config.param_cast<std::vector<std::string>>(
-      "directory", "sub_dir_list");
-  const fs::path root_output = root.config.param_cast<std::string>(
-      "directory", "root_save_dir");
+  const fs::path& root_data = bootstrap.DataRoot();
+  const auto& subdirectories = bootstrap.DataSubdirectories();
+  const fs::path& root_output = bootstrap.OutputRoot();
   if (root_data.empty() || root_output.empty() || subdirectories.empty()) {
     return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
         "directory root_dir_path, root_save_dir, and sub_dir_list must be non-empty"));
@@ -626,35 +597,31 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   auto catalog = std::make_shared<const AgentSymbolCatalog>(
       std::move(catalog_result).Value());
 
-  const bool map_enabled = map.config.param<bool>(
-      "map_server", "enable_map_updater", true);
-  const int anchor = map.config.param<int>("map_server", "anchor_agent_index", 0);
+  const auto& map_document = map.validated.Document().at("map_server");
+  const bool map_enabled = map_document.at("enable_map_updater").get<bool>();
+  const int anchor = map_document.at("anchor_agent_index").get<int>();
   if (anchor < 0 || anchor >= static_cast<int>(configured_agents.size())) {
     return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
         "map_server/anchor_agent_index is outside the configured agent range"));
   }
-  const double save_voxel =
-      map.config.param<double>("map_server", "save_voxel_size", 0.2);
+  const double save_voxel = map_document.at("save_voxel_size").get<double>();
   if (save_voxel <= 0.0) {
     return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
         "map_server/save_voxel_size must be greater than zero"));
   }
-  const bool parallel_load = map.config.param<bool>(
-      "map_server", "parallel_data_load", false);
-  const bool parallel_map = map.config.param<bool>(
-      "map_server", "parallel_map_update", false);
-  const int max_parallel = map.config.param<int>(
-      "map_server", "max_parallel_agents", 1);
+  const bool parallel_load = map_document.at("parallel_data_load").get<bool>();
+  const bool parallel_map = map_document.at("parallel_map_update").get<bool>();
+  const int max_parallel = map_document.at("max_parallel_agents").get<int>();
   if (max_parallel <= 0) {
     return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
         "map_server/max_parallel_agents must be greater than zero"));
   }
 
-  auto data_config = ParseDataLoaderConfig(data.config);
-  auto loop_config = ParseLoopDetectorConfig(loop.config);
-  auto optimizer_config = ParseOptimizerConfig(optimizer.config);
-  auto remover_config = ParseDynamicRemoverConfig(remover.config);
-  auto map_config = ParseMapSaveConfig(map.config);
+  auto data_config = DecodeDataLoaderConfig(data.validated);
+  auto loop_config = DecodeLoopDetectorConfig(loop.validated);
+  auto optimizer_config = DecodeOptimizerConfig(optimizer.validated);
+  auto remover_config = DecodeDynamicRemoverConfig(remover.validated);
+  auto map_config = DecodeMapSaveConfig(map.validated);
   if (!data_config)
     return Result<SessionBootstrapResult>::Failure(data_config.GetError());
   if (!loop_config)
@@ -685,7 +652,8 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   }
 
   const std::string config_fingerprint = AlignmentConfigFingerprint(
-      data.config, loop.config, optimizer.config, anchor);
+      data.document.canonical_json, loop.document.canonical_json,
+      optimizer.document.canonical_json, anchor);
   auto input_fingerprints = InputFingerprints(
       configured_agents, data_directories, data_config.Value());
   if (!input_fingerprints) {
@@ -705,7 +673,9 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
 
   const fs::path output = request.output_directory
                               ? *request.output_directory
-                              : root_output / root.config.create_date();
+                              : root_output /
+                                    Config::FromJson(bootstrap.Root().CanonicalJson())
+                                        .create_date();
   std::vector<AgentId> ordered_agents;
   ordered_agents.reserve(configured_agents.size());
   ordered_agents.push_back(configured_agents[static_cast<std::size_t>(anchor)]);
@@ -742,7 +712,8 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   payload->optimizer = std::move(optimizer_instance).Value();
 
   auto documents = std::make_shared<SessionConfigDocuments>();
-  documents->root = std::move(root.document);
+  documents->root = {bootstrap.ConfigDirectory() / "config.json",
+                     bootstrap.Root().CanonicalJson()};
   documents->map_server = std::move(map.document);
   documents->data_loader = std::move(data.document);
   documents->loop_detector = std::move(loop.document);
@@ -840,11 +811,11 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   } catch (const std::exception& error) {
     return Result<SessionBootstrapResult>::Failure(
         Error::ParseError(error.what()).WithConfig(
-            request.config_directory.string()));
+            request.bootstrap_config.ConfigDirectory().string()));
   } catch (...) {
     return Result<SessionBootstrapResult>::Failure(
         Error::ParseError("unknown bootstrap exception")
-            .WithConfig(request.config_directory.string()));
+            .WithConfig(request.bootstrap_config.ConfigDirectory().string()));
   }
 }
 

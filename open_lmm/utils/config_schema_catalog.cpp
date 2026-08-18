@@ -89,6 +89,14 @@ FieldSpec Number(std::string pointer, double value,
                Range(minimum, maximum, exclusive_minimum, exclusive_maximum));
 }
 
+FieldSpec FloatNumber(std::string pointer, double value,
+                      std::optional<double> minimum = std::nullopt,
+                      bool exclusive_minimum = false) {
+  return Number(std::move(pointer), value, minimum,
+                static_cast<double>(std::numeric_limits<float>::max()),
+                exclusive_minimum);
+}
+
 FieldSpec Choice(std::string pointer, std::string value,
                  std::initializer_list<nlohmann::json> allowed,
                  bool required = false) {
@@ -164,20 +172,22 @@ SchemaFragment DataLoaderSchema() {
   extrinsic.minimum_items = 7;
   extrinsic.maximum_items = 7;
   extrinsic.item_type = SchemaValueType::kNumber;
+  extrinsic.array_slice_norm =
+      ConstraintSet::ArraySliceNorm{3, 4, 1.0e-12, true};
   fragment.fields = {
       Object("/data_loader"),
       Choice("/data_loader/data_loader_type", "file_based", {"file_based"},
              true),
       Choice("/data_loader/pose_format", "kitti",
-             {"kitti", "tum", "custom"}),
+             {"kitti", "tum"}),
       Path("/data_loader/pose_file_name", false, "optimized_poses.txt", true),
       Field("/data_loader/extrinsic", SchemaValueType::kArray, false,
             nlohmann::json::array({0, 0, 0, 0, 0, 0, 1}), extrinsic),
       Choice("/data_loader/scan_type", "pcd", {"pcd", "bin"}),
       Path("/data_loader/scan_dir_name", false, "Scans", true),
-      Number("/data_loader/voxel_size", 0.1, 0.0, std::nullopt, true),
-      Number("/data_loader/min_range", 0.0, 0.0),
-      Number("/data_loader/max_range", 100.0, 0.0, std::nullopt, true),
+      FloatNumber("/data_loader/voxel_size", 0.1, 0.0, true),
+      FloatNumber("/data_loader/min_range", 0.0, 0.0),
+      FloatNumber("/data_loader/max_range", 100.0, 0.0, true),
       Field("/data_loader/delimiter", SchemaValueType::kString, false, " ",
             ConstraintSet{.minimum_length = 1, .maximum_length = 1}),
       ExtensionObject(),
@@ -211,18 +221,18 @@ SchemaFragment LoopBaseSchema() {
       Choice("/alignment/pcm_solver", "heuristic", {"heuristic", "exact"}),
       UInt("/alignment/pcm_threads", 1, 1),
       UInt("/alignment/pcm_max_candidates", 0, 0),
-      Number("/alignment/kiss_voxel_size", 2.0, 0.0, std::nullopt, true),
+      FloatNumber("/alignment/kiss_voxel_size", 2.0, 0.0, true),
       Bool("/alignment/kiss_use_quatro", false),
-      Number("/alignment/pose_nn_distance_threshold", 10.0, 0.0,
-             std::nullopt, true),
+      FloatNumber("/alignment/pose_nn_distance_threshold", 10.0, 0.0, true),
       Choice("/alignment/feedback_mode", "adaptive",
              {"adaptive", "automatic", "interactive", "always_manual"}),
       Choice("/alignment/headless_policy", "kiss_then_descriptor",
-             {"legacy_combined", "kiss_only", "kiss_then_descriptor",
-              "fail"}),
+             {"kiss_only", "kiss_then_descriptor", "fail"}),
       UInt("/alignment/feedback_timeout_sec", 0, 0),
       ExtensionObject(),
   };
+  fragment.fields[19].value_migrations.push_back(
+      {"legacy_combined", "kiss_then_descriptor", 1});
   return fragment;
 }
 
@@ -250,11 +260,13 @@ SchemaFragment SolidSchema() {
       UInt("/loop_detector/num_height", 32, 1),
       Number("/loop_detector/fov_u", 2.0),
       Number("/loop_detector/fov_d", -24.8),
-      Number("/loop_detector/min_distance", 3.0, 0.0),
-      Number("/loop_detector/max_distance", 80.0, 0.0, std::nullopt, true),
+      UInt("/loop_detector/min_distance", 3, 0),
+      UInt("/loop_detector/max_distance", 80, 1),
       Number("/loop_detector/voxel_size", 0.4, 0.0, std::nullopt, true),
   };
   fragment.rules = {
+      Less("/loop_detector/fov_d", "/loop_detector/fov_u",
+           "SOLiD lower FOV must be below upper FOV"),
       Less("/loop_detector/min_distance", "/loop_detector/max_distance",
            "SOLiD min_distance must be below max_distance")};
   return fragment;
@@ -417,8 +429,8 @@ SchemaFragment FreeDomSchema() {
       Number("/dynamic_remover/min_z", -20.0),
       Number("/dynamic_remover/max_z", 20.0),
       Number("/dynamic_remover/sub_voxel_size", 0.1, 0.0, std::nullopt, true),
-      UInt("/dynamic_remover/voxel_depth", 2, 0),
-      UInt("/dynamic_remover/block_depth", 5, 0),
+      UInt("/dynamic_remover/voxel_depth", 2, 1),
+      UInt("/dynamic_remover/block_depth", 5, 1),
       Bool("/dynamic_remover/enable_local_map", false),
       Number("/dynamic_remover/local_map_range", 50.0, 0.0, std::nullopt,
              true),
@@ -437,7 +449,7 @@ SchemaFragment FreeDomSchema() {
              true),
       Number("/dynamic_remover/lidar_vertical_fov_upper_degree", 2.0),
       Number("/dynamic_remover/lidar_vertical_fov_lower_degree", -24.8),
-      UInt("/dynamic_remover/depth_image_vertical_lines", 64, 1),
+      UInt("/dynamic_remover/depth_image_vertical_lines", 64, 2),
       Number("/dynamic_remover/depth_image_min_range", 0.2, 0.0),
       Number("/dynamic_remover/max_raycast_enhancement_range", 80.0, 0.0),
       Number("/dynamic_remover/raycast_enhancement_depth_margin", 0.2, 0.0),
@@ -464,7 +476,10 @@ SchemaFragment FreeDomSchema() {
            "/dynamic_remover/local_map_max_z",
            "free_dom local map min z must be below max z"),
       Less("/dynamic_remover/raycast_min_z", "/dynamic_remover/raycast_max_z",
-           "free_dom raycast min z must be below max z")};
+           "free_dom raycast min z must be below max z"),
+      Less("/dynamic_remover/lidar_vertical_fov_lower_degree",
+           "/dynamic_remover/lidar_vertical_fov_upper_degree",
+           "free_dom lower vertical FOV must be below upper vertical FOV")};
   return fragment;
 }
 

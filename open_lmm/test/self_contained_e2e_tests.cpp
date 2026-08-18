@@ -271,6 +271,12 @@ void RequireNear(const std::vector<double>& lhs, const std::vector<double>& rhs,
   }
 }
 
+open_lmm::BootstrapConfigSnapshot Bootstrap(const fs::path& directory) {
+  auto loaded = open_lmm::LoadBootstrapConfig(directory);
+  Require(loaded.IsOk(), "load bootstrap configuration " + directory.string());
+  return std::move(loaded).Value();
+}
+
 }  // namespace
 
 int main() {
@@ -282,10 +288,10 @@ int main() {
   WriteAgent(data, "agent2");
   WriteConfiguration(config, data, output);
 
-  auto configured = open_lmm::GlobalConfig::reload(config.string());
+  auto configured = open_lmm::LoadBootstrapConfig(config);
   Require(configured.IsOk(), "load self-contained configuration");
 
-  open_lmm::MapServer server;
+  open_lmm::MapServer server(std::move(configured).Value());
   const uint64_t batch_base_revision = server.Snapshot().revision;
   auto completed = server.process();
   if (!completed) {
@@ -350,7 +356,7 @@ int main() {
   auto skip_map_config = ReadJson(skip_config / "server/map_server.json");
   skip_map_config["map_server"]["enable_map_updater"] = true;
   WriteJson(skip_config / "server/map_server.json", skip_map_config);
-  open_lmm::MapServer skip_server(skip_config);
+  open_lmm::MapServer skip_server(Bootstrap(skip_config));
   Require(Execute(skip_server, open_lmm::ExecutionCommand::Stage(
                                    open_lmm::StageId::kDataLoad)).IsOk() &&
               Execute(skip_server, open_lmm::ExecutionCommand::Stage(
@@ -428,7 +434,7 @@ int main() {
   const fs::path v1_config = fixture.path() / "v1-config";
   const fs::path v1_output = fixture.path() / "v1-output";
   WriteConfiguration(v1_config, data, v1_output, false, "v1");
-  open_lmm::MapServer v1_server(v1_config);
+  open_lmm::MapServer v1_server(Bootstrap(v1_config));
   auto v1_completed = v1_server.process();
   if (!v1_completed) std::cerr << v1_completed.GetError().Message() << '\n';
   Require(v1_completed.IsOk(), "complete ABI-v1 descriptor baseline pipeline");
@@ -449,7 +455,7 @@ int main() {
   uint64_t calibrated_resident_bytes = 0;
   {
     open_lmm::MapServer parallel_server(
-        parallel_config, std::nullopt, governor);
+        Bootstrap(parallel_config), std::nullopt, governor);
     auto parallel_completed = parallel_server.process();
     if (!parallel_completed) {
       std::cerr << parallel_completed.GetError().Message() << '\n';
@@ -484,7 +490,7 @@ int main() {
       open_lmm::ResourceBudget{2, 2, 2, pressure_budget});
   {
     open_lmm::MapServer first_session(
-        pressure_config, std::nullopt, pressure_governor);
+        Bootstrap(pressure_config), std::nullopt, pressure_governor);
     Require(Execute(first_session, open_lmm::ExecutionCommand::Stage(
                                        open_lmm::StageId::kDataLoad)).IsOk(),
             "first session is admitted under resident budget");
@@ -494,7 +500,7 @@ int main() {
                 first_reserved == calibrated_resident_bytes,
             "first session owns its calibrated resident reservation");
     open_lmm::MapServer second_session(
-        pressure_config, std::nullopt, pressure_governor);
+        Bootstrap(pressure_config), std::nullopt, pressure_governor);
     auto rejected = Execute(second_session, open_lmm::ExecutionCommand::Stage(
                                                 open_lmm::StageId::kDataLoad));
     Require(!rejected,

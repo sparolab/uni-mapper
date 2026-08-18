@@ -53,6 +53,7 @@ add_executable(open_lmm_descriptor_v2_adapter_tests
 )
 target_link_libraries(open_lmm_descriptor_v2_adapter_tests PRIVATE
   open_lmm_descriptor
+  open_lmm_plugin_host
   open_lmm_utils
 )
 openlmm_set_global_target_properties(open_lmm_descriptor_v2_adapter_tests)
@@ -152,6 +153,16 @@ target_link_libraries(open_lmm_session_transaction_tests PRIVATE
 openlmm_set_global_target_properties(open_lmm_session_transaction_tests)
 add_test(NAME open_lmm_session_transaction_tests
          COMMAND open_lmm_session_transaction_tests)
+
+add_executable(open_lmm_config_transaction_tests
+  config_transaction_tests.cpp
+)
+target_link_libraries(open_lmm_config_transaction_tests PRIVATE
+  open_lmm_map_server
+)
+openlmm_set_global_target_properties(open_lmm_config_transaction_tests)
+add_test(NAME open_lmm_config_transaction_tests
+         COMMAND open_lmm_config_transaction_tests)
 
 add_executable(open_lmm_stage_executor_fixture_tests
   stage_executor_fixture_tests.cpp
@@ -289,6 +300,7 @@ target_include_directories(open_lmm_plugin_abi_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(open_lmm_plugin_abi_tests PRIVATE
   open_lmm_common
+  open_lmm_plugin_host
   open_lmm_utils
   open_lmm_loop_detector
   Eigen3::Eigen
@@ -353,7 +365,8 @@ target_link_libraries(
   open_lmm_plugin_sdk)
 
 add_executable(open_lmm_plugin_abi_v2_tests plugin_abi_v2_tests.cpp)
-target_link_libraries(open_lmm_plugin_abi_v2_tests PRIVATE open_lmm_contracts)
+target_link_libraries(open_lmm_plugin_abi_v2_tests PRIVATE
+  open_lmm_plugin_host)
 openlmm_set_global_target_properties(open_lmm_plugin_abi_v2_tests)
 add_test(NAME open_lmm_plugin_abi_v2_tests COMMAND open_lmm_plugin_abi_v2_tests
   $<TARGET_FILE:open_lmm_plugin_fixture_v2_valid>
@@ -497,6 +510,7 @@ set_tests_properties(
   open_lmm_runtime_service_tests
   open_lmm_bounded_executor_tests
   open_lmm_session_transaction_tests
+  open_lmm_config_transaction_tests
   open_lmm_session_bootstrapper_tests
   open_lmm_execution_spec_tests
   open_lmm_controller_concurrency_tests
