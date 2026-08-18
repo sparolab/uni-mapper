@@ -43,10 +43,13 @@ void VisualizationProjector::Publish(
            VisualizationEdgeType::kTrajectory});
     }
 
+    // Clang 15 cannot capture a structured-binding name from this loop by
+    // reference.  Keep an ordinary value for the predicate as well.
+    const AgentId agent_id = agent;
     const auto context = std::find_if(
         runtime->payload->contexts.begin(), runtime->payload->contexts.end(),
-        [&agent](const AgentPipelineCtx& item) {
-          return item.agent.id == agent;
+        [&agent_id](const AgentPipelineCtx& item) {
+          return item.agent.id == agent_id;
         });
     if (context != runtime->payload->contexts.end() && context->loop_output) {
       const auto append_loops = [&snapshot](const LoopPairVec& loops,
