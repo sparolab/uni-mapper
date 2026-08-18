@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(open_lmm_client_only LANGUAGES CXX)
+find_package(open_lmm 1.0 CONFIG REQUIRED COMPONENTS client)
+add_executable(client_only ../client_main.cpp)
+target_compile_features(client_only PRIVATE cxx_std_20)
+target_link_libraries(client_only PRIVATE open_lmm::client)

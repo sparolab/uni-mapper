@@ -1,10 +1,13 @@
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -14,6 +17,7 @@
 
 #include <open_lmm/common/pipeline.hpp>
 #include <open_lmm/server/map_server.hpp>
+#include <open_lmm/server/resource_governor.hpp>
 #include <open_lmm/utils/config.hpp>
 
 namespace fs = std::filesystem;
@@ -58,6 +62,14 @@ void WriteJson(const fs::path& path, const nlohmann::json& value) {
   Require(static_cast<bool>(output), "open JSON fixture " + path.string());
   output << value.dump(2) << '\n';
   Require(static_cast<bool>(output), "write JSON fixture " + path.string());
+}
+
+nlohmann::json ReadJson(const fs::path& path) {
+  std::ifstream input(path);
+  Require(static_cast<bool>(input), "open JSON fixture " + path.string());
+  nlohmann::json value;
+  input >> value;
+  return value;
 }
 
 void WritePoseFile(const fs::path& path) {
@@ -126,7 +138,9 @@ void WriteAgent(const fs::path& root, const std::string& name) {
 }
 
 void WriteConfiguration(const fs::path& config, const fs::path& data,
-                        const fs::path& output) {
+                        const fs::path& output,
+                        bool parallel_data_load = false,
+                        const std::string& plugin_abi = "v2") {
   WriteJson(config / "config.json", {
       {"global", {
           {"config_map_server", "server/map_server.json"},
@@ -141,7 +155,10 @@ void WriteConfiguration(const fs::path& config, const fs::path& data,
   WriteJson(config / "server/map_server.json", {
       {"map_server", {{"enable_map_updater", false},
                       {"anchor_agent_index", 0},
-                      {"save_voxel_size", 0.4}}}});
+                      {"save_voxel_size", 0.4},
+                      {"parallel_data_load", parallel_data_load},
+                      {"parallel_map_update", false},
+                      {"max_parallel_agents", parallel_data_load ? 2 : 1}}}});
   WriteJson(config / "core/data_loader.json", {
       {"data_loader", {{"data_loader_type", "file_based"},
                        {"pose_format", "kitti"},
@@ -155,6 +172,7 @@ void WriteConfiguration(const fs::path& config, const fs::path& data,
                        {"delimiter", " "}}}});
   WriteJson(config / "core/loop_detector.json", {
       {"loop_detector", {{"loop_detector_type", "kdtree"},
+                         {"plugin_abi", plugin_abi},
                          {"model", "scan_context"},
                          {"num_ring", 20},
                          {"num_sector", 60},
@@ -207,6 +225,42 @@ fs::path FindNamedFile(const fs::path& root, const std::string& name) {
   return {};
 }
 
+uint64_t EstimatedAgentBytes(const fs::path& directory) {
+  uint64_t bytes = 1;
+  for (const auto& entry : fs::recursive_directory_iterator(directory)) {
+    if (!entry.is_regular_file()) continue;
+    const uint64_t size = entry.file_size();
+    bytes = size > (std::numeric_limits<uint64_t>::max() - bytes) / 2
+                ? std::numeric_limits<uint64_t>::max()
+                : bytes + size * 2;
+  }
+  return bytes;
+}
+
+std::vector<double> ReadNumbers(const fs::path& path) {
+  std::ifstream input(path);
+  Require(static_cast<bool>(input), "open numeric artifact " + path.string());
+  std::vector<double> values;
+  std::string line;
+  while (std::getline(input, line)) {
+    std::replace(line.begin(), line.end(), ',', ' ');
+    std::istringstream fields(line);
+    double value = 0.0;
+    while (fields >> value) values.push_back(value);
+    Require(fields.eof(), "parse numeric artifact " + path.string());
+  }
+  return values;
+}
+
+void RequireNear(const std::vector<double>& lhs, const std::vector<double>& rhs,
+                 double tolerance, const std::string& message) {
+  Require(lhs.size() == rhs.size(), message + " size");
+  for (std::size_t index = 0; index < lhs.size(); ++index) {
+    Require(std::abs(lhs[index] - rhs[index]) <= tolerance,
+            message + " value " + std::to_string(index));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -254,7 +308,43 @@ int main() {
               manifest["agents"][1]["symbol_byte"] == 2,
           "manifest preserves config-order AgentId to byte mapping");
 
-  const uint64_t full_revision = snapshot->revision;
+  const auto valid_loop = ReadJson(config / "core/loop_detector.json");
+  const auto valid_optimizer = ReadJson(config / "core/optimizer.json");
+  const auto valid_remover = ReadJson(config / "core/remover.json");
+  const auto valid_map = ReadJson(config / "server/map_server.json");
+  WriteJson(config / "core/remover.json", nlohmann::json::object());
+  Require(server.Reconfigure(open_lmm::ConfigDomain::kMapSave, 2).IsOk(),
+          "map-save reconfigure ignores unrelated invalid remover config");
+  auto preserved = server.CreateVisualizationSnapshot(Id("agent1"));
+  Require(preserved && !preserved.Value().poses.empty() &&
+              !preserved.Value().map_available,
+          "map-save reconfigure preserves trajectory while invalidating map");
+  WriteJson(config / "core/remover.json", valid_remover);
+  WriteJson(config / "server/map_server.json", nlohmann::json::object());
+  Require(server.Reconfigure(open_lmm::ConfigDomain::kDynamicRemover, 3).IsOk(),
+          "remover reconfigure ignores unrelated invalid map-save config");
+  preserved = server.CreateVisualizationSnapshot(Id("agent1"));
+  Require(preserved && !preserved.Value().poses.empty(),
+          "remover reconfigure preserves optimized trajectory");
+  auto changed_identity_map = valid_map;
+  changed_identity_map["map_server"]["anchor_agent_index"] = 1;
+  WriteJson(config / "server/map_server.json", changed_identity_map);
+  Require(!server.Reconfigure(open_lmm::ConfigDomain::kMapSave, 4),
+          "session identity field is rejected during map-save hot reload");
+  WriteJson(config / "server/map_server.json", valid_map);
+  WriteJson(config / "core/loop_detector.json", nlohmann::json::object());
+  Require(server.Reconfigure(open_lmm::ConfigDomain::kOptimizer, 4).IsOk(),
+          "optimizer reconfigure ignores unrelated invalid loop config");
+  WriteJson(config / "core/loop_detector.json", valid_loop);
+  WriteJson(config / "core/optimizer.json", nlohmann::json::object());
+  Require(server.Reconfigure(open_lmm::ConfigDomain::kLoopDetector, 5).IsOk(),
+          "loop reconfigure ignores unrelated invalid optimizer config");
+  WriteJson(config / "core/optimizer.json", valid_optimizer);
+
+  const auto reconfigured_snapshot = server.SessionSnapshot();
+  Require(reconfigured_snapshot.has_value(),
+          "publish reconfigured committed session snapshot");
+  const uint64_t full_revision = reconfigured_snapshot->revision;
   auto replay_loop = server.RunNode(open_lmm::NodeId::kLoopDetect, Id("agent2"));
   Require(replay_loop.IsOk(), "ordered LoopDetect replay for follower");
   auto replay_optimize = server.RunNode(open_lmm::NodeId::kOptimize, Id("agent2"));
@@ -264,6 +354,88 @@ int main() {
           "commit one revision per ordered replay node");
   Require(replayed->descriptor_count == snapshot->descriptor_count,
           "ordered replay does not append duplicate descriptors");
+
+  const fs::path v1_config = fixture.path() / "v1-config";
+  const fs::path v1_output = fixture.path() / "v1-output";
+  WriteConfiguration(v1_config, data, v1_output, false, "v1");
+  open_lmm::MapServer v1_server(v1_config);
+  auto v1_completed = v1_server.process();
+  if (!v1_completed) std::cerr << v1_completed.GetError().Message() << '\n';
+  Require(v1_completed.IsOk(), "complete ABI-v1 descriptor baseline pipeline");
+  for (const char* agent : {"agent1", "agent2"}) {
+    const std::string filename =
+        "optimized_poses_" + std::string(agent) + ".txt";
+    RequireNear(ReadNumbers(FindNamedFile(output, filename)),
+                ReadNumbers(FindNamedFile(v1_output, filename)), 1e-3,
+                "ABI-v2 Scan Context preserves " + std::string(agent) +
+                    " pose baseline");
+  }
+
+  const fs::path parallel_config = fixture.path() / "parallel-config";
+  const fs::path parallel_output = fixture.path() / "parallel-output";
+  WriteConfiguration(parallel_config, data, parallel_output, true);
+  auto governor = std::make_shared<open_lmm::ResourceGovernor>(
+      open_lmm::ResourceBudget{1, 2, 2, 64ULL * 1024ULL * 1024ULL});
+  uint64_t calibrated_resident_bytes = 0;
+  {
+    open_lmm::MapServer parallel_server(
+        parallel_config, std::nullopt, governor);
+    auto parallel_completed = parallel_server.process();
+    if (!parallel_completed) {
+      std::cerr << parallel_completed.GetError().Message() << '\n';
+    }
+    Require(parallel_completed.IsOk(),
+            "complete two-agent pipeline with parallel DataLoad");
+    const auto parallel_snapshot = parallel_server.SessionSnapshot();
+    Require(parallel_snapshot &&
+                parallel_snapshot->ordered_agents == snapshot->ordered_agents &&
+                parallel_snapshot->descriptor_count ==
+                    snapshot->descriptor_count,
+            "parallel DataLoad preserves agent order and descriptor cardinality");
+    Require(governor->ReservedMemoryBytes() > 0,
+            "committed raw payload keeps resident memory reserved");
+    calibrated_resident_bytes = governor->ReservedMemoryBytes();
+  }
+  Require(governor->ReservedMemoryBytes() == 0,
+          "destroyed session releases resident memory reservation");
+  Require(CountNamedFiles(parallel_output, "optimized_poses_", ".txt") == 2 &&
+              CountNamedFiles(parallel_output, "global_map_", ".pcd") == 2,
+          "parallel DataLoad preserves deterministic output set");
+
+  const uint64_t estimated_agent_bytes = EstimatedAgentBytes(data / "agent1");
+  const uint64_t actual_agent_bytes = calibrated_resident_bytes / 2;
+  const uint64_t pressure_budget = std::max(
+      calibrated_resident_bytes, actual_agent_bytes + estimated_agent_bytes);
+  Require(pressure_budget <
+              calibrated_resident_bytes + estimated_agent_bytes,
+          "construct a budget that admits exactly one resident session");
+  const fs::path pressure_config = fixture.path() / "pressure-config";
+  WriteConfiguration(pressure_config, data, fixture.path() / "pressure-output");
+  auto pressure_governor = std::make_shared<open_lmm::ResourceGovernor>(
+      open_lmm::ResourceBudget{2, 2, 2, pressure_budget});
+  {
+    open_lmm::MapServer first_session(
+        pressure_config, std::nullopt, pressure_governor);
+    Require(first_session.RunStage(open_lmm::StageId::kDataLoad).IsOk(),
+            "first session is admitted under resident budget");
+    const auto first_before = first_session.SessionSnapshot();
+    const uint64_t first_reserved = pressure_governor->ReservedMemoryBytes();
+    Require(first_before && first_reserved == calibrated_resident_bytes,
+            "first session owns its calibrated resident reservation");
+    open_lmm::MapServer second_session(
+        pressure_config, std::nullopt, pressure_governor);
+    auto rejected = second_session.RunStage(open_lmm::StageId::kDataLoad);
+    Require(!rejected,
+            "second session fails admission before exceeding resident budget");
+    const auto first_after = first_session.SessionSnapshot();
+    Require(first_after && first_before &&
+                first_after->revision == first_before->revision &&
+                pressure_governor->ReservedMemoryBytes() == first_reserved &&
+                pressure_governor->MemoryAdmissionFailures() > 0,
+            "failed second session preserves first committed state and budget");
+  }
+  Require(pressure_governor->ReservedMemoryBytes() == 0,
+          "closing both sessions releases pressure-test reservations");
 
   std::cout << "self-contained two-agent E2E passed\n";
   return 0;

@@ -149,6 +149,9 @@ SchemaFragment MapSchema() {
       Bool("/map_server/enable_map_updater", true),
       UInt("/map_server/anchor_agent_index", 0),
       Number("/map_server/save_voxel_size", 0.2, 0.0, std::nullopt, true),
+      Bool("/map_server/parallel_data_load", false),
+      Bool("/map_server/parallel_map_update", false),
+      UInt("/map_server/max_parallel_agents", 1, 1, 255),
       ExtensionObject(),
   };
   return fragment;
@@ -191,6 +194,7 @@ SchemaFragment LoopBaseSchema() {
       Object("/loop_detector"),
       Choice("/loop_detector/loop_detector_type", "kdtree", {"kdtree"},
              true),
+      Choice("/loop_detector/plugin_abi", "auto", {"auto", "v1", "v2"}),
       Field("/loop_detector/model", SchemaValueType::kString, true,
             std::nullopt, Enum({"scan_context", "solid"})),
       Field("/database", SchemaValueType::kObject, false,
@@ -390,6 +394,7 @@ SchemaFragment ErasorSchema() {
       Number("/dynamic_remover/map_voxel_size", 0.2, 0.0, std::nullopt, true),
       UInt("/dynamic_remover/voxelization_interval", 10, 1),
       UInt("/dynamic_remover/removal_interval", 5, 1),
+      UInt("/dynamic_remover/internal_cpu_threads", 1, 1, 255),
       Number("/dynamic_remover/tf_z", 0.7),
   };
   fragment.rules = {

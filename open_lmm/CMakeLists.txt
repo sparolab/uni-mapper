@@ -52,6 +52,17 @@ add_subdirectory(core)
 add_subdirectory(server)
 add_subdirectory(gui)
 
+add_library(open_lmm_client SHARED server/runtime_client.cpp)
+add_dependencies(open_lmm_client open_lmm_map_server)
+target_link_libraries(open_lmm_client PUBLIC open_lmm_contracts PRIVATE
+  "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_map_server>>")
+target_include_directories(open_lmm_client PRIVATE
+  "$<TARGET_PROPERTY:Eigen3::Eigen,INTERFACE_INCLUDE_DIRECTORIES>"
+  "$<TARGET_PROPERTY:PCL::PCL,INTERFACE_INCLUDE_DIRECTORIES>"
+  "$<TARGET_PROPERTY:gtsam,INTERFACE_INCLUDE_DIRECTORIES>")
+openlmm_set_global_target_properties(open_lmm_client)
+set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
+
 # Stable package-facing target names. Implementation-only static libraries and
 # fetched dependency targets stay behind these shared-library boundaries.
 add_library(open_lmm_core INTERFACE)
@@ -64,12 +75,22 @@ target_link_libraries(open_lmm_core INTERFACE
 )
 set_target_properties(open_lmm_core PROPERTIES EXPORT_NAME core)
 
-set_target_properties(open_lmm_common PROPERTIES EXPORT_NAME contracts)
+set_target_properties(open_lmm_contracts PROPERTIES EXPORT_NAME contracts)
+set_target_properties(open_lmm_common PROPERTIES EXPORT_NAME common)
 set_target_properties(open_lmm_utils PROPERTIES EXPORT_NAME utils)
 set_target_properties(open_lmm_map_server PROPERTIES EXPORT_NAME runtime)
 set_target_properties(open_lmm_gui_core PROPERTIES EXPORT_NAME gui)
 
-add_library(open_lmm::contracts ALIAS open_lmm_common)
+add_library(open_lmm_plugin_sdk INTERFACE)
+target_include_directories(open_lmm_plugin_sdk INTERFACE
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/..>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+set_target_properties(open_lmm_plugin_sdk PROPERTIES EXPORT_NAME plugin_sdk)
+
+add_library(open_lmm::contracts ALIAS open_lmm_contracts)
+add_library(open_lmm::client ALIAS open_lmm_client)
+add_library(open_lmm::common ALIAS open_lmm_common)
+add_library(open_lmm::plugin_sdk ALIAS open_lmm_plugin_sdk)
 add_library(open_lmm::config ALIAS open_lmm_algorithm_config)
 add_library(open_lmm::core ALIAS open_lmm_core)
 add_library(open_lmm::runtime ALIAS open_lmm_map_server)
@@ -103,6 +124,8 @@ foreach(create_target ${OPEN_LMM_CREATE_LIBRARIES})
 endforeach()
 
 install(TARGETS
+  open_lmm_contracts
+  open_lmm_client
   open_lmm_common
   open_lmm_algorithm_config
   open_lmm_utils
@@ -113,6 +136,7 @@ install(TARGETS
   open_lmm_map_server
   open_lmm_gui_core
   open_lmm_core
+  open_lmm_plugin_sdk
   EXPORT open_lmmTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
@@ -147,9 +171,18 @@ foreach(public_header_dir common core gui server utils)
     FILES_MATCHING
       PATTERN "*.hpp"
       PATTERN "*.h"
+      PATTERN "plugin_api_v2.h" EXCLUDE
       PATTERN "stage_executor.hpp" EXCLUDE
   )
 endforeach()
+install(FILES ${PROJECT_SOURCE_DIR}/common/plugin_api_v2.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/common
+  COMPONENT PluginSDK)
+install(FILES
+  ${PROJECT_SOURCE_DIR}/test/plugin_example_v2.c
+  ${PROJECT_SOURCE_DIR}/test/plugin_fixture_v2.c
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/plugin_sdk
+  COMPONENT PluginSDK)
 install(DIRECTORY ${nlohmann_json_SOURCE_DIR}/include/nlohmann
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   COMPONENT Development

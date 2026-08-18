@@ -10,6 +10,8 @@ target_sources(open_lmm_map_server PRIVATE
   session_manager.cpp
   session_state.cpp
   pipeline_controller.cpp
+  resource_governor.cpp
+  runtime_service.cpp
   nodes/map_update_node.cpp
 )
 target_link_libraries(open_lmm_map_server

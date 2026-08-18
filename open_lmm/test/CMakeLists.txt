@@ -38,6 +38,25 @@ openlmm_set_global_target_properties(open_lmm_pipeline_controller_tests)
 add_test(NAME open_lmm_pipeline_controller_tests
          COMMAND open_lmm_pipeline_controller_tests)
 
+add_executable(open_lmm_runtime_service_tests runtime_service_tests.cpp)
+target_link_libraries(open_lmm_runtime_service_tests PRIVATE
+  open_lmm_map_server)
+openlmm_set_global_target_properties(open_lmm_runtime_service_tests)
+add_test(NAME open_lmm_runtime_service_tests
+         COMMAND open_lmm_runtime_service_tests)
+
+add_executable(open_lmm_bounded_executor_tests bounded_executor_tests.cpp)
+target_link_libraries(open_lmm_bounded_executor_tests PRIVATE
+  open_lmm_map_server)
+openlmm_set_global_target_properties(open_lmm_bounded_executor_tests)
+add_test(NAME open_lmm_bounded_executor_tests
+         COMMAND open_lmm_bounded_executor_tests)
+
+add_executable(open_lmm_runtime_service_verify runtime_service_verify.cpp)
+target_link_libraries(open_lmm_runtime_service_verify PRIVATE
+  open_lmm_map_server)
+openlmm_set_global_target_properties(open_lmm_runtime_service_verify)
+
 add_executable(open_lmm_session_transaction_tests
   session_transaction_tests.cpp
 )
@@ -162,6 +181,61 @@ add_test(NAME open_lmm_plugin_abi_tests COMMAND open_lmm_plugin_abi_tests
   $<TARGET_FILE:open_lmm_plugin_fixture_no_entry>
   ${_open_lmm_built_in_plugin_test_arguments})
 
+foreach(mode IN ITEMS valid wrong_major short_descriptor partial_open malformed_result
+                      newer_minor missing_close null_handle unsupported_minor)
+  # modes are C-only ABI fixtures; keep each DSO independently addressable.
+  add_library(open_lmm_plugin_fixture_v2_${mode} MODULE plugin_fixture_v2.c)
+  target_link_libraries(open_lmm_plugin_fixture_v2_${mode} PRIVATE
+    open_lmm_plugin_sdk)
+endforeach()
+target_compile_definitions(open_lmm_plugin_fixture_v2_wrong_major PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=1)
+target_compile_definitions(open_lmm_plugin_fixture_v2_short_descriptor PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=2)
+target_compile_definitions(open_lmm_plugin_fixture_v2_partial_open PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=3)
+target_compile_definitions(open_lmm_plugin_fixture_v2_malformed_result PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=4)
+target_compile_definitions(open_lmm_plugin_fixture_v2_newer_minor PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=5)
+target_compile_definitions(open_lmm_plugin_fixture_v2_missing_close PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=6)
+target_compile_definitions(open_lmm_plugin_fixture_v2_null_handle PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=7)
+target_compile_definitions(open_lmm_plugin_fixture_v2_unsupported_minor PRIVATE
+  OPEN_LMM_PLUGIN_FIXTURE_V2_MODE=8)
+
+add_executable(open_lmm_plugin_abi_v2_tests plugin_abi_v2_tests.cpp)
+target_link_libraries(open_lmm_plugin_abi_v2_tests PRIVATE open_lmm_contracts)
+openlmm_set_global_target_properties(open_lmm_plugin_abi_v2_tests)
+add_test(NAME open_lmm_plugin_abi_v2_tests COMMAND open_lmm_plugin_abi_v2_tests
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_valid>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_wrong_major>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_short_descriptor>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_partial_open>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_malformed_result>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_newer_minor>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_missing_close>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_null_handle>
+  $<TARGET_FILE:open_lmm_plugin_fixture_v2_unsupported_minor>)
+
+find_program(OPEN_LMM_TEST_GCC NAMES gcc-13 gcc-12 gcc)
+find_program(OPEN_LMM_TEST_GXX NAMES g++-13 g++-12 g++)
+find_program(OPEN_LMM_TEST_CLANG NAMES clang-15 clang)
+find_program(OPEN_LMM_TEST_CLANGXX NAMES clang++-15 clang++)
+if(OPEN_LMM_TEST_GCC AND OPEN_LMM_TEST_GXX AND
+   OPEN_LMM_TEST_CLANG AND OPEN_LMM_TEST_CLANGXX)
+  add_test(NAME open_lmm_plugin_cross_compiler_tests
+    COMMAND ${CMAKE_COMMAND}
+      -DOPEN_LMM_SOURCE_ROOT=${PROJECT_SOURCE_DIR}/..
+      -DOPEN_LMM_C_COMPILER_GNU=${OPEN_LMM_TEST_GCC}
+      -DOPEN_LMM_CXX_COMPILER_GNU=${OPEN_LMM_TEST_GXX}
+      -DOPEN_LMM_C_COMPILER_CLANG=${OPEN_LMM_TEST_CLANG}
+      -DOPEN_LMM_CXX_COMPILER_CLANG=${OPEN_LMM_TEST_CLANGXX}
+      -DOPEN_LMM_CROSS_TEST_DIR=${PROJECT_BINARY_DIR}/plugin-cross-test
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/plugin_cross_compiler_tests.cmake)
+endif()
+
 add_executable(open_lmm_plugin_selection_tests plugin_selection_tests.cpp)
 target_link_libraries(open_lmm_plugin_selection_tests PRIVATE
   open_lmm_algorithm_config)
@@ -215,6 +289,8 @@ set(_open_lmm_build_library_path
   "$<TARGET_FILE_DIR:open_lmm_dynamic_remover>:"
   "$<TARGET_FILE_DIR:open_lmm_algorithm_config>:"
   "$<TARGET_FILE_DIR:open_lmm_gui_core>:"
+  "$<TARGET_FILE_DIR:open_lmm_contracts>:"
+  "$<TARGET_FILE_DIR:open_lmm_client>:"
   "$<TARGET_FILE_DIR:open_lmm_common>:"
   "$<TARGET_FILE_DIR:open_lmm_utils>:")
 foreach(plugin_support_target IN ITEMS
@@ -232,6 +308,8 @@ set_tests_properties(
   open_lmm_safety_regression_tests
   open_lmm_agent_id_tests
   open_lmm_pipeline_controller_tests
+  open_lmm_runtime_service_tests
+  open_lmm_bounded_executor_tests
   open_lmm_session_transaction_tests
   open_lmm_execution_spec_tests
   open_lmm_controller_concurrency_tests
@@ -241,6 +319,7 @@ set_tests_properties(
   open_lmm_logging_tests
   open_lmm_config_schema_tests
   open_lmm_plugin_abi_tests
+  open_lmm_plugin_abi_v2_tests
   open_lmm_plugin_selection_tests
   PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${_open_lmm_build_library_path}")
 if(TARGET open_lmm_self_contained_e2e_tests)

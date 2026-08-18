@@ -57,6 +57,61 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::process(
   return static_map;
 }
 
+Result<DynamicRemoverBase::PointCloud::Ptr>
+DynamicRemoverOffline::processStreaming(
+    const RawScanSource& source,
+    const std::vector<std::pair<int, Eigen::Isometry3d>>& optimized_poses,
+    const HeavyPhaseAdmission& heavy_phase_admission) {
+  if (offline_model_->needsRawMap()) {
+    std::shared_ptr<void> heavy_phase;
+    if (heavy_phase_admission) {
+      auto admitted = heavy_phase_admission();
+      if (!admitted) {
+        return Result<PointCloud::Ptr>::Failure(admitted.GetError());
+      }
+      heavy_phase = std::move(admitted).Value();
+    }
+    auto raw_map = std::make_shared<PointCloud>();
+    auto loaded = source([&](std::size_t index, const PointCloud::Ptr& scan) {
+      if (index >= optimized_poses.size()) {
+        return Result<void>::Failure(Error::InvalidArgument(
+            "raw scan count exceeds optimized pose count"));
+      }
+      PointCloud transformed_scan;
+      pcl::transformPointCloud(*scan, transformed_scan,
+                               optimized_poses[index].second.matrix());
+      *raw_map += transformed_scan;
+      return Result<void>::Ok();
+    });
+    if (!loaded) return Result<PointCloud::Ptr>::Failure(loaded.GetError());
+    if (loaded.Value() != optimized_poses.size()) {
+      return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
+          "raw scan and optimized pose counts differ"));
+    }
+    offline_model_->setRawMap(raw_map);
+    heavy_phase.reset();
+  }
+
+  auto processed = source([&](std::size_t index, const PointCloud::Ptr& scan) {
+    if (index >= optimized_poses.size()) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "raw scan count exceeds optimized pose count"));
+    }
+    PointCloud::Ptr mutable_scan = scan;
+    Eigen::Isometry3d pose = optimized_poses[index].second;
+    offline_model_->run(mutable_scan, pose);
+    return Result<void>::Ok();
+  });
+  if (!processed) {
+    return Result<PointCloud::Ptr>::Failure(processed.GetError());
+  }
+  if (processed.Value() != optimized_poses.size()) {
+    return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
+        "raw scan and optimized pose counts differ"));
+  }
+  return Result<PointCloud::Ptr>::Ok(offline_model_->getStaticMap());
+}
+
 Result<std::shared_ptr<IOfflineRemoverPlugin>> DynamicRemoverOffline::loadModule(
     const std::string& so_name, const std::string& config_json) {
   return load_plugin_v1<IOfflineRemoverPlugin>(

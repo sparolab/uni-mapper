@@ -19,6 +19,9 @@ class DataLoaderFile : public DataLoaderBase {
                                const fs::path& data_dir) override;
   Result<PoseVec> loadPoseData(fs::path data_dir_path);
   Result<ScanVec> loadRawScanData(fs::path data_dir_path) override;
+  Result<std::size_t> VisitRawScanData(
+      const fs::path& data_dir_path,
+      const RawScanVisitor& visitor) override;
   Result<ScanVec> loadFilteredScanData(fs::path data_dir_path);
   std::function<Eigen::Isometry3d(std::vector<double>&)> transformFunctor;
   std::function<pcl::PointCloud<pcl::PointXYZI>::Ptr(std::string)>

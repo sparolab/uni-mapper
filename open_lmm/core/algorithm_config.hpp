@@ -3,6 +3,7 @@
 #include <Eigen/Geometry>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -23,10 +24,12 @@ struct DataLoaderConfig {
   float min_range = 0.0F;
   float max_range = 100.0F;
   std::string delimiter = " ";
+  bool show_progress = true;
 };
 
 struct LoopDetectorConfig {
   std::string type;
+  std::string plugin_abi = "auto";
   std::size_t num_candidates = 5;
   double distance_threshold = 0.13;
   std::size_t kdtree_rebuild_threshold = 50;
@@ -54,15 +57,26 @@ struct OptimizerConfig {
   int icp_search_num = 3;
 };
 
+enum class PluginThreadSafety : uint8_t {
+  kSingleThreadOnly,
+  kInstanceIsolatedParallel,
+  kReentrantSharedInstance,
+};
+
 struct DynamicRemoverConfig {
   std::string type;
   std::string model;
   std::string plugin_config_json;
+  PluginThreadSafety thread_safety = PluginThreadSafety::kSingleThreadOnly;
+  std::size_t internal_cpu_threads = 1;
 };
 
 struct MapSaveConfig {
   bool enable_map_updater = false;
   double save_voxel_size = 0.2;
+  bool parallel_data_load = false;
+  bool parallel_map_update = false;
+  std::size_t max_parallel_agents = 1;
 };
 
 Result<DataLoaderConfig> ParseDataLoaderConfig(const Config& config);

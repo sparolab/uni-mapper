@@ -73,6 +73,7 @@ struct Config {
   double tf_z = 0.0;
   
   bool is_large_scale_ = false;
+  int internal_cpu_threads = 1;
 };
 
 }  // namespace common

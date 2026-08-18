@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <open_lmm/common/agent_context.hpp>
 #include <open_lmm/common/agent_data.hpp>
@@ -16,6 +17,9 @@ namespace open_lmm {
 
 class DataLoaderBase {
  public:
+  using RawScanVisitor = std::function<Result<void>(
+      std::size_t, const pcl::PointCloud<pcl::PointXYZI>::Ptr&)>;
+
   DataLoaderBase() = default;
   virtual ~DataLoaderBase() = default;
 
@@ -25,6 +29,8 @@ class DataLoaderBase {
 
   // MapUpdater가 raw 스캔만 다시 읽을 때 사용
   virtual Result<ScanVec> loadRawScanData(fs::path data_dir_path) = 0;
+  virtual Result<std::size_t> VisitRawScanData(
+      const fs::path& data_dir_path, const RawScanVisitor& visitor);
 
   static Result<std::unique_ptr<DataLoaderBase>> createInstance(
       const DataLoaderConfig& config);

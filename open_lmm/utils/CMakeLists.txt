@@ -28,6 +28,7 @@ find_package(spdlog REQUIRED)
 
 add_library(open_lmm_utils SHARED)
 target_sources(open_lmm_utils PRIVATE
+  bounded_executor.cpp
   config.cpp
   config_schema.cpp
   config_schema_catalog.cpp

@@ -1,12 +1,15 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
+#include <optional>
 
 #include <open_lmm/server/stage_runner.hpp>
 
 namespace open_lmm {
 
 class StageExecutor;
+class ResourceGovernor;
 
 // Public runtime façade. Session ownership, transaction commits, algorithm
 // assembly, output persistence and visualization snapshots live in the
@@ -14,6 +17,10 @@ class StageExecutor;
 class MapServer final : public StageRunner {
  public:
   MapServer();
+  explicit MapServer(
+      std::filesystem::path config_directory,
+      std::optional<std::filesystem::path> output_directory = std::nullopt,
+      std::shared_ptr<ResourceGovernor> resource_governor = {});
   ~MapServer() override;
 
   MapServer(const MapServer&) = delete;

@@ -3,6 +3,18 @@
 
 namespace open_lmm {
 
+Result<std::size_t> DataLoaderBase::VisitRawScanData(
+    const fs::path& data_dir_path, const RawScanVisitor& visitor) {
+  auto loaded = loadRawScanData(data_dir_path);
+  if (!loaded) return Result<std::size_t>::Failure(loaded.GetError());
+  auto scans = std::move(loaded).Value();
+  for (std::size_t index = 0; index < scans.size(); ++index) {
+    auto visited = visitor(index, scans[index]);
+    if (!visited) return Result<std::size_t>::Failure(visited.GetError());
+  }
+  return Result<std::size_t>::Ok(scans.size());
+}
+
 // TODO(gil) : add DataLoaderRosbag
 Result<std::unique_ptr<DataLoaderBase>> DataLoaderBase::createInstance(
     const DataLoaderConfig& config) {

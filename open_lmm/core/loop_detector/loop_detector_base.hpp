@@ -35,4 +35,6 @@ class LoopDetectorBase {
       const LoopDetectorConfig& config);
 };
 
+Result<void> InspectDescriptorPlugin(const LoopDetectorConfig& config);
+
 }  // namespace open_lmm

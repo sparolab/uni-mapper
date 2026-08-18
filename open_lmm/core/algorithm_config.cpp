@@ -128,6 +128,8 @@ Result<LoopDetectorConfig> ParseLoopDetectorConfig(const Config& source) {
     LoopDetectorConfig config;
     config.type = source.param<std::string>(
         "loop_detector", "loop_detector_type", "");
+    config.plugin_abi = source.param<std::string>(
+        "loop_detector", "plugin_abi", "auto");
     const int num_candidates = source.param<int>(
         "database", "num_candidates", 5);
     const int rebuild_threshold = source.param<int>(
@@ -170,7 +172,9 @@ Result<LoopDetectorConfig> ParseLoopDetectorConfig(const Config& source) {
     if (config.type != "kdtree") {
       throw std::invalid_argument("loop_detector_type must be kdtree");
     }
-    if (num_candidates <= 0 || rebuild_threshold <= 0 ||
+    if ((config.plugin_abi != "auto" && config.plugin_abi != "v1" &&
+         config.plugin_abi != "v2") ||
+        num_candidates <= 0 || rebuild_threshold <= 0 ||
         max_candidates < 0 || config.distance_threshold < 0.0 ||
         config.model.empty() || config.pcm_translation_threshold <= 0.0 ||
         config.pcm_rotation_threshold_deg <= 0.0 ||
@@ -226,15 +230,24 @@ Result<DynamicRemoverConfig> ParseDynamicRemoverConfig(const Config& source) {
     config.type = source.param<std::string>(
         "dynamic_remover", "dynamic_remover_type", "");
     config.model = source.param<std::string>("dynamic_remover", "model", "");
+    const int internal_cpu_threads = config.model == "erasor"
+        ? source.param<int>("dynamic_remover", "internal_cpu_threads", 1)
+        : 1;
     config.plugin_config_json = source.ToJson();
     if ((config.type != "offline" && config.type != "online") ||
-        config.model.empty()) {
+        config.model.empty() || internal_cpu_threads <= 0) {
       throw std::invalid_argument(
-          "type must be offline or online and model must be non-empty");
+          "type/model must be valid and internal_cpu_threads must be positive");
     }
+    config.internal_cpu_threads =
+        static_cast<std::size_t>(internal_cpu_threads);
     auto plugin = ValidateDynamicRemoverPluginSelection(
         config.type, config.model);
     if (!plugin) throw std::invalid_argument(plugin.GetError().Message());
+    if (config.model == "erasor") {
+      config.thread_safety =
+          PluginThreadSafety::kInstanceIsolatedParallel;
+    }
     return config;
   });
 }
@@ -246,9 +259,18 @@ Result<MapSaveConfig> ParseMapSaveConfig(const Config& source) {
         "map_server", "enable_map_updater", true);
     config.save_voxel_size = source.param<double>(
         "map_server", "save_voxel_size", 0.2);
-    if (config.save_voxel_size <= 0.0) {
-      throw std::invalid_argument("save_voxel_size must be positive");
+    config.parallel_data_load = source.param<bool>(
+        "map_server", "parallel_data_load", false);
+    config.parallel_map_update = source.param<bool>(
+        "map_server", "parallel_map_update", false);
+    const int max_parallel_agents = source.param<int>(
+        "map_server", "max_parallel_agents", 1);
+    if (config.save_voxel_size <= 0.0 || max_parallel_agents <= 0) {
+      throw std::invalid_argument(
+          "save_voxel_size and max_parallel_agents must be positive");
     }
+    config.max_parallel_agents =
+        static_cast<std::size_t>(max_parallel_agents);
     return config;
   });
 }

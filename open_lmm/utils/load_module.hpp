@@ -8,6 +8,7 @@
 
 #include <open_lmm/common/plugin_api.h>
 #include <open_lmm/common/result.hpp>
+#include <open_lmm/utils/logging.hpp>
 
 namespace open_lmm {
 
@@ -46,6 +47,7 @@ inline std::string PluginString(const char* value) {
 // before any stage starts.
 inline Result<PluginMetadata> inspect_plugin_v1(
     const std::string& so_name, const std::string& expected_kind) {
+  LogWarning("[plugin ABI v1] same-toolchain compatibility mode: " + so_name);
   void* raw = dlopen(so_name.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!raw) {
     const char* error = dlerror();
@@ -103,6 +105,7 @@ Result<std::shared_ptr<Module>> load_plugin_v1(
     const std::string& so_name, const std::string& expected_kind,
     const std::string& config_json, PluginMetadata* metadata = nullptr,
     void* host_context = nullptr) {
+  LogWarning("[plugin ABI v1] same-toolchain compatibility mode: " + so_name);
   void* raw = dlopen(so_name.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!raw) {
     const char* error = dlerror();

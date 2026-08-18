@@ -145,7 +145,7 @@ void ErasorCore::voi2r_pod(const pcl::PointCloud<PointT>& src, R_POD& r_pod,
 void ErasorCore::compare_vois_and_revert_ground_w_block() {
   dynamic_viz.points.clear();
   ground_viz.points.clear();
-#pragma omp parallel for
+#pragma omp parallel for num_threads(cfg_.internal_cpu_threads)
   for (int theta = 0; theta < cfg_.num_sectors_; theta++) {
     for (int r = 0; r < cfg_.num_rings_; r++) {
       // Min. num of pts criteria.

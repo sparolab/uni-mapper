@@ -1,6 +1,7 @@
 #include <open_lmm/gui/gui_model.hpp>
 #include <open_lmm/common/agent_id.hpp>
 #include <open_lmm/server/stage_runner.hpp>
+#include <open_lmm/server/runtime_service.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
 #include <type_traits>
@@ -26,6 +27,14 @@ int main() {
       !telemetry.cancel_completed_at_unix_ns) {
     return 6;
   }
+  auto session_id = open_lmm::SessionId::Parse(
+      "01234567-89ab-4def-8123-456789abcdef");
+  if (!session_id) return 7;
+  open_lmm::ResourceGovernor governor(
+      open_lmm::ResourceBudget{1, 2, 2, 1024});
+  if (!governor.TryAcquireSession() || governor.TryAcquireSession()) return 8;
+  if (governor.AgentExecutor().Snapshot().worker_count != 2) return 9;
+  governor.ReleaseSession();
   open_lmm::GuiModel model;
   return model.CanSubmitCommand() ? 0 : 1;
 }

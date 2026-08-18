@@ -27,6 +27,31 @@ int main(int argc, char** argv) {
   Check(!open_lmm::ValidateDynamicRemoverPluginSelection(
              "online", "free_dom"),
         "known offline remover rejects an online module combination");
+  auto erasor = open_lmm::ParseDynamicRemoverConfig(
+      open_lmm::Config::FromJson(
+          R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"erasor"}})"));
+  Check(erasor && erasor.Value().thread_safety ==
+                       open_lmm::PluginThreadSafety::kInstanceIsolatedParallel,
+        "ERASOR declares task-instance isolated parallel capability");
+  Check(erasor && erasor.Value().internal_cpu_threads == 1,
+        "ERASOR defaults to one internally managed CPU thread");
+  auto two_internal_threads = open_lmm::ParseDynamicRemoverConfig(
+      open_lmm::Config::FromJson(
+          R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"erasor","internal_cpu_threads":2}})"));
+  Check(two_internal_threads &&
+            two_internal_threads.Value().internal_cpu_threads == 2,
+        "ERASOR internal CPU thread request is preserved");
+  auto invalid_internal_threads = open_lmm::ParseDynamicRemoverConfig(
+      open_lmm::Config::FromJson(
+          R"({"dynamic_remover":{"dynamic_remover_type":"offline","model":"erasor","internal_cpu_threads":0}})"));
+  Check(!invalid_internal_threads,
+        "zero ERASOR internal CPU threads are rejected");
+  auto external = open_lmm::ParseDynamicRemoverConfig(
+      open_lmm::Config::FromJson(
+          R"({"dynamic_remover":{"dynamic_remover_type":"online","model":"external_remover"}})"));
+  Check(external && external.Value().thread_safety ==
+                         open_lmm::PluginThreadSafety::kSingleThreadOnly,
+        "unverified remover defaults to single-thread-only capability");
 
   for (int index = 1; index < argc; ++index) {
     const std::string selection = argv[index];

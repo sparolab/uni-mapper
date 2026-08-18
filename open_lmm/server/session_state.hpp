@@ -11,6 +11,7 @@
 #include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
 #include <open_lmm/core/algorithm_config.hpp>
 #include <open_lmm/server/stage_runner.hpp>
+#include <open_lmm/server/resource_governor.hpp>
 
 namespace open_lmm {
 
@@ -20,6 +21,9 @@ struct SessionRootConfig {
   int anchor_agent_index = 0;
   bool enable_map_updater = false;
   double save_voxel_size = 0.2;
+  bool parallel_data_load = false;
+  bool parallel_map_update = false;
+  std::size_t max_parallel_agents = 1;
 };
 
 // Immutable, validated configuration snapshot owned by one runtime session.
@@ -42,6 +46,8 @@ struct SessionPayload {
   std::vector<AgentPipelineCtx> contexts;
   std::shared_ptr<const SharedDatabase> database;
   std::shared_ptr<BackendOptimizerBase> optimizer;
+  std::map<AgentId, std::shared_ptr<MemoryReservation>>
+      resident_memory_reservations;
 };
 
 struct SessionState {

@@ -167,13 +167,20 @@ Result<ScanVec> DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
   auto raw_scans = std::move(raw_result).Value();
   ScanVec p_filtered_scans;
 
-  auto T = tq::tqdm(raw_scans);
-  T.set_prefix("Data Loader");
-  for (auto scan : T) {
-    p_filtered_scans.push_back(downsampleWithRangeFilter(
-        scan, param_.voxel_size, param_.min_range, param_.max_range));
+  if (param_.show_progress) {
+    auto progress = tq::tqdm(raw_scans);
+    progress.set_prefix("Data Loader");
+    for (auto scan : progress) {
+      p_filtered_scans.push_back(downsampleWithRangeFilter(
+          scan, param_.voxel_size, param_.min_range, param_.max_range));
+    }
+    progress.finish();
+  } else {
+    for (const auto& scan : raw_scans) {
+      p_filtered_scans.push_back(downsampleWithRangeFilter(
+          scan, param_.voxel_size, param_.min_range, param_.max_range));
+    }
   }
-  T.finish();
   return Result<ScanVec>::Ok(std::move(p_filtered_scans));
 }
 
@@ -214,6 +221,43 @@ Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
   }
 
   return Result<ScanVec>::Ok(std::move(raw_scans));
+}
+
+Result<std::size_t> DataLoaderFile::VisitRawScanData(
+    const fs::path& data_dir_path, const RawScanVisitor& visitor) {
+  OPEN_LMM_ZONE_N("DataLoader.StreamRawScans");
+  const fs::path scan_dir_path = data_dir_path / param_.scan_dir_name;
+  if (!fs::exists(scan_dir_path) || !fs::is_directory(scan_dir_path)) {
+    return Result<std::size_t>::Failure(
+        Error::FileNotFound(scan_dir_path.string()));
+  }
+  std::vector<fs::path> scan_files;
+  for (const auto& scan_file : fs::directory_iterator(scan_dir_path)) {
+    if (scan_file.is_regular_file() &&
+        scan_file.path().extension().string().substr(1) == param_.scan_type) {
+      scan_files.push_back(scan_file.path());
+    }
+  }
+  std::sort(scan_files.begin(), scan_files.end());
+  if (scan_files.empty()) {
+    return Result<std::size_t>::Failure(Error::InvalidArgument(
+        "No ." + param_.scan_type + " scan files found in " +
+        scan_dir_path.string()));
+  }
+  for (std::size_t index = 0; index < scan_files.size(); ++index) {
+    try {
+      auto scan = convertScanFunctor(scan_files[index].string());
+      auto visited = visitor(index, scan);
+      if (!visited) {
+        return Result<std::size_t>::Failure(visited.GetError());
+      }
+    } catch (const std::exception& error) {
+      return Result<std::size_t>::Failure(Error::IoError(
+          "agent data " + data_dir_path.string() + ", scan " +
+          scan_files[index].string() + ": " + error.what()));
+    }
+  }
+  return Result<std::size_t>::Ok(scan_files.size());
 }
 
 }  // namespace open_lmm

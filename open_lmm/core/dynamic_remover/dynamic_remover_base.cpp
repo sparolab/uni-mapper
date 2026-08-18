@@ -5,6 +5,24 @@
 
 namespace open_lmm {
 
+Result<DynamicRemoverBase::PointCloud::Ptr>
+DynamicRemoverBase::processStreaming(
+    const RawScanSource& source,
+    const std::vector<std::pair<int, Eigen::Isometry3d>>& optimized_poses,
+    const HeavyPhaseAdmission&) {
+  ScanVec scans;
+  auto loaded = source([&](std::size_t, const PointCloud::Ptr& scan) {
+    scans.push_back(scan);
+    return Result<void>::Ok();
+  });
+  if (!loaded) return Result<PointCloud::Ptr>::Failure(loaded.GetError());
+  if (loaded.Value() != optimized_poses.size()) {
+    return Result<PointCloud::Ptr>::Failure(Error::InvalidArgument(
+        "raw scan and optimized pose counts differ"));
+  }
+  return Result<PointCloud::Ptr>::Ok(process(scans, optimized_poses));
+}
+
 Result<std::shared_ptr<DynamicRemoverBase>> DynamicRemoverBase::createInstance(
     const DynamicRemoverConfig& config) {
   if (config.type == "offline") {

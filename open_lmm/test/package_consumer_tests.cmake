@@ -55,7 +55,7 @@ endforeach()
 file(READ
   "${install_prefix}/share/open_lmm/open_lmm-install-components.txt"
   install_components)
-foreach(component IN ITEMS Runtime Development Plugins Tools)
+foreach(component IN ITEMS Runtime Development PluginSDK Plugins Tools)
   string(FIND "${install_components}" "${component}" component_found)
   if(component_found EQUAL -1)
     message(FATAL_ERROR
@@ -76,6 +76,8 @@ foreach(third_party_license IN ITEMS
 endforeach()
 
 set(versioned_runtime_libraries
+  open_lmm_contracts
+  open_lmm_client
   open_lmm_common
   open_lmm_algorithm_config
   open_lmm_utils
@@ -147,3 +149,47 @@ execute_process(
 if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "package consumer run failed: ${run_result}")
 endif()
+foreach(light_consumer IN ITEMS
+    open_lmm_contracts_consumer open_lmm_client_consumer
+    open_lmm_plugin_sdk_consumer)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
+            "${consumer_build}/${light_consumer}"
+    RESULT_VARIABLE light_run_result)
+  if(NOT light_run_result EQUAL 0)
+    message(FATAL_ERROR
+      "installed ${light_consumer} could not run: ${light_run_result}")
+  endif()
+endforeach()
+
+# Configure each lightweight surface independently. This catches accidental
+# package-config discovery of Eigen/PCL/GTSAM for contracts/client/plugin SDK.
+foreach(component IN ITEMS contracts client plugin_sdk)
+  set(component_build "${OPEN_LMM_PACKAGE_TEST_ROOT}/${component}-only-build")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+            -S "${consumer_source}/${component}_only"
+            -B "${component_build}"
+            "-DCMAKE_PREFIX_PATH=${install_prefix}"
+            ${consumer_compiler_args}
+    RESULT_VARIABLE component_configure_result)
+  if(NOT component_configure_result EQUAL 0)
+    message(FATAL_ERROR
+      "${component}-only consumer configure failed: ${component_configure_result}")
+  endif()
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${component_build}" --parallel 1
+    RESULT_VARIABLE component_build_result)
+  if(NOT component_build_result EQUAL 0)
+    message(FATAL_ERROR
+      "${component}-only consumer build failed: ${component_build_result}")
+  endif()
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
+            "${component_build}/${component}_only"
+    RESULT_VARIABLE component_run_result)
+  if(NOT component_run_result EQUAL 0)
+    message(FATAL_ERROR
+      "${component}-only consumer run failed: ${component_run_result}")
+  endif()
+endforeach()

@@ -128,6 +128,100 @@ foreach(forbidden "SessionManager" "OutputRepository" "state_mutex_")
   endif()
 endforeach()
 
+# Session execution owns immutable config state. GlobalConfig is permitted only
+# in the legacy MapServer entry constructor for config-directory discovery.
+assert_file_excludes(
+  "server/stage_executor.hpp"
+  "GlobalConfig")
+assert_file_excludes(
+  "server/stage_executor.cpp"
+  "GlobalConfig")
+assert_file_excludes(
+  "server/runtime_service.hpp"
+  "GlobalConfig"
+  "open_lmm/core/")
+assert_file_excludes(
+  "server/runtime_service.cpp"
+  "GlobalConfig"
+  "open_lmm/core/")
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/runtime_service.hpp"
+  runtime_service_header)
+foreach(expected
+    "class RuntimeService"
+    "CloseMode"
+    "std::map<SessionId, std::shared_ptr<RuntimeSession>> sessions_")
+  string(FIND "${runtime_service_header}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "RuntimeService contract must contain: ${expected}")
+  endif()
+endforeach()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/common/runtime_contracts.hpp"
+  runtime_contracts_header)
+string(FIND "${runtime_contracts_header}" "class SessionId" found_session_id)
+if(found_session_id EQUAL -1)
+  message(FATAL_ERROR "Lightweight runtime contracts must contain SessionId")
+endif()
+foreach(lightweight_header IN ITEMS
+    common/agent_id.hpp common/result.hpp common/runtime_contracts.hpp
+    common/plugin_api_v2.h common/plugin_host_v2.hpp server/runtime_client.hpp)
+  assert_file_excludes("${lightweight_header}"
+    "Eigen/" "pcl/" "gtsam/" "rclcpp/" "open_lmm/core/")
+endforeach()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/resource_governor.hpp"
+  resource_governor_header)
+foreach(expected
+    "struct ResourceBudget"
+    "max_active_sessions"
+    "max_agent_tasks"
+    "max_cpu_threads"
+    "soft_memory_bytes"
+    "BoundedExecutor agent_executor_"
+    "AcquireHeavyMemoryPhase")
+  string(FIND "${resource_governor_header}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "ResourceGovernor contract must contain: ${expected}")
+  endif()
+endforeach()
+assert_file_excludes(
+  "utils/bounded_executor.cpp"
+  "std::async"
+  ".detach(")
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/stage_executor.cpp"
+  stage_executor_source)
+foreach(expected
+    "runParallelDataLoad"
+    "runParallelMapUpdate"
+    "internal_cpu_threads"
+    "parallel MapUpdate requires allowlisted remover 'erasor'")
+  string(FIND "${stage_executor_source}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "bounded stage execution must contain: ${expected}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/core/data_loader/data_loader_base.hpp"
+  data_loader_header)
+string(FIND "${data_loader_header}" "VisitRawScanData" raw_scan_streaming)
+if(raw_scan_streaming EQUAL -1)
+  message(FATAL_ERROR "MapUpdate raw scans must expose bounded streaming")
+endif()
+string(FIND "${stage_executor_source}"
+  "Result<void> StageExecutor::runAlignmentStage()" alignment_start)
+string(FIND "${stage_executor_source}"
+  "Result<void> StageExecutor::prepareAlignmentArtifacts" alignment_end)
+if(alignment_start EQUAL -1 OR alignment_end EQUAL -1 OR
+   alignment_end LESS_EQUAL alignment_start)
+  message(FATAL_ERROR "could not locate the ordered Alignment stage boundary")
+endif()
+math(EXPR alignment_length "${alignment_end} - ${alignment_start}")
+string(SUBSTRING "${stage_executor_source}" ${alignment_start}
+  ${alignment_length} alignment_stage)
+string(FIND "${alignment_stage}" "AgentExecutor" parallel_alignment)
+if(NOT parallel_alignment EQUAL -1)
+  message(FATAL_ERROR "Alignment must remain sequential")
+endif()
+
 file(READ "${OPEN_LMM_SOURCE_DIR}/cmake/options.cmake" build_options)
 foreach(expected
     "OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT"

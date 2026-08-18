@@ -7,7 +7,6 @@
 
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
-#include <open_lmm/common/validation.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
 #include <open_lmm/utils/logging.hpp>
@@ -17,12 +16,14 @@ namespace open_lmm {
 MapUpdateNode::MapUpdateNode(std::unique_ptr<DataLoaderBase> loader,
                              RemoverFactory remover_factory,
                              const std::string& save_dir,
-                             double save_voxel_size, bool defer_commit)
+                             double save_voxel_size, bool defer_commit,
+                             HeavyPhaseAdmission heavy_phase_admission)
     : loader_(std::move(loader)),
       remover_factory_(std::move(remover_factory)),
       save_dir_(save_dir),
       save_voxel_size_(save_voxel_size),
-      defer_commit_(defer_commit) {}
+      defer_commit_(defer_commit),
+      heavy_phase_admission_(std::move(heavy_phase_admission)) {}
 
 MapUpdateNode::~MapUpdateNode() = default;
 
@@ -36,19 +37,6 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
     return Result<ControlFlow>::Ok(ControlFlow::kSkip);
   }
 
-  auto raw_result = loader_->loadRawScanData(ctx.data_dir);
-  if (!raw_result) return Result<ControlFlow>::Failure(raw_result.GetError());
-  if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-    return Result<ControlFlow>::Failure(
-        Error::Cancelled("after raw scan load"));
-  }
-  auto raw_scans = std::move(raw_result).Value();
-  auto count_result = ValidateScanPoseCount(
-      raw_scans.size(), it->second->optimized_poses.size(),
-      ctx.data_dir.string());
-  if (!count_result) {
-    return Result<ControlFlow>::Failure(count_result.GetError());
-  }
   auto remover_result = remover_factory_();
   if (!remover_result) {
     return Result<ControlFlow>::Failure(remover_result.GetError());
@@ -57,8 +45,25 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map;
   {
     OPEN_LMM_ZONE_N("MapUpdate.RemoverProcess");
-    static_map =
-        dynamic_remover->process(raw_scans, it->second->optimized_poses);
+    auto processed = dynamic_remover->processStreaming(
+        [&](const DynamicRemoverBase::RawScanVisitor& visitor) {
+          return loader_->VisitRawScanData(
+              ctx.data_dir,
+              [&](std::size_t index,
+                  const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan) {
+                if (ctx.cancellation &&
+                    ctx.cancellation->IsCancellationRequested()) {
+                  return Result<void>::Failure(
+                      Error::Cancelled("during raw scan streaming"));
+                }
+                return visitor(index, scan);
+              });
+        },
+        it->second->optimized_poses, heavy_phase_admission_);
+    if (!processed) {
+      return Result<ControlFlow>::Failure(processed.GetError());
+    }
+    static_map = std::move(processed).Value();
   }
   if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
     return Result<ControlFlow>::Failure(

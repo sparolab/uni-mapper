@@ -15,6 +15,11 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
   pcl::PointCloud<pcl::PointXYZI>::Ptr process(
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) override;
+  Result<PointCloud::Ptr> processStreaming(
+      const RawScanSource& source,
+      const std::vector<std::pair<int, Eigen::Isometry3d>>& optimized_poses,
+      const HeavyPhaseAdmission& heavy_phase_admission)
+      override;
   pcl::PointCloud<pcl::PointXYZI>::Ptr genRawMap(
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);

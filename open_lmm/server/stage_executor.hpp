@@ -11,6 +11,7 @@
 #include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
 #include <open_lmm/server/artifact_repository.hpp>
 #include <open_lmm/server/output_repository.hpp>
+#include <open_lmm/server/resource_governor.hpp>
 #include <open_lmm/server/session_manager.hpp>
 #include <open_lmm/server/session_state.hpp>
 #include <open_lmm/server/stage_runner.hpp>
@@ -24,7 +25,10 @@ namespace open_lmm {
 // component so its public StageRunner surface remains a thin façade.
 class StageExecutor {
  public:
-  StageExecutor();
+  StageExecutor(std::filesystem::path config_directory,
+                std::optional<std::filesystem::path> output_directory =
+                    std::nullopt,
+                std::shared_ptr<ResourceGovernor> resource_governor = {});
   ~StageExecutor();
 
   Result<void> process();
@@ -45,10 +49,16 @@ class StageExecutor {
 
  private:
   void parseConfig();
+  [[nodiscard]] fs::path configPath(const std::string& config_name) const;
   std::vector<AgentPipelineCtx> buildContexts() const;
   Result<void> ensureReady();
   Result<void> validateInputFiles() const;
   Result<void> runDataLoadStage();
+  Result<void> runParallelDataLoad(
+      const std::shared_ptr<const SessionState>& base,
+      std::vector<AgentPipelineCtx>& contexts, SharedDatabase& database,
+      std::map<AgentId, std::shared_ptr<MemoryReservation>>& reservations,
+      const std::shared_ptr<CancellationToken>& cancellation);
   Result<void> runAlignmentStage();
   Result<void> runLoopDetectThrough(const AgentId& target_agent);
   Result<void> prepareAlignmentArtifacts(
@@ -58,6 +68,10 @@ class StageExecutor {
   void loadAlignmentCache();
   void installStoredAlignments(SharedDatabase& database) const;
   Result<void> runMapUpdateStage();
+  Result<void> runParallelMapUpdate(
+      const std::shared_ptr<const SessionState>& base,
+      std::vector<AgentPipelineCtx>& contexts, SharedDatabase& database,
+      const std::shared_ptr<CancellationToken>& cancellation);
   Result<void> runSaveStage();
   Result<void> runOptimizeThrough(const AgentId& target_agent);
   void publishVisualizationState(
@@ -84,6 +98,9 @@ class StageExecutor {
   };
 
   int agent_num_ = 0;
+  fs::path config_directory_;
+  std::optional<fs::path> output_directory_override_;
+  std::optional<Config> root_config_;
   std::vector<AgentId> configured_agent_ids_;
   std::vector<AgentId> agent_ids_;
   AgentSymbolCatalogHandle agent_catalog_;
@@ -98,6 +115,10 @@ class StageExecutor {
   bool enable_map_updater_ = false;
   int anchor_agent_index_ = 0;
   double save_voxel_size_ = 0.2;
+  bool parallel_data_load_ = false;
+  bool parallel_map_update_ = false;
+  std::size_t max_parallel_agents_ = 1;
+  std::shared_ptr<ResourceGovernor> resource_governor_;
   std::shared_ptr<CancellationToken> cancellation_;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback_;
 

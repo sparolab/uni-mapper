@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
+#include <limits>
 #include <sstream>
 
 // Pipeline nodes
@@ -39,6 +40,88 @@ class ExecutionLease {
   std::atomic_flag& active_;
   bool acquired_;
 };
+
+class MemoryLease {
+ public:
+  MemoryLease(const std::shared_ptr<ResourceGovernor>& governor,
+              uint64_t bytes) {
+    if (!governor) return;
+    auto reservation = governor->ReserveMemory(bytes, MemoryClass::kHeavyMap);
+    if (reservation) {
+      reservation_.emplace(std::move(reservation).Value());
+    }
+  }
+  [[nodiscard]] explicit operator bool() const noexcept {
+    return reservation_.has_value();
+  }
+
+ private:
+  std::optional<MemoryReservation> reservation_;
+};
+
+class StageTiming {
+ public:
+  StageTiming(std::string stage, std::string mode, std::size_t concurrency)
+      : stage_(std::move(stage)),
+        mode_(std::move(mode)),
+        concurrency_(concurrency),
+        started_(std::chrono::steady_clock::now()) {}
+  ~StageTiming() {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - started_);
+    std::ostringstream message;
+    message << "[PROFILE] stage=" << stage_ << " mode=" << mode_
+            << " concurrency=" << concurrency_
+            << " elapsed_ms=" << std::fixed << std::setprecision(3)
+            << static_cast<double>(elapsed.count()) / 1000.0;
+    LogInfo(message.str());
+  }
+
+ private:
+  std::string stage_;
+  std::string mode_;
+  std::size_t concurrency_;
+  std::chrono::steady_clock::time_point started_;
+};
+
+uint64_t EstimateAgentMemory(const fs::path& directory) {
+  uint64_t bytes = 1;
+  std::error_code error;
+  fs::recursive_directory_iterator iterator(
+      directory, fs::directory_options::skip_permission_denied, error);
+  const fs::recursive_directory_iterator end;
+  while (!error && iterator != end) {
+    if (iterator->is_regular_file(error)) {
+      const uint64_t size = iterator->file_size(error);
+      if (!error) {
+        constexpr uint64_t kMultiplier = 2;
+        if (size > (std::numeric_limits<uint64_t>::max() - bytes) /
+                       kMultiplier) {
+          return std::numeric_limits<uint64_t>::max();
+        }
+        bytes += size * kMultiplier;
+      }
+    }
+    iterator.increment(error);
+  }
+  return bytes;
+}
+
+uint64_t ResidentRawDataBytes(const AgentRawData& raw) {
+  uint64_t bytes = sizeof(AgentRawData) + raw.agent_id.Value().capacity();
+  const auto add = [&bytes](uint64_t value) {
+    bytes = value > std::numeric_limits<uint64_t>::max() - bytes
+                ? std::numeric_limits<uint64_t>::max()
+                : bytes + value;
+  };
+  add(raw.odom_poses.capacity() * sizeof(Eigen::Isometry3d));
+  add(raw.filtered_scans.capacity() * sizeof(ScanVec::value_type));
+  for (const auto& scan : raw.filtered_scans) {
+    if (scan) add(scan->points.capacity() * sizeof(pcl::PointXYZI));
+  }
+  add(raw.map_points.capacity() * sizeof(Eigen::Vector3f));
+  return std::max<uint64_t>(bytes, 1);
+}
 
 void HashBytes(uint64_t& hash, const char* data, std::size_t size) {
   constexpr uint64_t kFnvPrime = 1099511628211ULL;
@@ -66,6 +149,19 @@ std::string HexFingerprint(uint64_t hash) {
   std::ostringstream output;
   output << std::hex << std::setfill('0') << std::setw(16) << hash;
   return output.str();
+}
+
+std::string AlignmentConfigFingerprint(const Config& data_loader,
+                                       const Config& loop_detector,
+                                       const Config& optimizer,
+                                       int anchor_agent_index) {
+  constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
+  uint64_t hash = kFnvOffset;
+  HashText(hash, data_loader.ToJson());
+  HashText(hash, loop_detector.ToJson());
+  HashText(hash, optimizer.ToJson());
+  HashText(hash, std::to_string(anchor_agent_index));
+  return HexFingerprint(hash);
 }
 
 std::optional<Eigen::Isometry3d> MatrixFromJson(const nlohmann::json& value) {
@@ -126,7 +222,12 @@ Result<void> WriteAgentManifest(const fs::path& output_directory,
 }
 }  // namespace
 
-StageExecutor::StageExecutor() {
+StageExecutor::StageExecutor(
+    fs::path config_directory, std::optional<fs::path> output_directory,
+    std::shared_ptr<ResourceGovernor> resource_governor)
+    : config_directory_(std::move(config_directory)),
+      output_directory_override_(std::move(output_directory)),
+      resource_governor_(std::move(resource_governor)) {
   InitializeLogging();
   try {
     parseConfig();
@@ -136,23 +237,39 @@ StageExecutor::StageExecutor() {
 }
 StageExecutor::~StageExecutor() {}
 
+fs::path StageExecutor::configPath(const std::string& config_name) const {
+  if (!root_config_) return {};
+  return config_directory_ /
+         root_config_->param<std::string>("global", config_name,
+                                          config_name + ".json");
+}
+
 void StageExecutor::parseConfig() {
-  auto* global = GlobalConfig::instance();
-  if (!global->is_valid()) {
-    initialization_error_ = Error::ParseError(global->error_message());
+  if (config_directory_.empty()) {
+    initialization_error_ =
+        Error::InvalidArgument("config directory must be non-empty");
+    return;
+  }
+  Config loaded_root((config_directory_ / "config.json").string());
+  if (!loaded_root.is_valid()) {
+    initialization_error_ = Error::ParseError(loaded_root.error_message());
     return;
   }
   auto root_document = BuiltinConfigSchemaRegistry().ParseAndValidate(
-      ConfigDocumentKind::kRoot, global->ToJson(), "config.json");
+      ConfigDocumentKind::kRoot, loaded_root.ToJson(),
+      (config_directory_ / "config.json").string());
   if (!root_document) {
     initialization_error_ = root_document.GetError();
     return;
   }
+  root_config_ = Config::FromJson(root_document.Value().Document().dump(),
+                                  (config_directory_ / "config.json").string());
+  auto& global = *root_config_;
   for (const char* config_name : {"config_map_server", "config_data_loader",
                                   "config_loop_detector",
                                   "config_backend_optimizer",
                                   "config_dynamic_remover"}) {
-    const auto path = global->param_cast<std::string>("global", config_name);
+    const auto path = global.param_cast<std::string>("global", config_name);
     if (path.empty()) {
       initialization_error_ = Error::InvalidArgument(
           std::string("global/") + config_name + " must be non-empty");
@@ -160,11 +277,11 @@ void StageExecutor::parseConfig() {
     }
   }
 
-  const fs::path root_data_dir = global->param_cast<std::string>(
+  const fs::path root_data_dir = global.param_cast<std::string>(
       "directory", "root_dir_path");
-  const auto sub_dirs = global->param_cast<std::vector<std::string>>(
+  const auto sub_dirs = global.param_cast<std::vector<std::string>>(
       "directory", "sub_dir_list");
-  const fs::path root_save_dir = global->param_cast<std::string>(
+  const fs::path root_save_dir = global.param_cast<std::string>(
       "directory", "root_save_dir");
   if (root_data_dir.empty() || root_save_dir.empty() || sub_dirs.empty()) {
     initialization_error_ = Error::InvalidArgument(
@@ -196,7 +313,9 @@ void StageExecutor::parseConfig() {
     }
   }
 
-  output_save_dir_ = (root_save_dir / global->date).string();
+  output_save_dir_ = output_directory_override_
+                         ? output_directory_override_->string()
+                         : (root_save_dir / global.create_date()).string();
   std::error_code directory_error;
   fs::create_directories(output_save_dir_, directory_error);
   if (directory_error || !fs::is_directory(output_save_dir_)) {
@@ -207,7 +326,7 @@ void StageExecutor::parseConfig() {
   }
   auto map_document = LoadValidatedConfig(
       ConfigDocumentKind::kMapServer,
-      GlobalConfig::get_global_config_path("config_map_server"));
+      configPath("config_map_server").string());
   if (!map_document) {
     initialization_error_ = map_document.GetError();
     return;
@@ -215,7 +334,7 @@ void StageExecutor::parseConfig() {
   config_map_server_ = std::move(map_document).Value();
   auto validated_map = BuiltinConfigSchemaRegistry().ParseAndValidate(
       ConfigDocumentKind::kMapServer, config_map_server_->ToJson(),
-      GlobalConfig::get_global_config_path("config_map_server"));
+      configPath("config_map_server").string());
   if (!validated_map) {
     initialization_error_ = validated_map.GetError();
     return;
@@ -248,10 +367,29 @@ void StageExecutor::parseConfig() {
         "map_server/save_voxel_size must be greater than zero");
     return;
   }
+  parallel_data_load_ = config_map_server_->param<bool>(
+      "map_server", "parallel_data_load", false);
+  parallel_map_update_ = config_map_server_->param<bool>(
+      "map_server", "parallel_map_update", false);
+  const int max_parallel_agents = config_map_server_->param<int>(
+      "map_server", "max_parallel_agents", 1);
+  if (max_parallel_agents <= 0) {
+    initialization_error_ = Error::InvalidArgument(
+        "map_server/max_parallel_agents must be greater than zero");
+    return;
+  }
+  max_parallel_agents_ = static_cast<std::size_t>(max_parallel_agents);
+  if (!resource_governor_) {
+    ResourceBudget budget;
+    budget.max_active_sessions = 1;
+    budget.max_agent_tasks = max_parallel_agents_;
+    budget.max_cpu_threads = max_parallel_agents_;
+    resource_governor_ = std::make_shared<ResourceGovernor>(budget);
+  }
 
   auto data_document = LoadValidatedConfig(
       ConfigDocumentKind::kDataLoader,
-      GlobalConfig::get_global_config_path("config_data_loader"));
+      configPath("config_data_loader").string());
   if (!data_document) {
     initialization_error_ = data_document.GetError();
     return;
@@ -259,7 +397,7 @@ void StageExecutor::parseConfig() {
   config_data_loader_ = std::move(data_document).Value();
   auto loop_document = LoadValidatedConfig(
       ConfigDocumentKind::kLoopDetector,
-      GlobalConfig::get_global_config_path("config_loop_detector"));
+      configPath("config_loop_detector").string());
   if (!loop_document) {
     initialization_error_ = loop_document.GetError();
     return;
@@ -267,7 +405,7 @@ void StageExecutor::parseConfig() {
   config_loop_detector_ = std::move(loop_document).Value();
   auto remover_document = LoadValidatedConfig(
       ConfigDocumentKind::kDynamicRemover,
-      GlobalConfig::get_global_config_path("config_dynamic_remover"));
+      configPath("config_dynamic_remover").string());
   if (!remover_document) {
     initialization_error_ = remover_document.GetError();
     return;
@@ -276,7 +414,7 @@ void StageExecutor::parseConfig() {
 
   auto optimizer_document = LoadValidatedConfig(
       ConfigDocumentKind::kBackendOptimizer,
-      GlobalConfig::get_global_config_path("config_backend_optimizer"));
+      configPath("config_backend_optimizer").string());
   if (!optimizer_document) {
     initialization_error_ = optimizer_document.GetError();
     return;
@@ -308,9 +446,8 @@ void StageExecutor::parseConfig() {
     initialization_error_ = map_save_config.GetError();
     return;
   }
-  auto descriptor_plugin = inspect_plugin_v1(
-      "libcreate_" + loop_detector_config.Value().model + ".so",
-      "descriptor");
+  auto descriptor_plugin = InspectDescriptorPlugin(
+      loop_detector_config.Value());
   if (!descriptor_plugin) {
     initialization_error_ = descriptor_plugin.GetError();
     return;
@@ -355,6 +492,9 @@ void StageExecutor::parseConfig() {
   session_config->root.anchor_agent_index = anchor_agent_index_;
   session_config->root.enable_map_updater = enable_map_updater_;
   session_config->root.save_voxel_size = save_voxel_size_;
+  session_config->root.parallel_data_load = parallel_data_load_;
+  session_config->root.parallel_map_update = parallel_map_update_;
+  session_config->root.max_parallel_agents = max_parallel_agents_;
   session_config->data_loader =
       std::make_shared<const DataLoaderConfig>(
           std::move(data_loader_config).Value());
@@ -386,16 +526,9 @@ void StageExecutor::parseConfig() {
 
 void StageExecutor::computeAlignmentFingerprints() {
   constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
-  uint64_t config_hash = kFnvOffset;
-  for (const char* name : {"config_map_server", "config_data_loader",
-                           "config_loop_detector", "config_backend_optimizer",
-                           "config_dynamic_remover"}) {
-    const auto path = GlobalConfig::get_global_config_path(name);
-    HashText(config_hash, path);
-    HashFile(config_hash, path);
-  }
-  HashText(config_hash, std::to_string(anchor_agent_index_));
-  alignment_config_fingerprint_ = HexFingerprint(config_hash);
+  alignment_config_fingerprint_ = AlignmentConfigFingerprint(
+      *config_data_loader_, *config_loop_detector_,
+      *config_backend_optimizer_, anchor_agent_index_);
 
   alignment_input_fingerprints_.clear();
   const auto pose_name = config_data_loader_->param<std::string>(
@@ -428,15 +561,18 @@ void StageExecutor::computeAlignmentFingerprints() {
     alignment_input_fingerprints_[configured_agent_ids_[i]] =
         HexFingerprint(input_hash);
   }
-  uint64_t session_hash = config_hash;
+  uint64_t session_hash = kFnvOffset;
+  HashText(session_hash, alignment_config_fingerprint_);
   for (const auto& [agent, fingerprint] : alignment_input_fingerprints_) {
     HashText(session_hash, agent.Value());
     HashText(session_hash, fingerprint);
   }
   alignment_session_fingerprint_ = HexFingerprint(session_hash);
-  const auto root_save_dir = GlobalConfig::instance()->param<std::string>(
-      "directory", "root_save_dir", "");
-  alignment_cache_path_ = fs::path(root_save_dir) / "map_alignment_cache.json";
+  const fs::path cache_root = output_directory_override_
+                                  ? *output_directory_override_
+                                  : fs::path(root_config_->param<std::string>(
+                                        "directory", "root_save_dir", ""));
+  alignment_cache_path_ = cache_root / "map_alignment_cache.json";
 }
 
 void StageExecutor::loadAlignmentCache() {
@@ -629,13 +765,10 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
     return Result<void>::Failure(
         Error::InvalidArgument("another MapServer operation is active"));
   }
-  const auto config_directory = GlobalConfig::config_directory();
-  if (config_directory.empty()) {
+  if (config_directory_.empty() || !root_config_) {
     return Result<void>::Failure(
-        Error::InvalidArgument("global config directory is unavailable"));
+        Error::InvalidArgument("session config directory is unavailable"));
   }
-  auto reloaded = GlobalConfig::reload(config_directory);
-  if (!reloaded) return reloaded;
   const auto base = committedState();
   SessionTransaction transaction(base);
   auto next_config = std::make_shared<SessionConfig>(*base->config);
@@ -645,61 +778,37 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
   }
   next_config->revision = revision;
 
-  if (domain == ConfigDomain::kLoopDetector ||
-      domain == ConfigDomain::kOptimizer) {
+  if (domain == ConfigDomain::kLoopDetector) {
     auto loop_document = LoadValidatedConfig(
         ConfigDocumentKind::kLoopDetector,
-        GlobalConfig::get_global_config_path("config_loop_detector"));
+        configPath("config_loop_detector").string());
     if (!loop_document)
       return Result<void>::Failure(loop_document.GetError());
     Config loop_config = std::move(loop_document).Value();
-    auto optimizer_document = LoadValidatedConfig(
-        ConfigDocumentKind::kBackendOptimizer,
-        GlobalConfig::get_global_config_path("config_backend_optimizer"));
-    if (!optimizer_document)
-      return Result<void>::Failure(optimizer_document.GetError());
-    Config optimizer_config = std::move(optimizer_document).Value();
     auto typed_loop_config = ParseLoopDetectorConfig(loop_config);
     if (!typed_loop_config) {
       return Result<void>::Failure(typed_loop_config.GetError());
     }
-    auto typed_optimizer_config = ParseOptimizerConfig(optimizer_config);
-    if (!typed_optimizer_config) {
-      return Result<void>::Failure(typed_optimizer_config.GetError());
-    }
-    auto optimizer = BackendOptimizerBase::createInstance(
-        typed_optimizer_config.Value());
+    auto optimizer = BackendOptimizerBase::createInstance(*base->config->optimizer);
     if (!optimizer) return Result<void>::Failure(optimizer.GetError());
 
-    config_loop_detector_ = std::move(loop_config);
-    config_backend_optimizer_ = std::move(optimizer_config);
     next_config->loop_detector =
         std::make_shared<const LoopDetectorConfig>(
             std::move(typed_loop_config).Value());
-    next_config->optimizer =
-        std::make_shared<const OptimizerConfig>(
-            std::move(typed_optimizer_config).Value());
+    next_config->fingerprint = AlignmentConfigFingerprint(
+        *config_data_loader_, loop_config, *config_backend_optimizer_,
+        anchor_agent_index_);
     auto contexts = base->payload->contexts;
-    std::shared_ptr<SharedDatabase> database;
-    if (domain == ConfigDomain::kLoopDetector) {
-      database = std::make_shared<SharedDatabase>();
-      database->raw_data = base->payload->database->raw_data;
-      for (auto& context : contexts) context.loop_output.reset();
-    } else {
-      database = std::make_shared<SharedDatabase>(
-          *base->payload->database);
-      database->optimized_data.clear();
-    }
-    computeAlignmentFingerprints();
-    cached_alignments_.clear();
-    loadAlignmentCache();
-    installStoredAlignments(*database);
+    auto database = std::make_shared<SharedDatabase>();
+    database->raw_data = base->payload->database->raw_data;
+    for (auto& context : contexts) context.loop_output.reset();
     auto payload = std::make_shared<SessionPayload>();
     payload->contexts = std::move(contexts);
     payload->database = std::move(database);
     payload->optimizer = std::shared_ptr<BackendOptimizerBase>(
         std::move(optimizer).Value());
-    next_config->fingerprint = alignment_config_fingerprint_;
+    payload->resident_memory_reservations =
+        base->payload->resident_memory_reservations;
     transaction.Working().config = std::move(next_config);
     transaction.SetPayload(std::move(payload));
     auto artifacts = artifactEditor(*base);
@@ -708,15 +817,59 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
     auto committed = commitTransaction(
         std::move(transaction), nullptr, false);
     if (!committed) return committed;
+    config_loop_detector_ = std::move(loop_config);
+    computeAlignmentFingerprints();
+    cached_alignments_.clear();
+    loadAlignmentCache();
     publishEmptyVisualizationState(committedState()->revision);
     return Result<void>::Ok();
   }
 
-  if (domain == ConfigDomain::kDynamicRemover ||
-      domain == ConfigDomain::kMapSave) {
+  if (domain == ConfigDomain::kOptimizer) {
+    auto optimizer_document = LoadValidatedConfig(
+        ConfigDocumentKind::kBackendOptimizer,
+        configPath("config_backend_optimizer").string());
+    if (!optimizer_document)
+      return Result<void>::Failure(optimizer_document.GetError());
+    Config optimizer_config = std::move(optimizer_document).Value();
+    auto typed_optimizer_config = ParseOptimizerConfig(optimizer_config);
+    if (!typed_optimizer_config)
+      return Result<void>::Failure(typed_optimizer_config.GetError());
+    auto optimizer = BackendOptimizerBase::createInstance(
+        typed_optimizer_config.Value());
+    if (!optimizer) return Result<void>::Failure(optimizer.GetError());
+    next_config->optimizer = std::make_shared<const OptimizerConfig>(
+        std::move(typed_optimizer_config).Value());
+    next_config->fingerprint = AlignmentConfigFingerprint(
+        *config_data_loader_, *config_loop_detector_, optimizer_config,
+        anchor_agent_index_);
+    auto database = std::make_shared<SharedDatabase>(
+        *base->payload->database);
+    database->optimized_data.clear();
+    auto payload = std::make_shared<SessionPayload>();
+    payload->contexts = base->payload->contexts;
+    payload->database = std::move(database);
+    payload->optimizer = std::shared_ptr<BackendOptimizerBase>(
+        std::move(optimizer).Value());
+    payload->resident_memory_reservations =
+        base->payload->resident_memory_reservations;
+    transaction.Working().config = std::move(next_config);
+    transaction.SetPayload(std::move(payload));
+    auto artifacts = artifactEditor(*base);
+    artifacts->ApplyConfig(domain, transaction.Working().config->revision);
+    transaction.Working().artifacts = artifacts->Snapshot();
+    auto committed = commitTransaction(std::move(transaction), nullptr, false);
+    if (!committed) return committed;
+    config_backend_optimizer_ = std::move(optimizer_config);
+    computeAlignmentFingerprints();
+    publishEmptyVisualizationState(committedState()->revision);
+    return Result<void>::Ok();
+  }
+
+  if (domain == ConfigDomain::kDynamicRemover) {
     auto remover_document = LoadValidatedConfig(
         ConfigDocumentKind::kDynamicRemover,
-        GlobalConfig::get_global_config_path("config_dynamic_remover"));
+        configPath("config_dynamic_remover").string());
     if (!remover_document)
       return Result<void>::Failure(remover_document.GetError());
     Config remover_config = std::move(remover_document).Value();
@@ -724,19 +877,33 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
     if (!typed_remover_config) {
       return Result<void>::Failure(typed_remover_config.GetError());
     }
+    next_config->dynamic_remover =
+        std::make_shared<const DynamicRemoverConfig>(
+            std::move(typed_remover_config).Value());
+    transaction.Working().config = std::move(next_config);
+    auto artifacts = artifactEditor(*base);
+    artifacts->ApplyConfig(domain, transaction.Working().config->revision);
+    transaction.Working().artifacts = artifacts->Snapshot();
+    auto committed = commitTransaction(std::move(transaction), nullptr, false);
+    if (!committed) return committed;
     config_dynamic_remover_ = std::move(remover_config);
+    publishVisualizationState(committedState(), false);
+    return Result<void>::Ok();
+  }
+
+  if (domain == ConfigDomain::kMapSave) {
     auto map_document = LoadValidatedConfig(
         ConfigDocumentKind::kMapServer,
-        GlobalConfig::get_global_config_path("config_map_server"));
+        configPath("config_map_server").string());
     if (!map_document)
       return Result<void>::Failure(map_document.GetError());
     Config map_config = std::move(map_document).Value();
     auto root_document = BuiltinConfigSchemaRegistry().ParseAndValidate(
-        ConfigDocumentKind::kRoot, GlobalConfig::instance()->ToJson(),
-        "config.json");
+        ConfigDocumentKind::kRoot, root_config_->ToJson(),
+        (config_directory_ / "config.json").string());
     auto validated_map = BuiltinConfigSchemaRegistry().ParseAndValidate(
         ConfigDocumentKind::kMapServer, map_config.ToJson(),
-        GlobalConfig::get_global_config_path("config_map_server"));
+        configPath("config_map_server").string());
     if (!root_document)
       return Result<void>::Failure(root_document.GetError());
     if (!validated_map)
@@ -748,6 +915,12 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
     if (!typed_map_config) {
       return Result<void>::Failure(typed_map_config.GetError());
     }
+    const int requested_anchor =
+        map_config.param<int>("map_server", "anchor_agent_index", 0);
+    if (requested_anchor != anchor_agent_index_) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "map_server/anchor_agent_index requires a new pipeline session"));
+    }
     const double save_voxel_size =
         map_config.param<double>("map_server", "save_voxel_size", 0.2);
     if (save_voxel_size <= 0.0) {
@@ -756,17 +929,20 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
     }
     const bool enable_map_updater =
         map_config.param<bool>("map_server", "enable_map_updater", true);
-    config_map_server_ = std::move(map_config);
-    save_voxel_size_ = save_voxel_size;
-    enable_map_updater_ = enable_map_updater;
+    const bool parallel_data_load =
+        typed_map_config.Value().parallel_data_load;
+    const bool parallel_map_update =
+        typed_map_config.Value().parallel_map_update;
+    const std::size_t max_parallel_agents =
+        typed_map_config.Value().max_parallel_agents;
     next_config->map_save =
         std::make_shared<const MapSaveConfig>(
             std::move(typed_map_config).Value());
-    next_config->dynamic_remover =
-        std::make_shared<const DynamicRemoverConfig>(
-            std::move(typed_remover_config).Value());
-    next_config->root.save_voxel_size = save_voxel_size_;
-    next_config->root.enable_map_updater = enable_map_updater_;
+    next_config->root.save_voxel_size = save_voxel_size;
+    next_config->root.enable_map_updater = enable_map_updater;
+    next_config->root.parallel_data_load = parallel_data_load;
+    next_config->root.parallel_map_update = parallel_map_update;
+    next_config->root.max_parallel_agents = max_parallel_agents;
     transaction.Working().config = std::move(next_config);
     auto artifacts = artifactEditor(*base);
     artifacts->ApplyConfig(domain, transaction.Working().config->revision);
@@ -774,7 +950,13 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
     auto committed = commitTransaction(
         std::move(transaction), nullptr, false);
     if (!committed) return committed;
-    publishEmptyVisualizationState(committedState()->revision);
+    config_map_server_ = std::move(map_config);
+    save_voxel_size_ = save_voxel_size;
+    enable_map_updater_ = enable_map_updater;
+    parallel_data_load_ = parallel_data_load;
+    parallel_map_update_ = parallel_map_update;
+    max_parallel_agents_ = max_parallel_agents;
+    publishVisualizationState(committedState(), false);
     return Result<void>::Ok();
   }
 
@@ -952,8 +1134,20 @@ Result<void> StageExecutor::RunNode(NodeId node, std::optional<AgentId> agent) {
     auto loader = DataLoaderBase::createInstance(*base->config->data_loader);
     if (!loader) return Result<void>::Failure(loader.GetError());
     DataLoadNode load_node(std::move(loader).Value());
+    auto admitted = resource_governor_->ReserveMemory(
+        EstimateAgentMemory(working->data_dir), MemoryClass::kResidentPayload,
+        cancellation);
+    if (!admitted) return Result<void>::Failure(admitted.GetError());
     auto result = load_node.Process(*working, *database);
     if (!result) return Result<void>::Failure(result.GetError());
+    if (!working->raw_data) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("DataLoad produced no resident payload"));
+    }
+    auto memory = std::make_shared<MemoryReservation>(
+        std::move(admitted).Value());
+    auto resized = memory->Resize(ResidentRawDataBytes(*working->raw_data));
+    if (!resized) return resized;
     const auto changed = std::distance(contexts.begin(), working);
     for (std::size_t i = static_cast<std::size_t>(changed);
          i < contexts.size(); ++i) {
@@ -964,6 +1158,9 @@ Result<void> StageExecutor::RunNode(NodeId node, std::optional<AgentId> agent) {
     payload->contexts = std::move(contexts);
     payload->database = std::move(database);
     payload->optimizer = std::move(optimizer).Value();
+    payload->resident_memory_reservations =
+        base->payload->resident_memory_reservations;
+    payload->resident_memory_reservations[*agent] = std::move(memory);
     transaction.SetPayload(std::move(payload));
     auto artifacts = artifactEditor(*base);
     artifacts->BeginNode(node, agent);
@@ -1101,6 +1298,8 @@ Result<void> StageExecutor::runLoopDetectThrough(const AgentId& target_agent) {
   payload->contexts = std::move(contexts);
   payload->database = std::move(database);
   payload->optimizer = std::move(optimizer).Value();
+  payload->resident_memory_reservations =
+      base->payload->resident_memory_reservations;
   transaction.SetPayload(std::move(payload));
   auto artifacts = artifactEditor(*base);
   artifacts->CompleteLoopDetectThrough(target_agent, base->ordered_agents);
@@ -1110,6 +1309,13 @@ Result<void> StageExecutor::runLoopDetectThrough(const AgentId& target_agent) {
 
 Result<void> StageExecutor::runDataLoadStage() {
   OPEN_LMM_ZONE_N("MapServer.DataLoadStage");
+  const std::size_t profile_concurrency = parallel_data_load_
+      ? std::min(max_parallel_agents_,
+                 resource_governor_->Budget().max_cpu_threads)
+      : 1;
+  StageTiming timing("DataLoad",
+                     parallel_data_load_ ? "parallel" : "sequential",
+                     profile_concurrency);
   const auto base = committedState();
   SessionTransaction transaction(base);
   auto optimizer = createOptimizer();
@@ -1125,30 +1331,161 @@ Result<void> StageExecutor::runDataLoadStage() {
   database->alignment_feedback = feedback;
   installStoredAlignments(*database);
   auto contexts = buildContexts();
+  std::map<AgentId, std::shared_ptr<MemoryReservation>> reservations;
   for (auto& context : contexts) context.cancellation = cancellation;
-  auto loader = DataLoaderBase::createInstance(*base->config->data_loader);
-  if (!loader) return Result<void>::Failure(loader.GetError());
-  Pipeline pipeline;
-  for (NodeId node : StageNodes(StageId::kDataLoad)) {
-    if (node != NodeId::kDataLoad) {
+  Result<void> result = Result<void>::Ok();
+  if (parallel_data_load_) {
+    result = runParallelDataLoad(base, contexts, *database, reservations,
+                                 cancellation);
+  } else {
+    if (StageNodes(StageId::kDataLoad) !=
+        std::vector<NodeId>{NodeId::kDataLoad}) {
       return Result<void>::Failure(
           Error::InvalidArgument("unsupported DataLoad execution spec"));
     }
-    pipeline.AddNode(std::make_unique<DataLoadNode>(std::move(loader).Value()));
+    auto loader = DataLoaderBase::createInstance(*base->config->data_loader);
+    if (!loader) return Result<void>::Failure(loader.GetError());
+    for (auto& context : contexts) {
+      auto reservation = resource_governor_->ReserveMemory(
+          EstimateAgentMemory(context.data_dir), MemoryClass::kResidentPayload,
+          cancellation);
+      if (!reservation) return Result<void>::Failure(reservation.GetError());
+      auto raw = loader.Value()->Process(context.agent, context.data_dir);
+      if (!raw) return Result<void>::Failure(raw.GetError());
+      auto owned = std::make_shared<const AgentRawData>(
+          std::move(raw).Value());
+      auto memory = std::make_shared<MemoryReservation>(
+          std::move(reservation).Value());
+      auto resized = memory->Resize(ResidentRawDataBytes(*owned));
+      if (!resized) return resized;
+      context.raw_data = owned;
+      database->raw_data.emplace(context.agent.id, std::move(owned));
+      reservations.emplace(context.agent.id, std::move(memory));
+    }
   }
-  auto result = pipeline.Run(contexts, *database);
   if (!result) return result;
 
   auto payload = std::make_shared<SessionPayload>();
   payload->contexts = std::move(contexts);
   payload->database = std::move(database);
   payload->optimizer = std::move(optimizer).Value();
+  payload->resident_memory_reservations = std::move(reservations);
   transaction.SetPayload(std::move(payload));
   auto artifacts = artifactEditor(*base);
   artifacts->BeginStage(StageId::kDataLoad);
   artifacts->CompleteStage(StageId::kDataLoad);
   transaction.Working().artifacts = artifacts->Snapshot();
   return commitTransaction(std::move(transaction));
+}
+
+Result<void> StageExecutor::runParallelDataLoad(
+    const std::shared_ptr<const SessionState>& base,
+    std::vector<AgentPipelineCtx>& contexts, SharedDatabase& database,
+    std::map<AgentId, std::shared_ptr<MemoryReservation>>& reservations,
+    const std::shared_ptr<CancellationToken>& cancellation) {
+  if (!resource_governor_) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("parallel DataLoad has no resource governor"));
+  }
+  const auto stage_nodes = StageNodes(StageId::kDataLoad);
+  if (stage_nodes != std::vector<NodeId>{NodeId::kDataLoad}) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("unsupported parallel DataLoad execution spec"));
+  }
+  std::vector<AgentRawDataHandle> loaded(contexts.size());
+  std::vector<std::shared_ptr<MemoryReservation>> reserved(contexts.size());
+  const std::size_t concurrency = std::min(
+      {max_parallel_agents_, contexts.size(),
+       resource_governor_->Budget().max_agent_tasks,
+       resource_governor_->Budget().max_cpu_threads});
+  for (std::size_t begin = 0; begin < contexts.size(); begin += concurrency) {
+    const std::size_t end = std::min(contexts.size(), begin + concurrency);
+    std::vector<BoundedTaskHandle> handles;
+    handles.reserve(end - begin);
+    for (std::size_t index = begin; index < end; ++index) {
+      const AgentContext agent = contexts[index].agent;
+      const fs::path data_directory = contexts[index].data_dir;
+      const uint64_t estimated_memory = EstimateAgentMemory(data_directory);
+      auto submitted = resource_governor_->AgentExecutor().Submit(
+          [&, index, agent, data_directory,
+           estimated_memory]() -> Result<void> {
+            auto admitted = resource_governor_->ReserveMemory(
+                estimated_memory, MemoryClass::kResidentPayload, cancellation);
+            if (!admitted) {
+              auto error = admitted.GetError();
+              error.WithExecution("data_load", "data_load", agent.id);
+              return Result<void>::Failure(std::move(error));
+            }
+            DataLoaderConfig loader_config = *base->config->data_loader;
+            loader_config.show_progress = false;
+            auto loader = DataLoaderBase::createInstance(loader_config);
+            if (!loader) {
+              auto error = loader.GetError();
+              error.WithExecution("data_load", "data_load", agent.id);
+              return Result<void>::Failure(std::move(error));
+            }
+            auto raw = loader.Value()->Process(agent, data_directory);
+            if (!raw) {
+              auto error = raw.GetError();
+              error.WithExecution("data_load", "data_load", agent.id);
+              return Result<void>::Failure(std::move(error));
+            }
+            if (cancellation &&
+                cancellation->IsCancellationRequested()) {
+              return Result<void>::Failure(
+                  Error::Cancelled("before parallel DataLoad result publish")
+                      .WithExecution("data_load", "data_load", agent.id));
+            }
+            auto owned = std::make_shared<const AgentRawData>(
+                std::move(raw).Value());
+            auto memory = std::make_shared<MemoryReservation>(
+                std::move(admitted).Value());
+            auto resized = memory->Resize(ResidentRawDataBytes(*owned));
+            if (!resized) {
+              auto error = resized.GetError();
+              error.WithExecution("data_load", "data_load", agent.id);
+              return Result<void>::Failure(std::move(error));
+            }
+            loaded[index] = std::move(owned);
+            reserved[index] = std::move(memory);
+            return Result<void>::Ok();
+          },
+          cancellation);
+      if (!submitted) {
+        for (const auto& handle : handles) (void)handle.Wait();
+        return Result<void>::Failure(submitted.GetError());
+      }
+      handles.push_back(std::move(submitted).Value());
+    }
+    std::optional<Error> first_error;
+    for (const auto& handle : handles) {
+      auto completed = handle.Wait();
+      if (!completed && !first_error) first_error = completed.GetError();
+    }
+    if (first_error) return Result<void>::Failure(std::move(*first_error));
+  }
+  if (cancellation && cancellation->IsCancellationRequested()) {
+    return Result<void>::Failure(
+        Error::Cancelled("before ordered parallel DataLoad commit"));
+  }
+  for (std::size_t index = 0; index < contexts.size(); ++index) {
+    if (!loaded[index]) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "parallel DataLoad produced no result for agent " +
+          contexts[index].agent.id.Value()));
+    }
+    contexts[index].raw_data = loaded[index];
+    const auto [entry, inserted] = database.raw_data.emplace(
+        contexts[index].agent.id, loaded[index]);
+    (void)entry;
+    if (!inserted) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "parallel DataLoad duplicate agent " +
+          contexts[index].agent.id.Value()));
+    }
+    reservations.emplace(contexts[index].agent.id, reserved[index]);
+  }
+  return Result<void>::Ok();
 }
 
 Result<void> StageExecutor::runAlignmentStage() {
@@ -1198,6 +1535,8 @@ Result<void> StageExecutor::runAlignmentStage() {
   payload->contexts = std::move(contexts);
   payload->database = std::move(database);
   payload->optimizer = std::move(optimizer).Value();
+  payload->resident_memory_reservations =
+      base->payload->resident_memory_reservations;
   transaction.SetPayload(std::move(payload));
   auto artifacts = artifactEditor(*base);
   artifacts->BeginStage(StageId::kAlignment);
@@ -1420,6 +1759,8 @@ Result<void> StageExecutor::runOptimizeThrough(const AgentId& target_agent) {
   payload->contexts = std::move(contexts);
   payload->database = std::move(database);
   payload->optimizer = std::move(optimizer).Value();
+  payload->resident_memory_reservations =
+      base->payload->resident_memory_reservations;
   transaction.SetPayload(std::move(payload));
   auto artifacts = artifactEditor(*base);
   artifacts->CompleteOptimizeThrough(target_agent, base->ordered_agents);
@@ -1532,13 +1873,21 @@ Result<void> StageExecutor::runMapUpdateStage() {
   OPEN_LMM_ZONE_N("MapServer.MapUpdateStage");
   if (!enable_map_updater_) return Result<void>::Ok();
   const auto base = committedState();
+  const std::size_t internal_threads =
+      base->config->dynamic_remover->internal_cpu_threads;
+  const std::size_t profile_concurrency = parallel_map_update_
+      ? std::min(max_parallel_agents_,
+                 resource_governor_->Budget().max_cpu_threads /
+                     internal_threads)
+      : 1;
+  StageTiming timing("MapUpdate",
+                     parallel_map_update_ ? "parallel" : "sequential",
+                     profile_concurrency);
   if (base->payload->database->optimized_data.empty()) {
     return Result<void>::Failure(Error::InvalidArgument(
         "Alignment stage must complete before MapUpdate"));
   }
   SessionTransaction transaction(base);
-  auto loader = DataLoaderBase::createInstance(*base->config->data_loader);
-  if (!loader) return Result<void>::Failure(loader.GetError());
   auto contexts = base->payload->contexts;
   std::shared_ptr<CancellationToken> cancellation;
   {
@@ -1552,20 +1901,6 @@ Result<void> StageExecutor::runMapUpdateStage() {
   auto database = std::make_shared<SharedDatabase>();
   database->raw_data = base->payload->database->raw_data;
   database->optimized_data = base->payload->database->optimized_data;
-  Pipeline pipeline;
-  for (NodeId node : StageNodes(StageId::kMapUpdate)) {
-    if (node != NodeId::kMapUpdate) {
-      return Result<void>::Failure(
-          Error::InvalidArgument("unsupported MapUpdate execution spec"));
-    }
-    pipeline.AddNode(std::make_unique<MapUpdateNode>(
-        std::move(loader).Value(),
-        [cfg = base->config->dynamic_remover]() {
-          return DynamicRemoverBase::createInstance(*cfg);
-        },
-        output_save_dir_, save_voxel_size_, true));
-  }
-
   auto pending = output_repository_.Begin();
   for (const auto& ctx : contexts) {
     fs::path final_path = fs::path(output_save_dir_) /
@@ -1574,7 +1909,27 @@ Result<void> StageExecutor::runMapUpdateStage() {
     temporary += ".tmp";
     pending.Add(std::move(temporary), std::move(final_path));
   }
-  auto result = pipeline.Run(contexts, *database);
+  Result<void> result = Result<void>::Ok();
+  if (parallel_map_update_) {
+    result = runParallelMapUpdate(base, contexts, *database, cancellation);
+  } else {
+    auto loader = DataLoaderBase::createInstance(*base->config->data_loader);
+    if (!loader) return Result<void>::Failure(loader.GetError());
+    Pipeline pipeline;
+    for (NodeId node : StageNodes(StageId::kMapUpdate)) {
+      if (node != NodeId::kMapUpdate) {
+        return Result<void>::Failure(
+            Error::InvalidArgument("unsupported MapUpdate execution spec"));
+      }
+      pipeline.AddNode(std::make_unique<MapUpdateNode>(
+          std::move(loader).Value(),
+          [cfg = base->config->dynamic_remover]() {
+            return DynamicRemoverBase::createInstance(*cfg);
+          },
+          output_save_dir_, save_voxel_size_, true));
+    }
+    result = pipeline.Run(contexts, *database);
+  }
   if (!result) return result;
   auto artifacts = artifactEditor(*base);
   artifacts->BeginStage(StageId::kMapUpdate);
@@ -1594,6 +1949,120 @@ Result<void> StageExecutor::runMapUpdateStage() {
   }
   transaction.Working().artifacts = artifacts->Snapshot();
   return commitTransaction(std::move(transaction), &pending);
+}
+
+Result<void> StageExecutor::runParallelMapUpdate(
+    const std::shared_ptr<const SessionState>& base,
+    std::vector<AgentPipelineCtx>& contexts, SharedDatabase& database,
+    const std::shared_ptr<CancellationToken>& cancellation) {
+  if (!resource_governor_) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("parallel MapUpdate has no resource governor"));
+  }
+  if (base->config->dynamic_remover->thread_safety !=
+      PluginThreadSafety::kInstanceIsolatedParallel) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "parallel MapUpdate requires allowlisted remover 'erasor'; selected " +
+        base->config->dynamic_remover->model));
+  }
+  const std::size_t internal_threads =
+      base->config->dynamic_remover->internal_cpu_threads;
+  if (internal_threads > resource_governor_->Budget().max_cpu_threads) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "parallel MapUpdate plugin internal_cpu_threads exceeds CPU budget"));
+  }
+  const auto stage_nodes = StageNodes(StageId::kMapUpdate);
+  if (stage_nodes != std::vector<NodeId>{NodeId::kMapUpdate}) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "unsupported parallel MapUpdate execution spec"));
+  }
+  const std::size_t concurrency = std::min(
+      {max_parallel_agents_, contexts.size(),
+       resource_governor_->Budget().max_agent_tasks,
+       resource_governor_->Budget().max_cpu_threads / internal_threads});
+  for (std::size_t begin = 0; begin < contexts.size(); begin += concurrency) {
+    const std::size_t end = std::min(contexts.size(), begin + concurrency);
+    std::vector<BoundedTaskHandle> handles;
+    handles.reserve(end - begin);
+    for (std::size_t index = begin; index < end; ++index) {
+      const AgentId agent_id = contexts[index].agent.id;
+      const uint64_t estimated_memory =
+          EstimateAgentMemory(contexts[index].data_dir);
+      auto submitted = resource_governor_->AgentExecutor().Submit(
+          [&, index, agent_id, estimated_memory]() -> Result<void> {
+            MemoryLease memory(resource_governor_, estimated_memory);
+            if (!memory) {
+              return Result<void>::Failure(Error::InvalidArgument(
+                  "parallel MapUpdate soft memory budget exceeded")
+                      .WithExecution("map_update", "map_update", agent_id));
+            }
+            DataLoaderConfig loader_config = *base->config->data_loader;
+            loader_config.show_progress = false;
+            auto loader = DataLoaderBase::createInstance(loader_config);
+            if (!loader) {
+              auto error = loader.GetError();
+              error.WithExecution("map_update", "map_update", agent_id);
+              return Result<void>::Failure(std::move(error));
+            }
+            SharedDatabase isolated_database;
+            const auto optimized = database.optimized_data.find(agent_id);
+            if (optimized == database.optimized_data.end()) {
+              return Result<void>::Failure(Error::InvalidArgument(
+                  "parallel MapUpdate optimized payload is unavailable")
+                      .WithExecution("map_update", "map_update", agent_id));
+            }
+            isolated_database.optimized_data.emplace(agent_id,
+                                                     optimized->second);
+            AgentPipelineCtx isolated_context = contexts[index];
+            MapUpdateNode update_node(
+                std::move(loader).Value(),
+                [cfg = base->config->dynamic_remover]() {
+                  return DynamicRemoverBase::createInstance(*cfg);
+                },
+                output_save_dir_, save_voxel_size_, true,
+                [governor = resource_governor_, cancellation]()
+                    -> Result<std::shared_ptr<void>> {
+                  auto acquired =
+                      governor->AcquireHeavyMemoryPhase(cancellation);
+                  if (!acquired) {
+                    return Result<std::shared_ptr<void>>::Failure(
+                        acquired.GetError());
+                  }
+                  return Result<std::shared_ptr<void>>::Ok(
+                      std::shared_ptr<void>(new int(0),
+                                            [governor](void* value) {
+                                              delete static_cast<int*>(value);
+                                              governor->ReleaseHeavyMemoryPhase();
+                                            }));
+                });
+            auto updated =
+                update_node.Process(isolated_context, isolated_database);
+            if (!updated) {
+              auto error = updated.GetError();
+              error.WithExecution("map_update", "map_update", agent_id);
+              return Result<void>::Failure(std::move(error));
+            }
+            return Result<void>::Ok();
+          },
+          cancellation);
+      if (!submitted) {
+        for (const auto& handle : handles) (void)handle.Wait();
+        return Result<void>::Failure(submitted.GetError());
+      }
+      handles.push_back(std::move(submitted).Value());
+    }
+    std::optional<Error> first_error;
+    for (const auto& handle : handles) {
+      auto completed = handle.Wait();
+      if (!completed && !first_error) first_error = completed.GetError();
+    }
+    if (first_error) return Result<void>::Failure(std::move(*first_error));
+  }
+  if (cancellation && cancellation->IsCancellationRequested()) {
+    return Result<void>::Failure(
+        Error::Cancelled("before parallel MapUpdate file-set commit"));
+  }
+  return Result<void>::Ok();
 }
 
 Result<void> StageExecutor::runSaveStage() {
