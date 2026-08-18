@@ -25,11 +25,17 @@ struct AlignmentConfigValues {
   double kiss_voxel_size{2.0};
   bool kiss_use_quatro{false};
   double pose_nn_distance_threshold{10.0};
+  double inter_loop_keyframe_spacing_m{10.0};
 };
 
 [[nodiscard]] Result<std::vector<std::string>> DiscoverDatasetDirectories(
     const std::filesystem::path& root);
 [[nodiscard]] Result<AlignmentConfigValues> LoadAlignmentConfig(
+    const std::filesystem::path& path);
+[[nodiscard]] Result<std::string> BuildAlignmentConfigCandidate(
+    const std::filesystem::path& path,
+    const AlignmentConfigValues& values);
+[[nodiscard]] Result<std::string> LoadDynamicRemoverConfigCandidate(
     const std::filesystem::path& path);
 Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
                                  const AlignmentConfigValues& values);
@@ -44,6 +50,7 @@ class ConfigEditorDocument {
   Result<void> SetValues(const ConfigEditorValues& values);
   Result<void> Save() const;
   Result<void> SaveAs(const std::filesystem::path& path) const;
+  [[nodiscard]] Result<std::string> CanonicalJson() const;
   [[nodiscard]] const std::filesystem::path& Path() const { return path_; }
 
  private:

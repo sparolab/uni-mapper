@@ -1,7 +1,8 @@
-name: Compiler matrix
+name: Required checks
 
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - main
@@ -11,17 +12,38 @@ permissions:
   contents: read
 
 concurrency:
-  group: compiler-matrix-${{ github.ref }}
+  group: required-checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  clean-builds:
+  build:
+    name: build / ${{ matrix.name }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc12-gui-off
+            cc: /usr/bin/gcc-12
+            cxx: /usr/bin/g++-12
+            gui: OFF
+          - name: gcc12-gui-on
+            cc: /usr/bin/gcc-12
+            cxx: /usr/bin/g++-12
+            gui: ON
+          - name: gcc13-gui-off
+            cc: /usr/bin/gcc-13
+            cxx: /usr/bin/g++-13
+            gui: OFF
+          - name: clang15-gui-off
+            cc: /usr/bin/clang-15
+            cxx: /usr/bin/clang++-15
+            gui: OFF
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Build reproducible ROS 2 toolchain image
         run: |
@@ -30,15 +52,86 @@ jobs:
             --tag open-lmm-compiler-matrix:ci \
             .
 
-      - name: Run clean compiler matrix
+      - name: Run clean compiler check
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/root/workspace" \
             --workdir /root/workspace \
             open-lmm-compiler-matrix:ci \
-            bash -lc '
-              scripts/ci/build_and_test.sh gcc12-gui-off /usr/bin/gcc-12 /usr/bin/g++-12 OFF
-              scripts/ci/build_and_test.sh gcc12-gui-on  /usr/bin/gcc-12 /usr/bin/g++-12 ON
-              scripts/ci/build_and_test.sh gcc13-gui-off /usr/bin/gcc-13 /usr/bin/g++-13 OFF
-              scripts/ci/build_and_test.sh clang15-gui-off /usr/bin/clang-15 /usr/bin/clang++-15 OFF
-            '
+            scripts/ci/build_and_test.sh \
+              "${{ matrix.name }}" \
+              "${{ matrix.cc }}" \
+              "${{ matrix.cxx }}" \
+              "${{ matrix.gui }}"
+
+      - name: Preserve build logs and CTest XML
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-${{ matrix.name }}-evidence
+          path: .ci-build/${{ matrix.name }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  sanitizer:
+    name: sanitizer / ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asan-ubsan
+            configuration: clang15-asan-ubsan
+            sanitizer: ASAN_UBSAN
+            cc: /usr/bin/clang-15
+            cxx: /usr/bin/clang++-15
+          - name: tsan
+            configuration: gcc12-tsan
+            sanitizer: TSAN
+            cc: /usr/bin/gcc-12
+            cxx: /usr/bin/g++-12
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build reproducible ROS 2 toolchain image
+        run: |
+          docker build \
+            --file docker/open_lmm.Dockerfile \
+            --tag open-lmm-compiler-matrix:ci \
+            .
+
+      - name: Run sanitizer check
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            open-lmm-compiler-matrix:ci \
+            scripts/ci/build_sanitizer_tests.sh \
+              "${{ matrix.configuration }}" \
+              "${{ matrix.sanitizer }}" \
+              "${{ matrix.cc }}" \
+              "${{ matrix.cxx }}"
+
+      - name: Preserve sanitizer logs and CTest XML
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sanitizer-${{ matrix.name }}-evidence
+          path: .ci-build/${{ matrix.configuration }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  policy:
+    name: policy / architecture-boundary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify architecture and release policy
+        run: scripts/ci/check_architecture_policy.sh

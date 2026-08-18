@@ -4,17 +4,16 @@
 #include <cmath>
 #include <limits>
 
-SolidParams::SolidParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_loop_detector"));
-  fov_u = config.param<double>("loop_detector", "fov_u", 2.0);
-  fov_d = config.param<double>("loop_detector", "fov_d", -24.8);
-  num_angle = config.param<int>("loop_detector", "num_angle", 60);
-  num_range = config.param<int>("loop_detector", "num_range", 40);
-  num_height = config.param<int>("loop_detector", "num_height", 32);
-  min_distance = config.param<int>("loop_detector", "min_distance", 3);
-  max_distance = config.param<int>("loop_detector", "max_distance", 80);
-  voxel_size = config.param<double>("loop_detector", "voxel_size", 0.4);
+SolidParams::SolidParams(const open_lmm::Config& config) {
+  fov_u = config.param_cast<double>("loop_detector", "fov_u");
+  fov_d = config.param_cast<double>("loop_detector", "fov_d");
+  num_angle = config.param_cast<int>("loop_detector", "num_angle");
+  num_range = config.param_cast<int>("loop_detector", "num_range");
+  num_height = config.param_cast<int>("loop_detector", "num_height");
+  min_distance = config.param_cast<int>("loop_detector", "min_distance");
+  max_distance = config.param_cast<int>("loop_detector", "max_distance");
+  voxel_size = config.param_cast<double>("loop_detector", "voxel_size");
+  descriptor_vector_dim = num_range;
 }
 
 SOLiD::SOLiD(const SolidParams& params) : params_(params) {

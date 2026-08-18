@@ -2,7 +2,7 @@
 #include <string>
 
 struct OTDParams {
-  OTDParams();
+  explicit OTDParams(const open_lmm::Config& config);
   ~OTDParams() = default;
 
   bool replace_intensity;

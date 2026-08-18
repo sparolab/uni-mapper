@@ -1,10 +1,12 @@
 #pragma once
 
+#include <open_lmm/common/agent_id.hpp>
+#include <open_lmm/common/rigid_transform.hpp>
+
 #include <Eigen/Geometry>
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <vector>
 
@@ -43,8 +45,8 @@ struct AlignmentMetrics {
 // into the target/global map frame.
 struct MapAlignmentProposal {
   uint64_t request_id = 0;
-  char target_agent = 0;
-  char source_agent = 0;
+  AgentId target_agent;
+  AgentId source_agent;
   AlignmentMethod method = AlignmentMethod::kKissMatcher;
   Eigen::Isometry3d target_T_source = Eigen::Isometry3d::Identity();
   AlignmentMetrics metrics;
@@ -86,14 +88,5 @@ struct StoredAlignment {
   AlignmentApproval approval = AlignmentApproval::kAutomatic;
   uint64_t accepted_at_unix_ms = 0;
 };
-
-inline bool IsFiniteRigidTransform(const Eigen::Isometry3d& transform,
-                                   double tolerance = 1.0e-5) {
-  if (!transform.matrix().allFinite()) return false;
-  const Eigen::Matrix3d rotation = transform.linear();
-  return (rotation.transpose() * rotation)
-             .isApprox(Eigen::Matrix3d::Identity(), tolerance) &&
-         std::abs(rotation.determinant() - 1.0) <= tolerance;
-}
 
 }  // namespace open_lmm

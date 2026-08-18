@@ -1,72 +1,118 @@
 #include <open_lmm/gui/gui_controller_bridge.hpp>
 
+#include <filesystem>
+
 namespace open_lmm {
 namespace {
 template <typename T>
-Result<T> ControllerExpired() {
-  return Result<T>::Failure(Error::InvalidArgument("pipeline controller expired"));
+Result<T> RuntimeExpired() {
+  return Result<T>::Failure(Error::InvalidArgument("runtime client expired"));
 }
 }  // namespace
 
-GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controller,
+GuiServices MakeGuiServices(const std::shared_ptr<RuntimeClient>& runtime,
                             std::string config_file_path) {
-  if (controller) controller->SetAlignmentFeedbackEnabled(true);
-  std::weak_ptr<PipelineController> weak = controller;
+  std::weak_ptr<RuntimeClient> weak_runtime = runtime;
   GuiServices services;
   services.config_file_path = std::move(config_file_path);
-  services.submit_run_all = [weak] {
-    auto locked = weak.lock();
-    return locked ? locked->SubmitRunAll() : ControllerExpired<uint64_t>();
+  services.submit_run_all = [weak_runtime] {
+    auto locked = weak_runtime.lock();
+    if (!locked) return RuntimeExpired<uint64_t>();
+    auto submitted = locked->SubmitRunAll();
+    return submitted ? Result<uint64_t>::Ok(submitted.Value().value)
+                     : Result<uint64_t>::Failure(submitted.GetError());
   };
-  services.submit_stage = [weak](StageId stage) {
-    auto locked = weak.lock();
-    return locked ? locked->SubmitStage(stage) : ControllerExpired<uint64_t>();
+  services.submit_stage = [weak_runtime](StageId stage) {
+    auto locked = weak_runtime.lock();
+    if (!locked) return RuntimeExpired<uint64_t>();
+    ExecutionRequest request;
+    request.kind = ExecutionRequestKind::kStage;
+    request.stage = stage;
+    auto submitted = locked->Submit(request);
+    return submitted ? Result<uint64_t>::Ok(submitted.Value().value)
+                     : Result<uint64_t>::Failure(submitted.GetError());
   };
-  services.submit_node = [weak](NodeId node, char agent) {
-    auto locked = weak.lock();
-    return locked ? locked->SubmitNode(node, agent) : ControllerExpired<uint64_t>();
+  services.submit_node = [weak_runtime](NodeId node,
+                                        std::optional<AgentId> agent) {
+    auto locked = weak_runtime.lock();
+    if (!locked) return RuntimeExpired<uint64_t>();
+    ExecutionRequest request;
+    request.kind = ExecutionRequestKind::kNode;
+    request.node = node;
+    request.agent = std::move(agent);
+    auto submitted = locked->Submit(request);
+    return submitted ? Result<uint64_t>::Ok(submitted.Value().value)
+                     : Result<uint64_t>::Failure(submitted.GetError());
   };
-  services.submit_optimize_through = [weak](char agent) {
-    auto locked = weak.lock();
-    return locked ? locked->SubmitOptimizeThrough(agent) : ControllerExpired<uint64_t>();
+  services.submit_optimize_through = [weak_runtime](AgentId agent) {
+    auto locked = weak_runtime.lock();
+    if (!locked) return RuntimeExpired<uint64_t>();
+    ExecutionRequest request;
+    request.kind = ExecutionRequestKind::kOptimizeThrough;
+    request.agent = std::move(agent);
+    auto submitted = locked->Submit(request);
+    return submitted ? Result<uint64_t>::Ok(submitted.Value().value)
+                     : Result<uint64_t>::Failure(submitted.GetError());
   };
-  services.cancel_job = [weak](uint64_t job_id) {
-    auto locked = weak.lock();
-    return locked ? locked->Cancel(job_id) : ControllerExpired<void>();
+  services.cancel_job = [weak_runtime](uint64_t job_id) {
+    auto locked = weak_runtime.lock();
+    return locked ? locked->Cancel({job_id}) : RuntimeExpired<void>();
   };
-  services.apply_config = [weak](ConfigDomain domain, uint64_t revision) {
-    auto locked = weak.lock();
-    return locked ? locked->ApplyConfig(domain, revision)
-                  : ControllerExpired<void>();
+  services.apply_config = [weak_runtime](ConfigCandidate candidate,
+                                         ExpectedRevision expected) {
+    auto locked = weak_runtime.lock();
+    return locked ? locked->ApplyConfig(candidate, expected)
+                  : RuntimeExpired<ConfigApplyReceipt>();
   };
-  services.node_descriptors = [weak] {
-    auto locked = weak.lock();
-    return locked ? locked->NodeDescriptors() : std::vector<NodeDescriptor>{};
+  services.replace_root_config = [weak_runtime,
+                                  config_file_path = services.config_file_path](
+                                     ConfigCandidate root_candidate,
+                                     ExpectedRevision expected) {
+    auto locked = weak_runtime.lock();
+    if (!locked) return RuntimeExpired<RuntimeReplaceReceipt>();
+    return locked->ReplaceRootConfig(
+        {std::filesystem::path(config_file_path).parent_path(), "gui"},
+        root_candidate, expected);
   };
-  services.snapshot = [weak] {
-    auto locked = weak.lock();
-    return locked ? locked->Snapshot() : PipelineSnapshot{};
+  services.node_descriptors = [weak_runtime] {
+    auto locked = weak_runtime.lock();
+    if (!locked) return std::vector<NodeDescriptor>{};
+    auto descriptors = locked->NodeDescriptors();
+    return descriptors ? std::move(descriptors).Value()
+                       : std::vector<NodeDescriptor>{};
   };
-  services.visualization_snapshot = [weak](char agent) {
-    auto locked = weak.lock();
-    return locked ? locked->GetVisualizationSnapshot(agent)
-                  : ControllerExpired<VisualizationSnapshot>();
+  services.runtime_snapshot = [weak_runtime] {
+    auto locked = weak_runtime.lock();
+    return locked ? locked->Snapshot() : RuntimeExpired<RuntimeSnapshot>();
   };
-  services.alignment_feedback_snapshot = [weak] {
-    auto locked = weak.lock();
-    return locked ? locked->GetAlignmentFeedbackSnapshot()
-                  : std::optional<AlignmentFeedbackSnapshot>{};
+  services.snapshot = [weak_runtime] {
+    auto locked = weak_runtime.lock();
+    if (!locked) return PipelineSnapshot{};
+    auto snapshot = locked->Snapshot();
+    return snapshot ? std::move(snapshot).Value().pipeline : PipelineSnapshot{};
   };
-  services.respond_to_alignment = [weak](uint64_t job_id,
-                                          AlignmentResponse response) {
-    auto locked = weak.lock();
-    return locked ? locked->RespondToAlignment(job_id, std::move(response))
-                  : ControllerExpired<void>();
+  services.visualization_snapshot = [weak_runtime](const AgentId& agent) {
+    auto locked = weak_runtime.lock();
+    return locked ? locked->Visualization(agent)
+                  : RuntimeExpired<VisualizationSnapshot>();
   };
-  services.subscribe_events = [weak](auto callback) {
-    auto locked = weak.lock();
+  services.alignment_feedback_snapshot = [weak_runtime] {
+    auto locked = weak_runtime.lock();
+    if (!locked) return std::optional<AlignmentFeedbackSnapshot>{};
+    auto feedback = locked->AlignmentFeedback();
+    return feedback ? std::move(feedback).Value()
+                    : std::optional<AlignmentFeedbackSnapshot>{};
+  };
+  services.respond_to_alignment = [weak_runtime](uint64_t job_id,
+                                                  AlignmentResponse response) {
+    auto locked = weak_runtime.lock();
+    return locked ? locked->RespondToAlignment({job_id}, std::move(response))
+                  : RuntimeExpired<void>();
+  };
+  services.subscribe_events = [weak_runtime](auto callback) {
+    auto locked = weak_runtime.lock();
     return locked ? locked->SubscribeEvents(std::move(callback))
-                  : ExecutionEventSubscription{};
+                  : RuntimeExpired<ExecutionEventSubscription>();
   };
   return services;
 }

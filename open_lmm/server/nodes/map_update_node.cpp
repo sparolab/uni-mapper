@@ -7,7 +7,6 @@
 
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
-#include <open_lmm/common/validation.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
 #include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
 #include <open_lmm/utils/logging.hpp>
@@ -17,12 +16,18 @@ namespace open_lmm {
 MapUpdateNode::MapUpdateNode(std::unique_ptr<DataLoaderBase> loader,
                              RemoverFactory remover_factory,
                              const std::string& save_dir,
-                             double save_voxel_size, bool defer_commit)
+                             double save_voxel_size, bool defer_commit,
+                             HeavyPhaseAdmission heavy_phase_admission,
+                             AlgorithmExecutionContext data_loader_context,
+                             AlgorithmExecutionContext remover_context)
     : loader_(std::move(loader)),
       remover_factory_(std::move(remover_factory)),
       save_dir_(save_dir),
       save_voxel_size_(save_voxel_size),
-      defer_commit_(defer_commit) {}
+      defer_commit_(defer_commit),
+      heavy_phase_admission_(std::move(heavy_phase_admission)),
+      data_loader_context_(std::move(data_loader_context)),
+      remover_context_(std::move(remover_context)) {}
 
 MapUpdateNode::~MapUpdateNode() = default;
 
@@ -32,42 +37,63 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   auto it = db.optimized_data.find(ctx.agent.id);
   if (it == db.optimized_data.end()) {
     LogWarning("[MapUpdateNode] No optimized data for agent " +
-               std::string(1, ctx.agent.id) + ". Skipping.");
+               ctx.agent.id.Value() + ". Skipping.");
     return Result<ControlFlow>::Ok(ControlFlow::kSkip);
   }
 
-  auto raw_result = loader_->loadRawScanData(ctx.data_dir);
-  if (!raw_result) return Result<ControlFlow>::Failure(raw_result.GetError());
-  if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-    return Result<ControlFlow>::Failure(
-        Error::Cancelled("after raw scan load"));
-  }
-  auto raw_scans = std::move(raw_result).Value();
-  auto count_result = ValidateScanPoseCount(
-      raw_scans.size(), it->second.optimized_poses.size(),
-      ctx.data_dir.string());
-  if (!count_result) {
-    return Result<ControlFlow>::Failure(count_result.GetError());
-  }
   auto remover_result = remover_factory_();
   if (!remover_result) {
-    return Result<ControlFlow>::Failure(remover_result.GetError());
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    remover_context.cancellation = ctx.cancellation;
+    return Result<ControlFlow>::Failure(
+        WithAlgorithmContext(remover_result.GetError(), remover_context));
   }
   auto dynamic_remover = std::move(remover_result).Value();
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map;
   {
     OPEN_LMM_ZONE_N("MapUpdate.RemoverProcess");
-    static_map =
-        dynamic_remover->process(raw_scans, it->second.optimized_poses);
+    AlgorithmExecutionContext data_loader_context = data_loader_context_;
+    data_loader_context.agent = ctx.agent;
+    data_loader_context.cancellation = ctx.cancellation;
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    remover_context.cancellation = ctx.cancellation;
+    auto processed = dynamic_remover->ProcessStreaming(
+        remover_context,
+        DynamicRemoverStreamingInput{
+        [&](const DynamicRemoverBase::RawScanVisitor& visitor) {
+          return loader_->VisitRawScanData(
+              data_loader_context, ctx.data_dir,
+              [&](std::size_t index,
+                  const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan) {
+                if (ctx.cancellation &&
+                    ctx.cancellation->IsCancellationRequested()) {
+                  return Result<void>::Failure(
+                      Error::Cancelled("during raw scan streaming"));
+                }
+                return visitor(index, scan);
+              });
+        },
+        it->second->optimized_poses, heavy_phase_admission_});
+    if (!processed) {
+      return Result<ControlFlow>::Failure(processed.GetError());
+    }
+    static_map = std::move(processed).Value();
   }
   if (ctx.cancellation && ctx.cancellation->IsCancellationRequested()) {
-    return Result<ControlFlow>::Failure(
-        Error::Cancelled("after dynamic remover"));
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    return Result<ControlFlow>::Failure(WithAlgorithmContext(
+        Error::Cancelled("after dynamic remover"), remover_context));
   }
   if (!static_map || static_map->empty()) {
-    return Result<ControlFlow>::Failure(Error::InvalidArgument(
-        "Dynamic remover produced an empty map for agent " +
-        std::string{ctx.agent.id}));
+    AlgorithmExecutionContext remover_context = remover_context_;
+    remover_context.agent = ctx.agent;
+    return Result<ControlFlow>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument("Dynamic remover produced an empty map for agent " +
+                               ctx.agent.id.Value()),
+        remover_context));
   }
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr ds_map;
@@ -79,11 +105,11 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   OPEN_LMM_PLOT("map_update.point_count", ds_map ? ds_map->size() : 0);
   if (!ds_map || ds_map->empty()) {
     return Result<ControlFlow>::Failure(Error::InvalidArgument(
-        "Downsampled map is empty for agent " + std::string{ctx.agent.id}));
+        "Downsampled map is empty for agent " + ctx.agent.id.Value()));
   }
 
   fs::path map_file = fs::path(save_dir_) /
-                      ("global_map_" + std::string{ctx.agent.id} + ".pcd");
+                      ("global_map_" + ctx.agent.id.Value() + ".pcd");
   fs::path temp_file = map_file;
   temp_file += ".tmp";
   std::error_code cleanup_error;

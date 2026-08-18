@@ -20,12 +20,11 @@ bool GuiEventQueue::SameProgressStream(const ExecutionEvent& lhs,
 bool GuiEventQueue::Push(ExecutionEvent event) {
   std::lock_guard lock(mutex_);
   if (IsProgress(event)) {
-    auto existing = std::find_if(events_.rbegin(), events_.rend(),
-        [&event](const ExecutionEvent& queued) {
-          return IsProgress(queued) && SameProgressStream(queued, event);
-        });
-    if (existing != events_.rend()) {
-      *existing = std::move(event);
+    // Only the tail can be replaced without moving a newer sequence in front
+    // of an older queued event (or creating a gap before that older event).
+    if (!events_.empty() && IsProgress(events_.back()) &&
+        SameProgressStream(events_.back(), event)) {
+      events_.back() = std::move(event);
       ++coalesced_progress_;
       return true;
     }
@@ -63,6 +62,14 @@ GuiEventQueueStats GuiEventQueue::Stats() const {
   std::lock_guard lock(mutex_);
   return {events_.size(), coalesced_progress_, evicted_events_,
           resync_required_};
+}
+
+void GuiEventQueue::ResetEpoch() {
+  std::lock_guard lock(mutex_);
+  events_.clear();
+  coalesced_progress_ = 0;
+  evicted_events_ = 0;
+  resync_required_ = false;
 }
 
 void GuiEventQueue::MarkResynchronized() {

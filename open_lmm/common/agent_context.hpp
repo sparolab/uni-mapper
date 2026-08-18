@@ -1,4 +1,6 @@
 #pragma once
+#include <open_lmm/common/agent_id.hpp>
+
 #include <cstdint>
 
 namespace open_lmm {
@@ -9,7 +11,9 @@ enum class AgentRole : uint8_t {
 };
 
 struct AgentContext {
-  char      id;     // 기존 char 키 유지 (SharedDatabase 맵 키와 호환)
+  AgentId id;
+  AgentSymbol symbol;
+  AgentSymbolCatalogHandle catalog;
   AgentRole role;
   int       order;  // 처리 순서 (0-indexed, data_dir_list_ 인덱스)
 

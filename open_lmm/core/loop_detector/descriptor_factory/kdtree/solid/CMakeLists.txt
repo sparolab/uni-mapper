@@ -41,6 +41,7 @@ target_sources(solid PRIVATE
 target_link_libraries(solid PUBLIC
   Eigen3::Eigen
   PCL::PCL
+  open_lmm_utils
 )
 openlmm_set_global_target_properties(solid)
 

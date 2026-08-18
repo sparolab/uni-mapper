@@ -23,7 +23,7 @@
 struct M_POINT {
   float xyz[3];
   float intensity;
-  uint16_t count = 0;
+  std::size_t count = 0;
 };
 
 class VOXEL_LOC {

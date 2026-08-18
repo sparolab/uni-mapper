@@ -56,7 +56,7 @@ const char* ArtifactStateName(ArtifactState state) {
   }
   return "Unknown";
 }
-Eigen::Vector4f AgentColor(char agent) {
+Eigen::Vector4f AgentColor(const AgentId& agent) {
   static const std::array<Eigen::Vector4f, 8> colors = {
       Eigen::Vector4f(0.90F, 0.20F, 0.20F, 1.0F),
       Eigen::Vector4f(0.20F, 0.65F, 1.00F, 1.0F),
@@ -67,7 +67,7 @@ Eigen::Vector4f AgentColor(char agent) {
       Eigen::Vector4f(1.00F, 0.35F, 0.75F, 1.0F),
       Eigen::Vector4f(0.75F, 0.75F, 0.20F, 1.0F),
   };
-  return colors[static_cast<unsigned char>(agent) % colors.size()];
+  return colors[std::hash<std::string>{}(agent.Value()) % colors.size()];
 }
 template <std::size_t N>
 void SetBuffer(std::array<char, N>& buffer, const std::string& value) {
@@ -90,10 +90,12 @@ Result<void> IridescenceGui::Start(GuiServices services) {
   event_queue_ = std::make_shared<GuiEventQueue>();
   if (services_.subscribe_events) {
     std::weak_ptr<GuiEventQueue> weak_queue = event_queue_;
-    event_subscription_ = services_.subscribe_events(
+    auto subscribed = services_.subscribe_events(
         [weak_queue](const ExecutionEvent& event) {
           if (auto queue = weak_queue.lock()) queue->Push(event);
         });
+    if (!subscribed) return Result<void>::Failure(subscribed.GetError());
+    event_subscription_ = std::move(subscribed).Value();
   }
   stop_requested_ = false;
   open_ = false;
@@ -149,7 +151,7 @@ void IridescenceGui::ViewerLoop() {
         if (event.type == EventType::kStageCompleted && event.stage &&
             (*event.stage == StageId::kAlignment ||
              *event.stage == StageId::kMapUpdate)) {
-          for (char agent : model_.Agents()) RequestVisualization(agent);
+          for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
         }
       }
       if (event_queue_->Stats().resync_required && services_.snapshot) {
@@ -189,14 +191,16 @@ void IridescenceGui::ViewerLoop() {
 }
 
 void IridescenceGui::SynchronizeModel() {
-  if (services_.snapshot) {
-    model_.Synchronize(services_.snapshot());
+  if (services_.runtime_snapshot) {
+    auto snapshot = services_.runtime_snapshot();
+    if (!snapshot) return;
+    model_.Synchronize(std::move(snapshot).Value().pipeline);
     config_revision_draft_ = model_.ConfigRevision() + 1;
-    for (char agent : model_.Agents()) RequestVisualization(agent);
+    for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
   }
 }
 
-void IridescenceGui::RequestVisualization(char agent) {
+void IridescenceGui::RequestVisualization(AgentId agent) {
   if (visualization_worker_) visualization_worker_->Request(agent);
 }
 
@@ -288,7 +292,7 @@ void IridescenceGui::UpdateDrawables(
         guik::VertexColor(snapshot->poses[i].transform.matrix()).scale(0.25F));
   }
 
-  std::map<std::pair<char, std::size_t>, Eigen::Vector3f> pose_lookup;
+  std::map<std::pair<AgentId, std::size_t>, Eigen::Vector3f> pose_lookup;
   for (const auto& current : visualization_.Snapshots()) {
     for (const auto& pose : current->poses) {
       pose_lookup[{current->agent, static_cast<std::size_t>(pose.index)}] =
@@ -425,11 +429,26 @@ void IridescenceGui::DrawPipelineUi() {
     ImGui::Text("Picked: %.3f %.3f %.3f", (*picked_point_).x(),
                 (*picked_point_).y(), (*picked_point_).z());
   }
+  ImGui::Text("Runtime nodes");
+  for (const auto& descriptor : node_descriptors_) {
+    if (descriptor.scope != ExecutionScope::kRuntime) continue;
+    if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
+    const std::string label = std::string(descriptor.name) + "##runtime_node";
+    if (ImGui::SmallButton(label.c_str()) && services_.submit_node) {
+      auto result = services_.submit_node(descriptor.id, std::nullopt);
+      command_error_ = result ? std::string{} : result.GetError().Message();
+    }
+    if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
+    ImGui::SameLine();
+  }
+  ImGui::NewLine();
+  ImGui::Separator();
   ImGui::Text("Agents");
-  for (const char agent : model_.Agents()) {
-    ImGui::BulletText("Agent %c", agent);
-    ImGui::PushID(static_cast<int>(agent));
+  for (const AgentId& agent : model_.Agents()) {
+    ImGui::BulletText("Agent %s", agent.Value().c_str());
+    ImGui::PushID(agent.Value().c_str());
     for (const auto& descriptor : node_descriptors_) {
+      if (descriptor.scope != ExecutionScope::kPerAgent) continue;
       if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
       const std::string label = std::string(descriptor.name) + "##node";
       if (ImGui::SmallButton(label.c_str()) && services_.submit_node) {
@@ -463,7 +482,9 @@ void IridescenceGui::DrawPipelineUi() {
       ImGui::TableSetColumnIndex(0);
       ImGui::TextUnformatted(ArtifactName(artifact.key.type));
       ImGui::TableSetColumnIndex(1);
-      if (artifact.key.agent) ImGui::Text("%c", *artifact.key.agent);
+      if (artifact.key.agent) {
+        ImGui::Text("%s", artifact.key.agent->Value().c_str());
+      }
       else ImGui::TextUnformatted("-");
       ImGui::TableSetColumnIndex(2);
       ImGui::TextUnformatted(ArtifactStateName(artifact.state));
@@ -481,6 +502,20 @@ void IridescenceGui::DrawPipelineUi() {
     ImGui::Text("Job: %llu",
                 static_cast<unsigned long long>(model_.Job()->id));
     ImGui::TextWrapped("%s", model_.Job()->message.c_str());
+    const auto& cancellation = model_.Job()->cancellation;
+    ImGui::Text("Cancellation: %s%s",
+                cancellation.capability.cooperative ? "cooperative"
+                                                    : "non-cooperative",
+                cancellation.Pending() ? " (pending)" : "");
+    if (cancellation.cancel_requested_at_unix_ns) {
+      ImGui::Text("requested=%lld observed=%lld completed=%lld",
+                  static_cast<long long>(
+                      *cancellation.cancel_requested_at_unix_ns),
+                  static_cast<long long>(
+                      cancellation.cancel_observed_at_unix_ns.value_or(0)),
+                  static_cast<long long>(
+                      cancellation.cancel_completed_at_unix_ns.value_or(0)));
+    }
   } else {
     ImGui::TextUnformatted("No job submitted");
   }
@@ -686,8 +721,8 @@ void IridescenceGui::DrawAlignmentUi() {
                            : proposal.method == AlignmentMethod::kDescriptor
                                  ? "Descriptor"
                                  : "Manual";
-  ImGui::Text("Agent: %c <- %c", proposal.target_agent,
-              proposal.source_agent);
+  ImGui::Text("Agent: %s <- %s", proposal.target_agent.Value().c_str(),
+              proposal.source_agent.Value().c_str());
   ImGui::Text("Method: %s", method);
   if (proposal.method == AlignmentMethod::kDescriptor) {
     const auto& loops = alignment_feedback_->diagnostics.descriptor_loops;
@@ -876,6 +911,8 @@ void IridescenceGui::LoadAlignmentEditor() {
   kiss_use_quatro_ = alignment.Value().kiss_use_quatro;
   pose_nn_distance_threshold_ =
       static_cast<float>(alignment.Value().pose_nn_distance_threshold);
+  inter_loop_keyframe_spacing_m_ = static_cast<float>(
+      alignment.Value().inter_loop_keyframe_spacing_m);
 }
 
 Result<void> IridescenceGui::SaveAndApplyConfig() {
@@ -892,29 +929,82 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
       config_dynamic_remover_.data(), root_dir_path_.data(),
       selected_datasets_, root_save_dir_.data()};
   auto result = document.SetValues(value);
-  if (result) result = document.Save();
-  if (result && *config_stage_ == StageId::kAlignment) {
-    result = SaveAlignmentConfig(
-        std::filesystem::path(services_.config_file_path).parent_path() /
-            config_loop_detector_.data(),
-        AlignmentConfigValues{kiss_voxel_size_, kiss_use_quatro_,
-                              pose_nn_distance_threshold_});
-  }
-  if (result && *config_stage_ == StageId::kDataLoad) {
-    if (!services_.create_session) {
-      return Result<void>::Failure(
-          Error::InvalidArgument("session creation is unavailable"));
+  if (!result) return result;
+  ConfigCandidate candidate;
+  const auto config_directory =
+      std::filesystem::path(services_.config_file_path).parent_path();
+  // Events are delivered asynchronously, so the model can briefly lag the
+  // controller after a completed command.  Reconfigure against an
+  // authoritative runtime snapshot instead of sending a stale revision.
+  const auto current_expected_revision = [&]() -> Result<ExpectedRevision> {
+    if (!services_.runtime_snapshot) {
+      return Result<ExpectedRevision>::Ok(
+          {model_.RuntimeRevision(), model_.ConfigRevision()});
     }
-    result = services_.create_session(services_.config_file_path);
-  } else if (result) {
+    auto snapshot = services_.runtime_snapshot();
+    if (!snapshot) return Result<ExpectedRevision>::Failure(snapshot.GetError());
+    if (snapshot.Value().pipeline.runtime_revision != model_.RuntimeRevision() ||
+        snapshot.Value().pipeline.config_revision != model_.ConfigRevision()) {
+      model_.Synchronize(snapshot.Value().pipeline);
+      config_revision_draft_ = model_.ConfigRevision() + 1;
+    }
+    return Result<ExpectedRevision>::Ok(
+        {snapshot.Value().pipeline.runtime_revision,
+         snapshot.Value().pipeline.config_revision});
+  };
+  if (*config_stage_ == StageId::kDataLoad) {
+    candidate.domain = ConfigDomain::kGlobal;
+    auto json = document.CanonicalJson();
+    if (!json) return Result<void>::Failure(json.GetError());
+    candidate.document_json = std::move(json).Value();
+    if (!services_.replace_root_config) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("root runtime replacement is unavailable"));
+    }
+    auto expected = current_expected_revision();
+    if (!expected) return Result<void>::Failure(expected.GetError());
+    auto replaced = services_.replace_root_config(std::move(candidate), expected.Value());
+    result = replaced ? Result<void>::Ok()
+                      : Result<void>::Failure(replaced.GetError());
+    if (result) {
+      event_queue_->ResetEpoch();
+      SynchronizeModel();
+    }
+  } else if (*config_stage_ == StageId::kAlignment) {
+    candidate.domain = ConfigDomain::kLoopDetector;
+    candidate.selected_document = config_loop_detector_.data();
+    auto json = BuildAlignmentConfigCandidate(
+        config_directory / config_loop_detector_.data(),
+        AlignmentConfigValues{kiss_voxel_size_, kiss_use_quatro_,
+                              pose_nn_distance_threshold_,
+                              inter_loop_keyframe_spacing_m_});
+    if (!json) return Result<void>::Failure(json.GetError());
+    candidate.document_json = std::move(json).Value();
     if (!services_.apply_config) {
       return Result<void>::Failure(
           Error::InvalidArgument("stage reconfiguration is unavailable"));
     }
-    const auto domain = *config_stage_ == StageId::kAlignment
-                            ? ConfigDomain::kLoopDetector
-                            : ConfigDomain::kDynamicRemover;
-    result = services_.apply_config(domain, model_.ConfigRevision() + 1);
+    auto expected = current_expected_revision();
+    if (!expected) return Result<void>::Failure(expected.GetError());
+    auto applied = services_.apply_config(std::move(candidate), expected.Value());
+    result = applied ? Result<void>::Ok()
+                     : Result<void>::Failure(applied.GetError());
+  } else {
+    candidate.domain = ConfigDomain::kDynamicRemover;
+    candidate.selected_document = config_dynamic_remover_.data();
+    auto json = LoadDynamicRemoverConfigCandidate(
+        config_directory / config_dynamic_remover_.data());
+    if (!json) return Result<void>::Failure(json.GetError());
+    candidate.document_json = std::move(json).Value();
+    if (!services_.apply_config) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("stage reconfiguration is unavailable"));
+    }
+    auto expected = current_expected_revision();
+    if (!expected) return Result<void>::Failure(expected.GetError());
+    auto applied = services_.apply_config(std::move(candidate), expected.Value());
+    result = applied ? Result<void>::Ok()
+                     : Result<void>::Failure(applied.GetError());
   }
   if (result) SynchronizeModel();
   return result;
@@ -1019,6 +1109,9 @@ void IridescenceGui::DrawStageConfigModal() {
     ImGui::DragFloat("Pose NN max distance (m)",
                      &pose_nn_distance_threshold_, 0.1F, 0.1F, 100.0F,
                      "%.1f");
+    ImGui::DragFloat("Inter-loop keyframe spacing (m)",
+                     &inter_loop_keyframe_spacing_m_, 0.1F, 0.1F, 100.0F,
+                     "%.1f");
     ImGui::Separator();
     ImGui::TextUnformatted("Module: Incremental backend optimizer");
   } else if (*config_stage_ == StageId::kMapUpdate) {
@@ -1046,7 +1139,7 @@ void IridescenceGui::DrawStageConfigModal() {
     auto result = SaveAndApplyConfig();
     if (result) {
       config_editor_status_ = *config_stage_ == StageId::kDataLoad
-          ? "DataLoad configuration applied to a new session."
+          ? "DataLoad configuration applied to a new runtime."
           : "Stage configuration applied; upstream results were preserved.";
       ImGui::CloseCurrentPopup();
       config_stage_.reset();
@@ -1068,4 +1161,25 @@ void IridescenceGui::DrawStageConfigModal() {
 }
 }  // namespace open_lmm
 
-extern "C" open_lmm::GuiPlugin* create_gui_plugin() { return new open_lmm::IridescenceGui(); }
+#include <open_lmm/common/plugin_api.h>
+
+namespace {
+void* CreateGui(const OpenLmmPluginConfigV1*) noexcept {
+  try {
+    open_lmm::GuiPlugin* plugin = new open_lmm::IridescenceGui();
+    return static_cast<void*>(plugin);
+  } catch (...) {
+    return nullptr;
+  }
+}
+void DestroyGui(void* value) noexcept {
+  delete static_cast<open_lmm::GuiPlugin*>(value);
+}
+const OpenLmmPluginApiV1 kGuiApi{
+    OPEN_LMM_PLUGIN_ABI_VERSION_V1, "gui", "iridescence",
+    &CreateGui, &DestroyGui, "gui:services-v2", 1, "open-lmm-2.0"};
+}  // namespace
+
+extern "C" const OpenLmmPluginApiV1* open_lmm_plugin_entry() {
+  return &kGuiApi;
+}

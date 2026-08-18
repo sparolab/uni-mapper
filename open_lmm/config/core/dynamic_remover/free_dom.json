@@ -31,6 +31,9 @@
     "aggressive_connectivity": 124,
     "enable_raycast_enhancement": true,
 
+    // legacy reproduces the historical FreeDOM projection and output.
+    // physical converts these degree values to radians before projection.
+    "fov_projection_mode": "legacy",
     "lidar_horizon_fov_degree": 360.0,
     "lidar_vertical_fov_upper_degree": 2.0,
     "lidar_vertical_fov_lower_degree": -24.8,

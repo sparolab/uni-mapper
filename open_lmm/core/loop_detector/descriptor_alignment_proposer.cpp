@@ -194,9 +194,9 @@ DescriptorAlignmentProposer::DescriptorAlignmentProposer(
 }
 
 std::optional<MapAlignmentProposal> DescriptorAlignmentProposer::Propose(
-    char target_agent, char source_agent,
+    AgentId target_agent, AgentId source_agent,
     const PoseVec& source_odometry,
-    const std::map<char, AgentOptimizedData>& optimized_agents,
+    const AgentOptimizedDataMap& optimized_agents,
     const LoopPairVec& descriptor_loops,
     DescriptorAlignmentDiagnostics* diagnostics) const {
   const auto candidate_start = std::chrono::steady_clock::now();
@@ -211,12 +211,12 @@ std::optional<MapAlignmentProposal> DescriptorAlignmentProposer::Propose(
     const auto optimized = optimized_agents.find(loop.to.first);
     if (optimized == optimized_agents.end()) continue;
     const auto pose = std::find_if(
-        optimized->second.optimized_poses.begin(),
-        optimized->second.optimized_poses.end(),
+        optimized->second->optimized_poses.begin(),
+        optimized->second->optimized_poses.end(),
         [&loop](const auto& value) {
           return value.first == static_cast<int>(loop.to.second);
         });
-    if (pose == optimized->second.optimized_poses.end()) continue;
+    if (pose == optimized->second->optimized_poses.end()) continue;
     candidates.push_back(pose->second * loop.init_rel_pose *
                          source_odometry[loop.from.second].inverse());
     candidate_loop_indices.push_back(loop_index);

@@ -12,6 +12,8 @@
 using namespace open_lmm;
 
 namespace {
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 void Check(bool condition, const char* message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -21,11 +23,21 @@ void Check(bool condition, const char* message) {
 
 MapAlignmentProposal Proposal(AlignmentMethod method, double x) {
   MapAlignmentProposal proposal;
-  proposal.target_agent = 'A';
-  proposal.source_agent = 'B';
+  proposal.target_agent = Id("A");
+  proposal.source_agent = Id("B");
   proposal.method = method;
   proposal.target_T_source.translation().x() = x;
   return proposal;
+}
+
+Result<std::optional<MapAlignmentProposal>> Proposed(
+    std::optional<MapAlignmentProposal> proposal) {
+  return Result<std::optional<MapAlignmentProposal>>::Ok(std::move(proposal));
+}
+
+Result<std::optional<MapAlignmentProposal>> Proposed(
+    MapAlignmentProposal proposal) {
+  return Proposed(std::optional<MapAlignmentProposal>(std::move(proposal)));
 }
 
 AlignmentFeedbackSnapshot WaitForSnapshot(
@@ -43,8 +55,8 @@ MapAlignmentCoordinatorInput Input(
   MapAlignmentCoordinatorInput input;
   input.feedback = broker;
   input.cancellation = std::make_shared<CancellationToken>();
-  input.target_agent = 'A';
-  input.source_agent = 'B';
+  input.target_agent = Id("A");
+  input.source_agent = Id("B");
   return input;
 }
 
@@ -56,11 +68,11 @@ void TestKissAcceptDoesNotComputeDescriptor() {
   std::atomic<int> descriptor_calls{0};
   input.kiss_proposer = [&] {
     ++kiss_calls;
-    return std::optional(Proposal(AlignmentMethod::kKissMatcher, 1));
+    return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1));
   };
   input.descriptor_proposer = [&] {
     ++descriptor_calls;
-    return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
+    return Proposed(Proposal(AlignmentMethod::kDescriptor, 2));
   };
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
@@ -94,9 +106,9 @@ void TestDescriptorFallback() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
   input.descriptor_proposer = [] {
-    return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
+    return Proposed(Proposal(AlignmentMethod::kDescriptor, 2));
   };
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
@@ -125,9 +137,9 @@ void TestFullFallbackToManual() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
   input.descriptor_proposer = [] {
-    return std::optional(Proposal(AlignmentMethod::kDescriptor, 2));
+    return Proposed(Proposal(AlignmentMethod::kDescriptor, 2));
   };
   Result<MapAlignmentProposal> result =
       Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
@@ -171,13 +183,13 @@ void TestAlwaysManualAndRigidTransformValidation() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.feedback_mode = "always_manual";
+  input.intent = InteractiveAlignmentIntent::kManualOnly;
   std::atomic<int> kiss_calls{0};
   input.kiss_proposer = [&] {
     ++kiss_calls;
-    return std::optional(Proposal(AlignmentMethod::kKissMatcher, 3));
+    return Proposed(Proposal(AlignmentMethod::kKissMatcher, 3));
   };
-  input.descriptor_proposer = []() -> std::optional<MapAlignmentProposal> {
+  input.descriptor_proposer = []() -> Result<std::optional<MapAlignmentProposal>> {
     std::abort();
   };
   Result<MapAlignmentProposal> result =
@@ -211,19 +223,45 @@ void TestTimeout() {
   broker->SetEnabled(true);
   auto input = Input(broker);
   input.feedback_timeout = std::chrono::milliseconds(5);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
   const auto result = MapAlignmentCoordinator().Align(input);
   Check(!result && result.GetError().code == Error::Code::kInvalidArgument,
         "feedback timeout reported");
   Check(!broker->Snapshot(), "timed-out request cleared");
 }
 
+void TestProposerFailurePreservesStructuredError() {
+  auto broker = std::make_shared<AlignmentFeedbackBroker>();
+  broker->SetEnabled(true);
+  auto input = Input(broker);
+  input.kiss_proposer = [] {
+    return Result<std::optional<MapAlignmentProposal>>::Failure(
+        Error::Cancelled("KISS stopped by caller")
+            .WithExecution("alignment", "kiss", Id("B")));
+  };
+  Result<MapAlignmentProposal> result =
+      Result<MapAlignmentProposal>::Failure(Error::InvalidArgument("not run"));
+  std::thread worker([&] { result = MapAlignmentCoordinator().Align(input); });
+  const auto snapshot = WaitForSnapshot(broker);
+  Check(static_cast<bool>(broker->Respond(
+            {snapshot.proposal.request_id,
+             AlignmentDecision::kTryKissMatcher, std::nullopt})),
+        "request failing KISS proposal");
+  worker.join();
+  Check(!result && result.GetError().code == Error::Code::kCancelled,
+        "proposer error code is preserved");
+  Check(result.GetError().context.stage == "alignment" &&
+            result.GetError().context.node == "kiss" &&
+            result.GetError().context.agent == Id("B"),
+        "proposer structured context is preserved");
+}
+
 void TestManualValidationRetries() {
   auto broker = std::make_shared<AlignmentFeedbackBroker>();
   broker->SetEnabled(true);
   auto input = Input(broker);
-  input.kiss_proposer = [] { return Proposal(AlignmentMethod::kKissMatcher, 1); };
-  input.descriptor_proposer = [] { return std::optional<MapAlignmentProposal>{}; };
+  input.kiss_proposer = [] { return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1)); };
+  input.descriptor_proposer = [] { return Proposed(std::nullopt); };
   std::atomic<int> validation_calls{0};
   input.proposal_validator = [&](const MapAlignmentProposal&) {
     if (++validation_calls == 1) {
@@ -266,23 +304,26 @@ void TestManualValidationRetries() {
 
 void TestDescriptorConsensusRejectsOutlier() {
   PoseVec odometry(4, Eigen::Isometry3d::Identity());
-  std::map<char, AgentOptimizedData> optimized;
-  optimized['A'].agent_id = 'A';
+  AgentOptimizedData optimized_agent;
+  optimized_agent.agent_id = Id("A");
   LoopPairVec loops;
   const double translations[] = {0.8, 1.0, 1.2, 100.0};
   for (int i = 0; i < 4; ++i) {
-    optimized['A'].optimized_poses.emplace_back(
+    optimized_agent.optimized_poses.emplace_back(
         i, Eigen::Isometry3d::Identity());
     LoopPair loop;
-    loop.to = {'A', static_cast<std::size_t>(i)};
-    loop.from = {'B', static_cast<std::size_t>(i)};
+    loop.to = {Id("A"), static_cast<std::size_t>(i)};
+    loop.from = {Id("B"), static_cast<std::size_t>(i)};
     loop.init_rel_pose = Eigen::Isometry3d::Identity();
     loop.init_rel_pose.translation().x() = translations[i];
     loops.push_back(loop);
   }
+  AgentOptimizedDataMap optimized;
+  optimized[Id("A")] =
+      std::make_shared<const AgentOptimizedData>(std::move(optimized_agent));
   DescriptorAlignmentDiagnostics diagnostics;
   const auto proposal = DescriptorAlignmentProposer(10.0, 20.0 * M_PI / 180.0).Propose(
-      'A', 'B', odometry, optimized, loops, &diagnostics);
+      Id("A"), Id("B"), odometry, optimized, loops, &diagnostics);
   Check(proposal.has_value(), "Descriptor consensus proposal exists");
   Check(proposal->metrics.consensus_size == 3,
         "Descriptor outlier excluded from consensus");
@@ -298,7 +339,7 @@ void TestDescriptorConsensusRejectsOutlier() {
   exact_options.threads = 2;
   exact_options.max_candidates = 0;
   const auto exact_proposal = DescriptorAlignmentProposer(exact_options).Propose(
-      'A', 'B', odometry, optimized, loops);
+      Id("A"), Id("B"), odometry, optimized, loops);
   Check(exact_proposal.has_value(), "Exact Descriptor solver remains available");
   Check(exact_proposal->metrics.consensus_size == 3,
         "Exact Descriptor solver rejects the same outlier");
@@ -341,6 +382,7 @@ int main() {
   TestFullFallbackToManual();
   TestAlwaysManualAndRigidTransformValidation();
   TestTimeout();
+  TestProposerFailurePreservesStructuredError();
   TestManualValidationRetries();
   TestDescriptorConsensusRejectsOutlier();
   TestMapRefinementAndQualityMetrics();

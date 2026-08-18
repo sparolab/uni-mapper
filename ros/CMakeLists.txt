@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(open_lmm_ros VERSION 1.0.0 LANGUAGES CXX)
+project(open_lmm_ros VERSION 2.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 # set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
@@ -30,30 +30,49 @@ endif()
 
 ### ROS2 ###
 find_package(ament_cmake_auto REQUIRED)
+find_package(open_lmm CONFIG REQUIRED COMPONENTS client gui)
 ament_auto_find_build_dependencies()
+find_package(rosidl_default_generators REQUIRED)
 
-### open_lmm ###
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../open_lmm/ AND NOT IS_SYMLINK ${CMAKE_CURRENT_SOURCE_DIR})
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../open_lmm ${CMAKE_CURRENT_BINARY_DIR}/open_lmm)
-endif()
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ExecutionEvent.msg"
+  "srv/GetRuntimeStatus.srv"
+  "action/ExecutePipeline.action"
+)
 
 ### open_lmm_ros ###
-ament_auto_add_library(open_lmm_ros SHARED
+ament_auto_add_library(open_lmm_ros_component SHARED
   ${ros_version}/open_lmm_ros/open_lmm_ros.cpp
 )
-target_link_libraries(open_lmm_ros
-  open_lmm_utils
-  open_lmm_map_server
-  open_lmm_gui_core
+set_target_properties(open_lmm_ros_component PROPERTIES
+  OUTPUT_NAME open_lmm_ros
+  VERSION ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR}
 )
-rclcpp_components_register_nodes(open_lmm_ros "open_lmm::OpenLMMROS")
+target_link_libraries(open_lmm_ros_component
+  open_lmm::client
+  open_lmm::gui
+)
+rosidl_get_typesupport_target(open_lmm_ros_typesupport_target
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(open_lmm_ros_component "${open_lmm_ros_typesupport_target}")
+rclcpp_components_register_nodes(open_lmm_ros_component "open_lmm::OpenLMMROS")
+
+if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_executable(open_lmm_ros_goal_admission_tests
+    test/goal_admission_tests.cpp)
+  target_link_libraries(open_lmm_ros_goal_admission_tests PRIVATE Threads::Threads)
+  add_test(NAME open_lmm_ros_goal_admission_tests
+    COMMAND open_lmm_ros_goal_admission_tests)
+endif()
 
 ### open_lmm_rosnode ###
 ament_auto_add_executable(open_lmm_rosnode
   ${ros_version}/open_lmm_ros/open_lmm_rosnode.cpp
 )
 target_link_libraries(open_lmm_rosnode
-  open_lmm_ros
+  open_lmm_ros_component
 )
 
 # Install launch files.

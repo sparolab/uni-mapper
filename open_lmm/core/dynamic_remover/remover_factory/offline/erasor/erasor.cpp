@@ -1,11 +1,11 @@
 #include "erasor.hpp"
 
 #include <pcl/common/transforms.h>
-#include <pcl/filters/voxel_grid.h>
 
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/util/downsampling_tbb.hpp>
+#include <tbb/task_arena.h>
 #include <open_lmm/common/profiling.hpp>
 
 // TODO(gil) : remove define
@@ -31,28 +31,17 @@ void ErasorServer::initialize() {
   map_arranged_complement_.reset(new pcl::PointCloud<PointT>());
 }
 
-// TODO(gil) : remove
-void VoxelPointCloud(const pcl::PointCloud<PointT>::Ptr& cloud,
-                     pcl::PointCloud<PointT>::Ptr& cloud_voxelized,
-                     const double voxel_size) {
-  if (voxel_size <= 0.001) {
-    *cloud_voxelized = *cloud;
-    return;
-  }
-  pcl::VoxelGrid<PointT> voxel_grid;
-  voxel_grid.setInputCloud(cloud);
-  voxel_grid.setLeafSize(voxel_size, voxel_size, voxel_size);
-  voxel_grid.filter(*cloud_voxelized);
-}
-
 void ErasorServer::setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr& raw_map) {
   OPEN_LMM_ZONE_N("ERASOR.MapVoxelization");
   // copy raw map to map_arranged
   map_arranged_.reset(new pcl::PointCloud<pcl::PointXYZI>());
-  // TODO(gil) : use small gicp
-  //  VoxelPointCloud(raw_map, map_arranged_, cfg_.map_voxel_size_);
-  map_arranged_ =
-      small_gicp::voxelgrid_sampling_tbb(*raw_map, cfg_.map_voxel_size_);
+  tbb::task_arena arena(cfg_.internal_cpu_threads);
+  map_arranged_ = arena.execute([&]() {
+    return small_gicp::voxelgrid_sampling_tbb(*raw_map,
+                                               cfg_.map_voxel_size_);
+  });
+  raw_map->clear();
+  raw_map->points.shrink_to_fit();
   num_pcs_init_ = map_arranged_->points.size();
   if (cfg_.is_large_scale_) {
     map_arranged_global_->reserve(NUM_PTS_LARGE_ENOUGH_FOR_MAP);
@@ -74,8 +63,11 @@ void ErasorServer::run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
   pcl::PointCloud<PointT>::Ptr filter_pc(new pcl::PointCloud<PointT>());
   // TODO(gil) : use small gicp
   //  VoxelPointCloud(scan, filter_pc, cfg_.query_voxel_size_);
-  filter_pc = small_gicp::voxelgrid_sampling_tbb(
-      *transformed_scan, cfg_.query_voxel_size_);
+  tbb::task_arena arena(cfg_.internal_cpu_threads);
+  filter_pc = arena.execute([&]() {
+    return small_gicp::voxelgrid_sampling_tbb(*transformed_scan,
+                                               cfg_.query_voxel_size_);
+  });
   // read pose in VIEWPOINT Field in pcd
   float x_curr = optimized_pose.translation().x();
   float y_curr = optimized_pose.translation().y();

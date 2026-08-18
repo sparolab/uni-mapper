@@ -11,6 +11,10 @@ class OptimizeNode : public PipelineNodeBase {
  public:
   explicit OptimizeNode(std::shared_ptr<BackendOptimizerBase> optimizer)
       : optimizer_(std::move(optimizer)) {}
+  OptimizeNode(std::shared_ptr<BackendOptimizerBase> optimizer,
+               AlgorithmExecutionContext algorithm_context)
+      : optimizer_(std::move(optimizer)),
+        algorithm_context_(std::move(algorithm_context)) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
@@ -27,31 +31,32 @@ class OptimizeNode : public PipelineNodeBase {
           "alignment output is missing its accepted global transform"));
     }
 
-    std::map<char, AgentOptimizedData> all_opt;
-    try {
-      optimizer_->SetCancellationToken(ctx.cancellation);
-      all_opt = optimizer_->Process(
-          ctx.agent, *ctx.raw_data, ctx.loop_output->intra_loops,
-          ctx.loop_output->inter_loops, db.raw_data);
-    } catch (const CancellationException& e) {
-      return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
-    } catch (const std::exception& e) {
-      return Result<ControlFlow>::Failure(Error::OptimizationFailed(
-          "agent " + std::string{ctx.agent.id} + ": " + e.what()));
+    AlgorithmExecutionContext algorithm_context = algorithm_context_;
+    algorithm_context.agent = ctx.agent;
+    algorithm_context.cancellation = ctx.cancellation;
+    BackendOptimizerInput input{*ctx.raw_data,
+                                ctx.loop_output->intra_loops,
+                                ctx.loop_output->inter_loops,
+                                db.raw_data};
+    auto processed = optimizer_->Process(algorithm_context, input);
+    if (!processed) {
+      return Result<ControlFlow>::Failure(processed.GetError());
     }
+    auto all_opt = std::move(processed).Value();
 
-    std::map<char, Eigen::Isometry3d> optimized_map_transforms;
+    std::map<AgentId, Eigen::Isometry3d> optimized_map_transforms;
     for (auto& [id, opt] : all_opt) {
       const auto raw = db.raw_data.find(id);
       if (raw != db.raw_data.end() && !opt.optimized_poses.empty()) {
         const auto& [index, global_pose] = opt.optimized_poses.front();
         if (index >= 0 &&
-            static_cast<std::size_t>(index) < raw->second.odom_poses.size()) {
+            static_cast<std::size_t>(index) < raw->second->odom_poses.size()) {
           optimized_map_transforms[id] =
-              global_pose * raw->second.odom_poses[index].inverse();
+              global_pose * raw->second->odom_poses[index].inverse();
         }
       }
-      db.optimized_data[id] = std::move(opt);
+      db.optimized_data[id] =
+          std::make_shared<const AgentOptimizedData>(std::move(opt));
     }
     db.descriptor_store.set_agent_map(
         ctx.agent.id, ctx.raw_data->map_points,
@@ -78,8 +83,8 @@ class OptimizeNode : public PipelineNodeBase {
       }
       const auto target = db.raw_data.find(loop.to.first);
       if (target == db.raw_data.end() ||
-          loop.to.second >= target->second.filtered_scans.size() ||
-          loop.to.second >= target->second.odom_poses.size()) {
+          loop.to.second >= target->second->filtered_scans.size() ||
+          loop.to.second >= target->second->odom_poses.size()) {
         return Result<void>::Failure(Error::InvalidArgument(
             "Loop target agent or scan index is invalid"));
       }
@@ -97,6 +102,7 @@ class OptimizeNode : public PipelineNodeBase {
   }
 
   std::shared_ptr<BackendOptimizerBase> optimizer_;
+  AlgorithmExecutionContext algorithm_context_;
 };
 
 }  // namespace open_lmm

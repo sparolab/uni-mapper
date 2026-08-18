@@ -26,6 +26,7 @@ target_sources(free_dom PRIVATE ${SOURCES})
 target_link_libraries(free_dom
     PCL::PCL
     ${OpenCV_LIBS}
+    open_lmm_utils
 )
 openlmm_set_global_target_properties(free_dom)
 

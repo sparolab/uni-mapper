@@ -1,0 +1,16 @@
+OpenLMM install components, version 2.0.0
+
+Runtime
+  Versioned OpenLMM runtime shared libraries, license and release metadata.
+
+Development
+  Public headers, static archives and CMake package/export metadata.
+
+PluginSDK
+  Toolchain-compatible C ABI v1 header and exported CMake interface target.
+
+Plugins
+  Runtime-loaded plugin entry libraries and their support shared libraries.
+
+Tools
+  Standalone open_lmm_batch executable.

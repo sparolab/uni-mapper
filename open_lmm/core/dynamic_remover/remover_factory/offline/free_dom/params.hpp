@@ -3,7 +3,7 @@
 #include <string>
 
 struct FreeDomParams {
-  FreeDomParams();
+  explicit FreeDomParams(const open_lmm::Config& config);
   ~FreeDomParams() = default;
 
   // bool replace_intensity;
@@ -46,9 +46,12 @@ struct FreeDomParams {
 
   bool enable_raycast_enhancement;
 
-  double lidar_horizon_fov;
-  double lidar_vertical_fov_upper;
-  double lidar_vertical_fov_lower;
+  // Legacy mode preserves the historical degree-as-radian projection.
+  // Physical mode performs the mathematically correct degree-to-radian
+  // conversion at this single boundary.
+  double lidar_horizon_fov_rad;
+  double lidar_vertical_fov_upper_rad;
+  double lidar_vertical_fov_lower_rad;
   unsigned int depth_image_vertical_lines;
 
   double depth_image_min_range;

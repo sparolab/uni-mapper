@@ -31,7 +31,8 @@ class GuiModel {
   [[nodiscard]] bool CanCancel() const;
   [[nodiscard]] uint64_t LastSequence() const;
   [[nodiscard]] uint64_t ConfigRevision() const;
-  [[nodiscard]] const std::vector<char>& Agents() const;
+  [[nodiscard]] uint64_t RuntimeRevision() const;
+  [[nodiscard]] const std::vector<AgentId>& Agents() const;
   [[nodiscard]] const std::vector<ArtifactMetadata>& Artifacts() const;
   [[nodiscard]] const std::optional<JobSnapshot>& Job() const;
   [[nodiscard]] const GuiStageView& Stage(StageId stage) const;
@@ -41,8 +42,9 @@ class GuiModel {
   static bool IsActive(JobState state);
   std::optional<JobSnapshot> job_;
   uint64_t config_revision_ = 0;
+  uint64_t runtime_revision_ = 0;
   uint64_t last_sequence_ = 0;
-  std::vector<char> agents_;
+  std::vector<AgentId> agents_;
   std::vector<ArtifactMetadata> artifacts_;
   std::map<StageId, GuiStageView> stages_;
   std::vector<ExecutionEvent> event_log_;

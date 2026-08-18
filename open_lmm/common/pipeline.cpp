@@ -25,7 +25,7 @@ Result<void> Pipeline::Run(std::vector<AgentPipelineCtx>& contexts,
       OPEN_LMM_ZONE_N("Pipeline.Node");
 #if OPEN_LMM_ENABLE_TRACY
       const std::string zone_context =
-          std::string{ctx.agent.id} + " " + node->Name();
+          ctx.agent.id.Value() + " " + node->Name();
       OPEN_LMM_ZONE_TEXT(zone_context);
 #endif
 #if OPEN_LMM_ENABLE_TIMING_LOG
@@ -36,8 +36,15 @@ Result<void> Pipeline::Run(std::vector<AgentPipelineCtx>& contexts,
           return node->Process(ctx, db);
         } catch (const std::exception& error) {
           return Result<ControlFlow>::Failure(Error::InvalidArgument(
-              "agent " + std::string{ctx.agent.id} + ", module " +
-              node->Name() + ": " + error.what()));
+              "agent " + ctx.agent.id.Value() + ", module " +
+              node->Name() + ": " + error.what())
+                                                  .WithExecution(
+                                                      "pipeline", node->Name(),
+                                                      ctx.agent.id));
+        } catch (...) {
+          return Result<ControlFlow>::Failure(
+              Error::InvalidArgument("unknown pipeline node exception")
+                  .WithExecution("pipeline", node->Name(), ctx.agent.id));
         }
       }();
 #if OPEN_LMM_ENABLE_TIMING_LOG

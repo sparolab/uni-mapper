@@ -10,7 +10,7 @@ std::string DynamicLoaderError() {
 }
 }  // namespace
 
-// Legacy helpers — 직접 사용 지양, load_module_from_so 사용 권장
+// Legacy helpers retained for source compatibility. New plugins use ABI v1.
 void open_so(const std::string& so_name) {
   void* handle = dlopen(so_name.c_str(), RTLD_LAZY);
   if (handle == nullptr) {

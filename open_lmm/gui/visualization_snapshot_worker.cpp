@@ -14,8 +14,8 @@ VisualizationSnapshotWorker::~VisualizationSnapshotWorker() {
   Join();
 }
 
-void VisualizationSnapshotWorker::Request(char agent) {
-  if (agent == 0) return;
+void VisualizationSnapshotWorker::Request(AgentId agent) {
+  if (!agent.IsValid()) return;
   {
     std::lock_guard lock(mutex_);
     if (stopping_) return;
@@ -46,7 +46,7 @@ void VisualizationSnapshotWorker::Join() {
 
 void VisualizationSnapshotWorker::Run() {
   while (true) {
-    char agent = 0;
+    AgentId agent;
     uint64_t generation = 0;
     {
       std::unique_lock lock(mutex_);

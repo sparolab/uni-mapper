@@ -19,6 +19,7 @@
     "map_voxel_size": 0.2,
     "voxelization_interval": 10,
     "removal_interval": 5,
+    "internal_cpu_threads": 1,
     "tf_z": 0.7
   }
 }

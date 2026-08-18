@@ -15,7 +15,7 @@ struct Clustering {
 };
 
   struct DUFOMapParams {
-    DUFOMapParams();
+    explicit DUFOMapParams(const open_lmm::Config& config);
     ~DUFOMapParams() = default;
     ufo::IntegrationParams integration;
     Map map;

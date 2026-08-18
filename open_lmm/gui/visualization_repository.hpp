@@ -20,23 +20,23 @@ class VisualizationRepository {
   [[nodiscard]] VisualizationUpdate Commit(
       std::shared_ptr<const VisualizationSnapshot> snapshot);
   [[nodiscard]] std::shared_ptr<const VisualizationSnapshot> Latest(
-      char agent) const;
+      const AgentId& agent) const;
   [[nodiscard]] std::vector<std::shared_ptr<const VisualizationSnapshot>>
   Snapshots() const;
   [[nodiscard]] std::size_t ApproximateBytes() const;
 
-  [[nodiscard]] static std::string MapName(char agent, uint64_t revision);
-  [[nodiscard]] static std::string TrajectoryName(char agent,
+  [[nodiscard]] static std::string MapName(const AgentId& agent, uint64_t revision);
+  [[nodiscard]] static std::string TrajectoryName(const AgentId& agent,
                                                   uint64_t revision);
-  [[nodiscard]] static std::string PoseName(char agent, std::size_t pose_index,
+  [[nodiscard]] static std::string PoseName(const AgentId& agent, std::size_t pose_index,
                                             uint64_t revision);
-  [[nodiscard]] static std::string IntraLoopName(char agent,
+  [[nodiscard]] static std::string IntraLoopName(const AgentId& agent,
                                                  uint64_t revision);
-  [[nodiscard]] static std::string InterLoopName(char agent,
+  [[nodiscard]] static std::string InterLoopName(const AgentId& agent,
                                                  uint64_t revision);
 
  private:
-  std::map<char, std::shared_ptr<const VisualizationSnapshot>> snapshots_;
+  std::map<AgentId, std::shared_ptr<const VisualizationSnapshot>> snapshots_;
 };
 
 }  // namespace open_lmm

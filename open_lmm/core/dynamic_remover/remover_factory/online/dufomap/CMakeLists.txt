@@ -22,6 +22,7 @@ target_link_libraries(dufomap PUBLIC
   UFO::Map
   Eigen3::Eigen
   PCL::PCL
+  open_lmm_utils
 )
 openlmm_set_global_target_properties(dufomap)
 

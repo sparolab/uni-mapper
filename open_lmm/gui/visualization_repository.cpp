@@ -25,7 +25,7 @@ std::shared_ptr<const VisualizationSnapshot> MetadataOnly(
 VisualizationUpdate VisualizationRepository::Commit(
     std::shared_ptr<const VisualizationSnapshot> snapshot) {
   VisualizationUpdate update;
-  if (!snapshot || snapshot->agent == 0) return update;
+  if (!snapshot || !snapshot->agent.IsValid()) return update;
   const auto found = snapshots_.find(snapshot->agent);
   if (found != snapshots_.end()) {
     if (found->second->revision >= snapshot->revision) return update;
@@ -40,7 +40,7 @@ VisualizationUpdate VisualizationRepository::Commit(
           PoseName(snapshot->agent, i, found->second->revision));
     }
   }
-  const char agent = snapshot->agent;
+  const AgentId agent = snapshot->agent;
   snapshots_[agent] = MetadataOnly(*snapshot);
   const auto& current = snapshots_.at(agent);
   update.add_drawables = {
@@ -54,7 +54,7 @@ VisualizationUpdate VisualizationRepository::Commit(
 }
 
 std::shared_ptr<const VisualizationSnapshot> VisualizationRepository::Latest(
-    char agent) const {
+    const AgentId& agent) const {
   const auto found = snapshots_.find(agent);
   return found == snapshots_.end() ? nullptr : found->second;
 }
@@ -82,31 +82,31 @@ std::size_t VisualizationRepository::ApproximateBytes() const {
   return bytes;
 }
 
-std::string VisualizationRepository::MapName(char agent, uint64_t revision) {
-  return RevisionName("agent/" + std::string{agent} + "/map", revision);
+std::string VisualizationRepository::MapName(const AgentId& agent, uint64_t revision) {
+  return RevisionName("agent/" + agent.Value() + "/map", revision);
 }
 
-std::string VisualizationRepository::TrajectoryName(char agent,
+std::string VisualizationRepository::TrajectoryName(const AgentId& agent,
                                                     uint64_t revision) {
-  return RevisionName("agent/" + std::string{agent} + "/trajectory", revision);
+  return RevisionName("agent/" + agent.Value() + "/trajectory", revision);
 }
 
-std::string VisualizationRepository::PoseName(char agent,
+std::string VisualizationRepository::PoseName(const AgentId& agent,
                                               std::size_t pose_index,
                                               uint64_t revision) {
-  return RevisionName("agent/" + std::string{agent} + "/pose/" +
+  return RevisionName("agent/" + agent.Value() + "/pose/" +
                           std::to_string(pose_index),
                       revision);
 }
 
-std::string VisualizationRepository::IntraLoopName(char agent,
+std::string VisualizationRepository::IntraLoopName(const AgentId& agent,
                                                    uint64_t revision) {
-  return RevisionName("loops/intra/" + std::string{agent}, revision);
+  return RevisionName("loops/intra/" + agent.Value(), revision);
 }
 
-std::string VisualizationRepository::InterLoopName(char agent,
+std::string VisualizationRepository::InterLoopName(const AgentId& agent,
                                                    uint64_t revision) {
-  return RevisionName("loops/inter/" + std::string{agent}, revision);
+  return RevisionName("loops/inter/" + agent.Value(), revision);
 }
 
 }  // namespace open_lmm

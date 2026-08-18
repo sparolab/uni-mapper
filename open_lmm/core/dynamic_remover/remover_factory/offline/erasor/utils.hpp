@@ -35,7 +35,8 @@ namespace common {
 struct Config {
  public:
   //   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  Config();
+  Config() = default;
+  explicit Config(const open_lmm::Config& config);
   ~Config() = default;
 
  public:
@@ -72,6 +73,7 @@ struct Config {
   double tf_z = 0.0;
   
   bool is_large_scale_ = false;
+  int internal_cpu_threads = 1;
 };
 
 }  // namespace common

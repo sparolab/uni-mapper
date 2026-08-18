@@ -33,6 +33,7 @@ target_link_libraries(hmm_mos
     unordered_dense::unordered_dense
     PCL::PCL
     nanoflann::nanoflann
+    open_lmm_utils
 )
 openlmm_set_global_target_properties(hmm_mos)
 

@@ -22,6 +22,7 @@ target_sources(otd PRIVATE ${SOURCES})
 target_link_libraries(otd
     PCL::PCL
     OpenMP::OpenMP_CXX
+    open_lmm_utils
 )
 openlmm_set_global_target_properties(otd)
 

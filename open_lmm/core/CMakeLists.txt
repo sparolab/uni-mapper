@@ -1,5 +1,7 @@
 
 add_subdirectory(data_loader)
+add_subdirectory(descriptor)
+add_subdirectory(alignment)
 add_subdirectory(loop_detector)
 add_subdirectory(backend_optimizer)
 add_subdirectory(dynamic_remover)

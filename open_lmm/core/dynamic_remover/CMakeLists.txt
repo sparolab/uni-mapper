@@ -2,18 +2,22 @@
 add_subdirectory(remover_factory)
 
 
-add_library(open_lmm_dynamic_remover STATIC)
+add_library(open_lmm_dynamic_remover SHARED)
 target_sources(open_lmm_dynamic_remover PRIVATE
   dynamic_remover_base.cpp
   dynamic_remover_online.cpp
   dynamic_remover_offline.cpp
 )
 target_link_libraries(open_lmm_dynamic_remover
-  open_lmm_profiling
+ PUBLIC
   Eigen3::Eigen
+  PCL::PCL
   open_lmm_common
-  dynamic_removal_factory
+  open_lmm_algorithm_config
+  open_lmm_utils
+ PRIVATE
+  open_lmm_profiling
+  small_gicp
   tqdmcpp::tqdmcpp
 )
 openlmm_set_global_target_properties(open_lmm_dynamic_remover)
-

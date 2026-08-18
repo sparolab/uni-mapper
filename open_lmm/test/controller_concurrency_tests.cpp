@@ -1,0 +1,191 @@
+#include <open_lmm/server/pipeline_controller.hpp>
+#include "test_runtime_port.hpp"
+
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <future>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <thread>
+#include <vector>
+
+namespace {
+using namespace open_lmm;
+
+void Check(bool condition, const char* message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    std::exit(1);
+  }
+}
+
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
+AlignmentFeedbackSnapshot FeedbackSnapshot() {
+  AlignmentFeedbackSnapshot snapshot;
+  snapshot.proposal.target_agent = Id("A");
+  snapshot.proposal.source_agent = Id("B");
+  snapshot.proposal.method = AlignmentMethod::kKissMatcher;
+  return snapshot;
+}
+
+class ConcurrencyRunner final : public test::RuntimePortFixture {
+ public:
+  ConcurrencyRunner() : RuntimePortFixture({Id("A"), Id("B")}) {}
+
+  Result<void> ExecuteFixture(const ExecutionCommand& command,
+                              const ExecutionContext& context) override {
+    cancellation = context.cancellation;
+    feedback = context.alignment_feedback;
+    if (command.kind == ExecutionCommandKind::kStage) {
+      return RunStage(*command.stage);
+    }
+    return Result<void>::Ok();
+  }
+
+  Result<void> RunStage(StageId stage) {
+    if (stage != StageId::kAlignment || !request_feedback) {
+      return Result<void>::Ok();
+    }
+    std::unique_lock lock(runner_mutex);
+    feedback_window.store(true, std::memory_order_release);
+    while (!release_feedback.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    AlignmentFeedbackSnapshot snapshot;
+    snapshot.proposal.target_agent = Id("A");
+    snapshot.proposal.source_agent = Id("B");
+    snapshot.proposal.method = AlignmentMethod::kKissMatcher;
+    auto response = feedback->Request(std::move(snapshot), cancellation);
+    if (!response || response.Value().decision == AlignmentDecision::kCancel) {
+      return Result<void>::Failure(Error::Cancelled("feedback cancelled"));
+    }
+    return Result<void>::Ok();
+  }
+
+  CommittedRuntimeSnapshot Snapshot() const override {
+    std::lock_guard lock(runner_mutex);
+    if (agent_ids_hook) agent_ids_hook();
+    return RuntimePortFixture::Snapshot();
+  }
+
+  mutable std::mutex runner_mutex;
+  std::function<void()> agent_ids_hook;
+  std::shared_ptr<CancellationToken> cancellation;
+  std::shared_ptr<AlignmentFeedbackBroker> feedback;
+  bool request_feedback = false;
+  std::atomic<bool> feedback_window{false};
+  std::atomic<bool> release_feedback{false};
+};
+
+void SnapshotUsesImmutableRunnerState() {
+  auto runner = std::make_shared<ConcurrencyRunner>();
+  PipelineController controller(runner);
+  runner->agent_ids_hook = [&controller] { (void)controller.Snapshot(); };
+
+  auto future = std::async(std::launch::async,
+                           [&controller] { return controller.Snapshot(); });
+  Check(future.wait_for(std::chrono::milliseconds(500)) ==
+            std::future_status::ready,
+        "Snapshot called the query port under the controller lock");
+  Check(future.get().agents == std::vector<AgentId>({Id("A"), Id("B")}),
+        "cached agent snapshot mismatch");
+}
+
+void FeedbackAndSnapshotHaveNoLockInversion() {
+  auto runner = std::make_shared<ConcurrencyRunner>();
+  runner->request_feedback = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "alignment submission failed");
+
+  const auto lock_deadline = std::chrono::steady_clock::now() +
+                             std::chrono::milliseconds(500);
+  while (!runner->feedback_window.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < lock_deadline) {
+    std::this_thread::yield();
+  }
+  Check(runner->feedback_window.load(std::memory_order_acquire),
+        "feedback lock window was not reached");
+
+  auto future = std::async(std::launch::async,
+                           [&controller] { return controller.Snapshot(); });
+  Check(future.wait_for(std::chrono::milliseconds(500)) ==
+            std::future_status::ready,
+        "Snapshot blocked on runner state");
+  (void)future.get();
+
+  runner->release_feedback.store(true, std::memory_order_release);
+  std::optional<AlignmentFeedbackSnapshot> request;
+  const auto request_deadline = std::chrono::steady_clock::now() +
+                                std::chrono::milliseconds(500);
+  while (!(request = controller.GetAlignmentFeedbackSnapshot()) &&
+         std::chrono::steady_clock::now() < request_deadline) {
+    std::this_thread::yield();
+  }
+  Check(request.has_value(), "feedback request was not published");
+  Check(controller.RespondToAlignment(
+            job.Value(), {request->proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+        "feedback response failed");
+  Check(controller.Wait(job.Value()).IsOk(), "alignment job did not finish");
+}
+
+void FeedbackPublishesBeforeSynchronousNotification() {
+  AlignmentFeedbackBroker broker;
+  uint64_t observed_request_id = 0;
+  broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
+    const auto published = broker.Snapshot();
+    Check(published && published->proposal.request_id ==
+                           notified.proposal.request_id,
+          "feedback was not published before synchronous notification");
+    observed_request_id = notified.proposal.request_id;
+    Check(broker.Respond({notified.proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+          "synchronous feedback response was rejected");
+  });
+  const auto response = broker.Request(FeedbackSnapshot(), nullptr);
+  Check(response && response.Value().decision == AlignmentDecision::kAccept &&
+            observed_request_id != 0 && !broker.Snapshot(),
+        "synchronous feedback did not complete and clear the request");
+}
+
+void ThrowingFeedbackNotificationRecoversForNextRequest() {
+  AlignmentFeedbackBroker broker;
+  broker.SetNotification([](const AlignmentFeedbackSnapshot&) {
+    throw std::runtime_error("notification fixture");
+  });
+  const auto failed = broker.Request(FeedbackSnapshot(), nullptr);
+  Check(!failed &&
+            failed.GetError().Message().find("notification fixture") !=
+                std::string::npos &&
+            !broker.Snapshot(),
+        "throwing notification did not clear the active request");
+
+  uint64_t retry_request_id = 0;
+  broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
+    retry_request_id = notified.proposal.request_id;
+    Check(broker.Respond({notified.proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+          "response after notification failure was rejected");
+  });
+  const auto retried = broker.Request(FeedbackSnapshot(), nullptr);
+  Check(retried && retry_request_id > 1 && !broker.Snapshot(),
+        "feedback request was not reusable after callback failure");
+}
+
+}  // namespace
+
+int main() {
+  SnapshotUsesImmutableRunnerState();
+  FeedbackAndSnapshotHaveNoLockInversion();
+  FeedbackPublishesBeforeSynchronousNotification();
+  ThrowingFeedbackNotificationRecoversForNextRequest();
+  std::cout << "controller concurrency tests passed\n";
+  return 0;
+}

@@ -1,0 +1,15 @@
+uint64 job_id
+uint64 sequence
+uint8 event_type
+bool has_stage
+uint8 stage
+bool has_node
+uint8 node
+bool has_agent
+string agent
+uint64 progress_current
+uint64 progress_total
+string message
+bool has_error
+string error
+string[] affected_agents

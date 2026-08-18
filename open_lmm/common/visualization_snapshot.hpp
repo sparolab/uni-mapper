@@ -1,5 +1,7 @@
 #pragma once
 
+#include <open_lmm/common/agent_id.hpp>
+
 #include <Eigen/Geometry>
 
 #include <cstddef>
@@ -20,9 +22,9 @@ struct VisualizationPose {
 };
 
 struct VisualizationEdge {
-  char from_agent = 0;
+  AgentId from_agent;
   std::size_t from_index = 0;
-  char to_agent = 0;
+  AgentId to_agent;
   std::size_t to_index = 0;
   VisualizationEdgeType type = VisualizationEdgeType::kTrajectory;
 };
@@ -37,7 +39,7 @@ struct VisualizationPoint {
 // Immutable-by-convention transfer object. Algorithm-owned PCL/Eigen containers
 // are copied before this value crosses into the GUI thread.
 struct VisualizationSnapshot {
-  char agent = 0;
+  AgentId agent;
   uint64_t revision = 0;
   std::vector<VisualizationPose> poses;
   std::vector<VisualizationEdge> edges;

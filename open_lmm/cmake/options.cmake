@@ -29,6 +29,32 @@ endif()
 # 선택적 로컬 타임라인 프로파일링. 기본 빌드는 Tracy를 fetch/link하지 않는다.
 option(OPEN_LMM_ENABLE_TRACY "Enable Tracy timeline profiling" OFF)
 option(OPEN_LMM_ENABLE_TIMING_LOG "Enable lightweight [PROFILE] timing logs" ON)
+option(OPEN_LMM_ENABLE_TSAN
+  "Instrument OpenLMM and focused concurrency tests with ThreadSanitizer" OFF)
+option(OPEN_LMM_ENABLE_ASAN_UBSAN
+  "Instrument OpenLMM with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(OPEN_LMM_ENABLE_TSAN AND OPEN_LMM_ENABLE_ASAN_UBSAN)
+  message(FATAL_ERROR
+    "OPEN_LMM_ENABLE_TSAN and OPEN_LMM_ENABLE_ASAN_UBSAN are mutually exclusive")
+endif()
 
 # 선택적 데스크톱 GUI. OFF에서는 Iridescence/OpenGL을 찾거나 링크하지 않는다.
 option(OPEN_LMM_BUILD_IRIDESCENCE_GUI "Build the optional Iridescence GUI plugin" ON)
+
+# Runtime plugin target selection. A disabled built-in is not configured,
+# compiled, installed, or advertised as available by the typed config parser.
+option(OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT
+  "Build the ScanContext descriptor plugin" ON)
+option(OPEN_LMM_BUILD_DESCRIPTOR_SOLID
+  "Build the SOLiD descriptor plugin" ON)
+option(OPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS
+  "Build the HMM-MOS online dynamic-remover plugin" ON)
+option(OPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP
+  "Build the DUFOMap online dynamic-remover plugin" ON)
+option(OPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD
+  "Build the OTD online dynamic-remover plugin" ON)
+option(OPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM
+  "Build the FreeDOM offline dynamic-remover plugin" ON)
+option(OPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR
+  "Build the ERASOR offline dynamic-remover plugin" ON)

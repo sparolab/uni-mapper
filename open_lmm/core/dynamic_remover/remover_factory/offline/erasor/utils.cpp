@@ -13,40 +13,28 @@
 
 namespace common {
 
-Config::Config() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_dynamic_remover"));
-  max_range_ = config.param<double>("dynamic_remover", "max_range", 80.0);
-  num_rings_ = config.param<int>("dynamic_remover", "num_rings", 20);
-  num_sectors_ = config.param<int>("dynamic_remover", "num_sectors", 108);
-  min_h_ = config.param<double>("dynamic_remover", "min_h", -1.7);
-  max_h_ = config.param<double>("dynamic_remover", "max_h", 3.1);
+Config::Config(const open_lmm::Config& config) {
+  max_range_ = config.param_cast<double>("dynamic_remover", "max_range");
+  num_rings_ = config.param_cast<int>("dynamic_remover", "num_rings");
+  num_sectors_ = config.param_cast<int>("dynamic_remover", "num_sectors");
+  min_h_ = config.param_cast<double>("dynamic_remover", "min_h");
+  max_h_ = config.param_cast<double>("dynamic_remover", "max_h");
   scan_ratio_threshold =
-      config.param<double>("dynamic_remover", "scan_ratio_threshold", 0.20);
-  minimum_num_pts = config.param<int>("dynamic_remover", "minimum_num_pts", 6);
-  th_dist_ = config.param<double>("dynamic_remover", "gf_dist_thr", 0.125);
-  iter_groundfilter_ = config.param<int>("dynamic_remover", "gf_iter", 3);
-  num_lprs_ = config.param<int>("dynamic_remover", "gf_num_lpr", 10);
-  th_seeds_heights_ = config.param<double>("dynamic_remover", "gf_th_seeds_height", 0.5);
-  num_lowest_pts = config.param<int>("dynamic_remover", "num_lowest_pts", 1);
-  query_voxel_size_ = config.param<double>("dynamic_remover", "query_voxel_size", 0.1);
-  map_voxel_size_ = config.param<double>("dynamic_remover", "map_voxel_size", 0.2);
-  global_voxelization_period_ = config.param<int>("dynamic_remover", "voxelization_interval", 10);
-  removal_interval_ = config.param<int>("dynamic_remover", "removal_interval", 5);
-  tf_z = config.param<double>("dynamic_remover", "tf_z", 0.7);
-  replace_intensity = config.param<bool>("dynamic_remover", "replace_intensity", false);
-
-  if (max_range_ <= 0.0 || num_rings_ <= 0 || num_sectors_ <= 0 ||
-      min_h_ >= max_h_ || scan_ratio_threshold < 0.0 ||
-      scan_ratio_threshold > 1.0 || minimum_num_pts <= 0 || th_dist_ <= 0.0 ||
-      iter_groundfilter_ <= 0 || num_lprs_ <= 0 || num_lowest_pts <= 0 ||
-      query_voxel_size_ <= 0.0 || map_voxel_size_ <= 0.0 ||
-      global_voxelization_period_ <= 0 || removal_interval_ <= 0) {
-    throw std::invalid_argument(
-        "ERASOR config has an invalid range; counts, ranges, voxels, and "
-        "intervals must be positive, min_h < max_h, and scan_ratio_threshold "
-        "must be within [0, 1]");
-  }
+      config.param_cast<double>("dynamic_remover", "scan_ratio_threshold");
+  minimum_num_pts = config.param_cast<int>("dynamic_remover", "minimum_num_pts");
+  th_dist_ = config.param_cast<double>("dynamic_remover", "gf_dist_thr");
+  iter_groundfilter_ = config.param_cast<int>("dynamic_remover", "gf_iter");
+  num_lprs_ = config.param_cast<int>("dynamic_remover", "gf_num_lpr");
+  th_seeds_heights_ = config.param_cast<double>("dynamic_remover", "gf_th_seeds_height");
+  num_lowest_pts = config.param_cast<int>("dynamic_remover", "num_lowest_pts");
+  query_voxel_size_ = config.param_cast<double>("dynamic_remover", "query_voxel_size");
+  map_voxel_size_ = config.param_cast<double>("dynamic_remover", "map_voxel_size");
+  global_voxelization_period_ = config.param_cast<int>("dynamic_remover", "voxelization_interval");
+  removal_interval_ = config.param_cast<int>("dynamic_remover", "removal_interval");
+  tf_z = config.param_cast<double>("dynamic_remover", "tf_z");
+  replace_intensity = config.param_cast<bool>("dynamic_remover", "replace_intensity");
+  internal_cpu_threads =
+      config.param_cast<int>("dynamic_remover", "internal_cpu_threads");
 }
 
 

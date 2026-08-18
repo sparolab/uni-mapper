@@ -4,7 +4,7 @@
 
 namespace open_lmm {
 
-void ArtifactRepository::Reset(const std::vector<char>& agents) {
+void ArtifactRepository::Reset(const std::vector<AgentId>& agents) {
   {
     std::lock_guard lock(mutex_);
     artifacts_.clear();
@@ -26,32 +26,17 @@ const char* StageName(StageId stage) {
 }  // namespace
 
 bool ArtifactRepository::IsPerAgent(ArtifactType type) {
-  return type != ArtifactType::kOptimizerState &&
-         type != ArtifactType::kDescriptorState &&
-         type != ArtifactType::kConfigSnapshot;
+  return ArtifactOwnership(type) == ExecutionScope::kPerAgent;
 }
 
-std::vector<ArtifactType> ArtifactRepository::ProducedBy(StageId stage) {
-  switch (stage) {
-    case StageId::kDataLoad: return {ArtifactType::kRawData};
-    case StageId::kAlignment:
-      return {ArtifactType::kDescriptorState, ArtifactType::kLoopCandidates, ArtifactType::kOptimizerState,
-              ArtifactType::kMapAlignment, ArtifactType::kOptimizedPoses};
-    case StageId::kMapUpdate:
-      return {ArtifactType::kGlobalMap, ArtifactType::kPcdFile};
-    case StageId::kSave: return {ArtifactType::kPoseFile};
-  }
-  return {};
-}
-
-void ArtifactRepository::RegisterAgents(const std::vector<char>& agents) {
+void ArtifactRepository::RegisterAgents(const std::vector<AgentId>& agents) {
   std::lock_guard lock(mutex_);
   agents_ = agents;
   for (auto type : {ArtifactType::kRawData, ArtifactType::kLoopCandidates,
                     ArtifactType::kMapAlignment,
                     ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
                     ArtifactType::kPoseFile, ArtifactType::kPcdFile}) {
-    for (char agent : agents_) {
+    for (const AgentId& agent : agents_) {
       ArtifactKey key{type, agent};
       artifacts_.try_emplace(key, ArtifactMetadata{key});
     }
@@ -62,11 +47,11 @@ void ArtifactRepository::RegisterAgents(const std::vector<char>& agents) {
   artifacts_.try_emplace(descriptor, ArtifactMetadata{descriptor});
   ArtifactKey config{ArtifactType::kConfigSnapshot, std::nullopt};
   artifacts_[config] = ArtifactMetadata{config, ArtifactState::kReady,
-                                        next_revision_++, "session"};
-  for (char agent : agents_) {
+                                        next_revision_++, "runtime"};
+  for (const AgentId& agent : agents_) {
     ArtifactKey input{ArtifactType::kAgentInput, agent};
     artifacts_[input] = ArtifactMetadata{input, ArtifactState::kReady,
-                                         next_revision_++, "session"};
+                                         next_revision_++, "runtime"};
   }
 }
 
@@ -76,7 +61,7 @@ void ArtifactRepository::setTypes(const std::vector<ArtifactType>& types,
                                   const std::string& detail) {
   for (auto type : types) {
     if (IsPerAgent(type)) {
-      for (char agent : agents_) {
+      for (const AgentId& agent : agents_) {
         auto& item = artifacts_[ArtifactKey{type, agent}];
         item.key = {type, agent};
         item.state = state;
@@ -96,19 +81,7 @@ void ArtifactRepository::setTypes(const std::vector<ArtifactType>& types,
 }
 
 void ArtifactRepository::invalidateDownstream(StageId stage) {
-  std::vector<ArtifactType> types;
-  if (stage == StageId::kDataLoad) {
-    types = {ArtifactType::kLoopCandidates, ArtifactType::kMapAlignment,
-             ArtifactType::kOptimizerState,
-             ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
-             ArtifactType::kPoseFile, ArtifactType::kPcdFile};
-  } else if (stage == StageId::kAlignment) {
-    types = {ArtifactType::kGlobalMap, ArtifactType::kPoseFile,
-             ArtifactType::kPcdFile};
-  } else if (stage == StageId::kMapUpdate) {
-    types = {ArtifactType::kPcdFile};
-  }
-  setTypes(types, ArtifactState::kStale, StageName(stage));
+  setTypes(AffectedArtifacts(stage), ArtifactState::kStale, StageName(stage));
 }
 
 void ArtifactRepository::BeginStage(StageId stage) {
@@ -117,30 +90,82 @@ void ArtifactRepository::BeginStage(StageId stage) {
 }
 void ArtifactRepository::CompleteStage(StageId stage) {
   std::lock_guard lock(mutex_);
-  setTypes(ProducedBy(stage), ArtifactState::kReady, StageName(stage));
+  setTypes(ProducedArtifacts(stage), ArtifactState::kReady, StageName(stage));
 }
 void ArtifactRepository::FailStage(StageId stage, std::string detail) {
   std::lock_guard lock(mutex_);
-  setTypes(ProducedBy(stage), ArtifactState::kFailed, StageName(stage), detail);
+  setTypes(ProducedArtifacts(stage), ArtifactState::kFailed, StageName(stage), detail);
 }
 
 void ArtifactRepository::CompleteOptimizeThrough(
-    char target_agent, const std::vector<char>& ordered_agents) {
+    const AgentId& target_agent, const std::vector<AgentId>& ordered_agents) {
   std::lock_guard lock(mutex_);
+  const auto target = std::find(
+      ordered_agents.begin(), ordered_agents.end(), target_agent);
+  if (target == ordered_agents.end()) return;
   setTypes({ArtifactType::kOptimizerState}, ArtifactState::kReady,
            "optimizer_replay");
-  bool completed = true;
-  for (char agent : ordered_agents) {
-    auto& item = artifacts_[ArtifactKey{ArtifactType::kOptimizedPoses, agent}];
-    item.key = {ArtifactType::kOptimizedPoses, agent};
-    item.state = completed ? ArtifactState::kReady : ArtifactState::kStale;
+  const auto set = [this](ArtifactType type, std::optional<AgentId> agent,
+                          ArtifactState state) {
+    ArtifactKey key{type, agent};
+    auto& item = artifacts_[key];
+    item.key = key;
+    item.state = state;
     item.revision = next_revision_++;
     item.producer = "optimizer_replay";
-    if (agent == target_agent) completed = false;
+    item.detail.clear();
+  };
+  set(ArtifactType::kDescriptorState, std::nullopt, ArtifactState::kReady);
+  for (auto current = ordered_agents.begin(); current != ordered_agents.end();
+       ++current) {
+    const bool in_prefix = current <= target;
+    for (ArtifactType type : {ArtifactType::kLoopCandidates,
+                              ArtifactType::kMapAlignment,
+                              ArtifactType::kOptimizedPoses}) {
+      set(type, *current,
+          in_prefix ? ArtifactState::kReady : ArtifactState::kStale);
+    }
   }
   setTypes({ArtifactType::kGlobalMap, ArtifactType::kPoseFile,
             ArtifactType::kPcdFile}, ArtifactState::kStale,
            "optimizer_replay");
+}
+
+void ArtifactRepository::CompleteLoopDetectThrough(
+    const AgentId& target_agent, const std::vector<AgentId>& ordered_agents) {
+  std::lock_guard lock(mutex_);
+  const auto target = std::find(
+      ordered_agents.begin(), ordered_agents.end(), target_agent);
+  if (target == ordered_agents.end()) return;
+  const auto set = [this](ArtifactType type, std::optional<AgentId> agent,
+                          ArtifactState state) {
+    ArtifactKey key{type, agent};
+    auto& item = artifacts_[key];
+    item.key = key;
+    item.state = state;
+    item.revision = next_revision_++;
+    item.producer = "loop_detect_replay";
+    item.detail.clear();
+  };
+  set(ArtifactType::kDescriptorState, std::nullopt, ArtifactState::kReady);
+  for (auto current = ordered_agents.begin(); current != ordered_agents.end();
+       ++current) {
+    const bool in_loop_prefix = current <= target;
+    const bool in_optimizer_prefix = current < target;
+    for (ArtifactType type : {ArtifactType::kLoopCandidates,
+                              ArtifactType::kMapAlignment}) {
+      set(type, *current, in_loop_prefix ? ArtifactState::kReady
+                                         : ArtifactState::kStale);
+    }
+    set(ArtifactType::kOptimizedPoses, *current,
+        in_optimizer_prefix ? ArtifactState::kReady : ArtifactState::kStale);
+  }
+  set(ArtifactType::kOptimizerState, std::nullopt,
+      target == ordered_agents.begin() ? ArtifactState::kStale
+                                       : ArtifactState::kReady);
+  setTypes({ArtifactType::kGlobalMap, ArtifactType::kPoseFile,
+            ArtifactType::kPcdFile}, ArtifactState::kStale,
+           "loop_detect_replay");
 }
 
 std::vector<ArtifactMetadata> ArtifactRepository::Snapshot() const {
@@ -155,53 +180,131 @@ void ArtifactRepository::Restore(
     const std::vector<ArtifactMetadata>& snapshot) {
   std::lock_guard lock(mutex_);
   artifacts_.clear();
-  for (const auto& item : snapshot) artifacts_[item.key] = item;
+  uint64_t next_revision = 1;
+  for (const auto& item : snapshot) {
+    artifacts_[item.key] = item;
+    next_revision = std::max(next_revision, item.revision + 1);
+  }
+  next_revision_ = next_revision;
+}
+
+void ArtifactRepository::RecordExternalFile(
+    ArtifactType type, AgentId agent, std::string path,
+    std::string fingerprint) {
+  std::lock_guard lock(mutex_);
+  ArtifactKey key{type, std::nullopt};
+  if (IsPerAgent(type)) key.agent = agent;
+  auto& item = artifacts_[key];
+  item.key = key;
+  item.state = ArtifactState::kReady;
+  item.revision = next_revision_++;
+  item.producer = "output_repository";
+  item.detail.clear();
+  item.external_path = std::move(path);
+  item.fingerprint = std::move(fingerprint);
 }
 
 Result<void> ArtifactRepository::ValidateNode(
-    NodeId node, std::optional<char> agent) const {
+    NodeId node, std::optional<AgentId> agent) const {
   std::lock_guard lock(mutex_);
-  if (!agent) {
-    return Result<void>::Failure(
-        Error::InvalidArgument("node command required_artifacts an agent"));
-  }
-  if (std::find(agents_.begin(), agents_.end(), *agent) == agents_.end()) {
-    return Result<void>::Failure(Error::InvalidArgument("unknown agent"));
-  }
-  const auto& descriptor = DescribeNode(node);
-  for (auto type : descriptor.required_artifacts) {
-    std::optional<char> key_agent;
-    if (IsPerAgent(type)) key_agent = agent;
-    ArtifactKey key{type, key_agent};
-    auto it = artifacts_.find(key);
-    if (it == artifacts_.end() || it->second.state != ArtifactState::kReady) {
-      return Result<void>::Failure(Error::InvalidArgument(
-          "required artifact is not ready for node " +
-          std::string(descriptor.name)));
-    }
-  }
-  const auto position = std::find(agents_.begin(), agents_.end(), *agent);
-  if (position != agents_.begin() &&
-      (node == NodeId::kLoopDetect || node == NodeId::kOptimize)) {
-    const char previous = *std::prev(position);
-    ArtifactType previous_type = node == NodeId::kLoopDetect
-        ? ArtifactType::kOptimizedPoses : ArtifactType::kOptimizerState;
-    ArtifactKey key{previous_type,
-                    IsPerAgent(previous_type) ? std::optional<char>(previous)
-                                              : std::nullopt};
-    auto it = artifacts_.find(key);
-    if (it == artifacts_.end() || it->second.state != ArtifactState::kReady) {
-      return Result<void>::Failure(Error::InvalidArgument(
-          "ordered predecessor artifact is not ready"));
-    }
+  auto execution_agents = executionAgentsLocked(node, agent);
+  if (!execution_agents) {
+    return Result<void>::Failure(execution_agents.GetError());
   }
   return Result<void>::Ok();
 }
 
-void ArtifactRepository::BeginNode(NodeId node, std::optional<char> agent) {
+Result<std::vector<AgentId>> ArtifactRepository::ExecutionAgents(
+    NodeId node, std::optional<AgentId> agent) const {
   std::lock_guard lock(mutex_);
-  if (!agent) return;
-  const auto start = std::find(agents_.begin(), agents_.end(), *agent);
+  return executionAgentsLocked(node, agent);
+}
+
+Result<std::vector<AgentId>> ArtifactRepository::executionAgentsLocked(
+    NodeId node, std::optional<AgentId> agent) const {
+  const auto& spec = ExecutionSpecFor(node);
+  std::vector<AgentId> execution_agents;
+  if (spec.scope == ExecutionScope::kRuntime) {
+    for (ArtifactType type : spec.required_artifacts) {
+      if (IsPerAgent(type)) continue;
+      const auto found = artifacts_.find({type, std::nullopt});
+      if (found == artifacts_.end() ||
+          found->second.state != ArtifactState::kReady) {
+        return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+            "required runtime artifact is not ready for node " +
+            std::string(spec.name)));
+      }
+    }
+    for (const AgentId& candidate : agents_) {
+      const bool ready = std::all_of(
+          spec.required_artifacts.begin(), spec.required_artifacts.end(),
+          [&](ArtifactType type) {
+            if (!IsPerAgent(type)) return true;
+            const auto found = artifacts_.find({type, candidate});
+            return found != artifacts_.end() &&
+                   found->second.state == ArtifactState::kReady;
+          });
+      if (ready) execution_agents.push_back(candidate);
+    }
+    if (execution_agents.empty()) {
+      return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+          "no ready agent artifacts for runtime node " +
+          std::string(spec.name)));
+    }
+    return Result<std::vector<AgentId>>::Ok(std::move(execution_agents));
+  }
+  if (!agent) {
+    return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+        "per-agent node command requires an agent"));
+  }
+  if (std::find(agents_.begin(), agents_.end(), *agent) == agents_.end()) {
+    return Result<std::vector<AgentId>>::Failure(
+        Error::InvalidArgument("unknown agent"));
+  }
+  execution_agents = {*agent};
+  if (spec.ordered) {
+    auto prefix = OrderedAgentPrefix(agents_, *agent);
+    if (!prefix) {
+      return Result<std::vector<AgentId>>::Failure(prefix.GetError());
+    }
+    execution_agents = std::move(prefix).Value();
+  }
+  for (const AgentId& execution_agent : execution_agents) {
+    for (auto type : spec.required_artifacts) {
+      std::optional<AgentId> key_agent;
+      if (IsPerAgent(type)) key_agent = execution_agent;
+      ArtifactKey key{type, key_agent};
+      auto it = artifacts_.find(key);
+      if (it == artifacts_.end() || it->second.state != ArtifactState::kReady) {
+        return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
+            "required artifact is not ready for node " +
+            std::string(spec.name)));
+      }
+    }
+  }
+  return Result<std::vector<AgentId>>::Ok(std::move(execution_agents));
+}
+
+void ArtifactRepository::BeginNode(NodeId node, std::optional<AgentId> agent) {
+  std::lock_guard lock(mutex_);
+  auto affected_agents = executionAgentsLocked(node, agent);
+  if (!affected_agents) return;
+  beginNodeLocked(node, affected_agents.Value());
+}
+
+void ArtifactRepository::BeginNode(
+    NodeId node, const std::vector<AgentId>& affected_agents) {
+  std::lock_guard lock(mutex_);
+  beginNodeLocked(node, affected_agents);
+}
+
+void ArtifactRepository::beginNodeLocked(
+    NodeId node, const std::vector<AgentId>& affected_agents) {
+  if (affected_agents.empty()) return;
+  const auto& spec = ExecutionSpecFor(node);
+  const auto start = spec.scope == ExecutionScope::kRuntime
+      ? agents_.begin()
+      : std::find(agents_.begin(), agents_.end(), affected_agents.back());
   const auto stale = [&](ArtifactType type, bool from_agent) {
     if (!IsPerAgent(type)) {
       auto& item = artifacts_[ArtifactKey{type, std::nullopt}];
@@ -210,66 +313,89 @@ void ArtifactRepository::BeginNode(NodeId node, std::optional<char> agent) {
       item.producer = std::string(DescribeNode(node).name);
       return;
     }
-    auto begin = from_agent ? start : agents_.begin();
+    auto begin = from_agent && spec.ordered ? start : agents_.begin();
     for (auto it = begin; it != agents_.end(); ++it) {
+      const bool explicitly_affected =
+          std::find(affected_agents.begin(), affected_agents.end(), *it) !=
+          affected_agents.end();
+      if ((spec.scope == ExecutionScope::kRuntime || !spec.ordered) &&
+          !explicitly_affected) continue;
       auto& item = artifacts_[ArtifactKey{type, *it}];
       item.state = ArtifactState::kStale;
       item.revision = next_revision_++;
       item.producer = std::string(DescribeNode(node).name);
     }
   };
-  if (node == NodeId::kDataLoad || node == NodeId::kLoopDetect) {
-    stale(ArtifactType::kDescriptorState, false);
-    stale(ArtifactType::kLoopCandidates, true);
-    stale(ArtifactType::kMapAlignment, true);
-    stale(ArtifactType::kOptimizerState, false);
-    stale(ArtifactType::kOptimizedPoses, true);
-    stale(ArtifactType::kGlobalMap, true);
-    stale(ArtifactType::kPoseFile, true);
-    stale(ArtifactType::kPcdFile, true);
-  } else if (node == NodeId::kOptimize) {
-    stale(ArtifactType::kOptimizerState, false);
-    stale(ArtifactType::kOptimizedPoses, true);
-    stale(ArtifactType::kGlobalMap, true);
-    stale(ArtifactType::kPoseFile, true);
-    stale(ArtifactType::kPcdFile, true);
-  } else if (node == NodeId::kMapUpdate) {
-    stale(ArtifactType::kGlobalMap, true);
-    stale(ArtifactType::kPcdFile, true);
+  for (ArtifactType type : AffectedArtifacts(node)) {
+    const bool shared = !IsPerAgent(type);
+    stale(type, !shared);
   }
 }
 
-void ArtifactRepository::CompleteNode(NodeId node, std::optional<char> agent) {
+void ArtifactRepository::CompleteNode(NodeId node, std::optional<AgentId> agent) {
   std::lock_guard lock(mutex_);
+  if (ExecutionSpecFor(node).scope == ExecutionScope::kRuntime) {
+    auto affected_agents = executionAgentsLocked(node, agent);
+    if (!affected_agents) return;
+    completeNodeLocked(node, affected_agents.Value(), ArtifactState::kReady,
+                       {});
+    return;
+  }
   if (!agent) return;
+  completeNodeLocked(node, std::vector<AgentId>{*agent},
+                     ArtifactState::kReady, {});
+}
+
+void ArtifactRepository::CompleteNode(
+    NodeId node, const std::vector<AgentId>& affected_agents) {
+  std::lock_guard lock(mutex_);
+  completeNodeLocked(node, affected_agents, ArtifactState::kReady, {});
+}
+
+void ArtifactRepository::completeNodeLocked(
+    NodeId node, const std::vector<AgentId>& affected_agents,
+    ArtifactState state, const std::string& detail) {
   for (auto type : DescribeNode(node).produced_artifacts) {
-    std::optional<char> key_agent;
-    if (IsPerAgent(type)) key_agent = agent;
-    ArtifactKey key{type, key_agent};
-    auto& item = artifacts_[key];
-    item.key = key;
-    item.state = ArtifactState::kReady;
-    item.revision = next_revision_++;
-    item.producer = std::string(DescribeNode(node).name);
-    item.detail.clear();
+    const std::vector<std::optional<AgentId>> owners = IsPerAgent(type)
+        ? [&] {
+            std::vector<std::optional<AgentId>> result;
+            result.reserve(affected_agents.size());
+            for (const auto& item : affected_agents) result.emplace_back(item);
+            return result;
+          }()
+        : std::vector<std::optional<AgentId>>{std::nullopt};
+    for (const auto& owner : owners) {
+      ArtifactKey key{type, owner};
+      auto& item = artifacts_[key];
+      item.key = key;
+      item.state = state;
+      item.revision = next_revision_++;
+      item.producer = std::string(DescribeNode(node).name);
+      item.detail = detail;
+    }
   }
 }
 
-void ArtifactRepository::FailNode(NodeId node, std::optional<char> agent,
+void ArtifactRepository::FailNode(NodeId node, std::optional<AgentId> agent,
                                   std::string detail) {
   std::lock_guard lock(mutex_);
-  if (!agent) return;
-  for (auto type : DescribeNode(node).produced_artifacts) {
-    std::optional<char> key_agent;
-    if (IsPerAgent(type)) key_agent = agent;
-    ArtifactKey key{type, key_agent};
-    auto& item = artifacts_[key];
-    item.key = key;
-    item.state = ArtifactState::kFailed;
-    item.revision = next_revision_++;
-    item.producer = std::string(DescribeNode(node).name);
-    item.detail = detail;
+  if (ExecutionSpecFor(node).scope == ExecutionScope::kRuntime) {
+    auto affected_agents = executionAgentsLocked(node, agent);
+    if (!affected_agents) return;
+    completeNodeLocked(node, affected_agents.Value(), ArtifactState::kFailed,
+                       detail);
+    return;
   }
+  if (!agent) return;
+  completeNodeLocked(node, std::vector<AgentId>{*agent},
+                     ArtifactState::kFailed, detail);
+}
+
+void ArtifactRepository::FailNode(
+    NodeId node, const std::vector<AgentId>& affected_agents,
+    std::string detail) {
+  std::lock_guard lock(mutex_);
+  completeNodeLocked(node, affected_agents, ArtifactState::kFailed, detail);
 }
 
 void ArtifactRepository::ApplyConfig(ConfigDomain domain,
@@ -280,27 +406,7 @@ void ArtifactRepository::ApplyConfig(ConfigDomain domain,
   config.state = ArtifactState::kReady;
   config.revision = config_revision ? config_revision : next_revision_++;
   config.producer = "config_apply";
-  std::vector<ArtifactType> stale;
-  if (domain == ConfigDomain::kGlobal || domain == ConfigDomain::kDataLoader) {
-    stale = {ArtifactType::kRawData, ArtifactType::kDescriptorState,
-             ArtifactType::kLoopCandidates, ArtifactType::kMapAlignment,
-             ArtifactType::kOptimizerState,
-             ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
-             ArtifactType::kPoseFile, ArtifactType::kPcdFile};
-  } else if (domain == ConfigDomain::kLoopDetector) {
-    stale = {ArtifactType::kDescriptorState, ArtifactType::kLoopCandidates,
-             ArtifactType::kMapAlignment, ArtifactType::kOptimizerState,
-             ArtifactType::kOptimizedPoses,
-             ArtifactType::kGlobalMap, ArtifactType::kPoseFile,
-             ArtifactType::kPcdFile};
-  } else if (domain == ConfigDomain::kOptimizer) {
-    stale = {ArtifactType::kOptimizerState, ArtifactType::kOptimizedPoses,
-             ArtifactType::kGlobalMap, ArtifactType::kPoseFile,
-             ArtifactType::kPcdFile};
-  } else {
-    stale = {ArtifactType::kGlobalMap, ArtifactType::kPcdFile};
-  }
-  setTypes(stale, ArtifactState::kStale, "config_apply");
+  setTypes(AffectedArtifacts(domain), ArtifactState::kStale, "config_apply");
 }
 
 

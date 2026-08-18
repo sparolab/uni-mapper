@@ -12,9 +12,9 @@ class DepthImage{
 public:
     struct DepthImageConfig
     {
-        double lidar_horizon_fov;
-        double lidar_vertical_fov_upper;
-        double lidar_vertical_fov_lower;
+        double lidar_horizon_fov_rad;
+        double lidar_vertical_fov_upper_rad;
+        double lidar_vertical_fov_lower_rad;
         unsigned int depth_image_vertical_lines;            // depth image的垂直像素数
 
         double depth_image_min_range;                       // 忽略这个距离以下的点
@@ -33,7 +33,7 @@ public:
         unsigned int num_threads;
     };
 
-    DepthImage(){}
+    DepthImage() : learn_fov(false), enable_fov_mask(false) {}
 
     void set_params(const DepthImageConfig& config);
 
@@ -50,22 +50,22 @@ public:
 
 private:
     // LiDAR fov
-    double lidar_horizon_fov;
-    double lidar_vertical_fov;
-    double lidar_vertical_fov_upper;
-    double lidar_vertical_fov_lower;
+    double lidar_horizon_fov_rad;
+    double lidar_vertical_fov_rad;
+    double lidar_vertical_fov_upper_rad;
+    double lidar_vertical_fov_lower_rad;
 
     // depth image
     unsigned int rows;
     unsigned int cols;
     double depth_unit,depth_unit_inv;
-    double horizon_res,vertical_res;
-    double horizon_res_half,vertical_res_half;
-    double horizon_res_inv,vertical_res_inv;
+    double horizon_res_rad,vertical_res_rad;
+    double horizon_res_half_rad,vertical_res_half_rad;
+    double horizon_res_inv_rad,vertical_res_inv_rad;
 
-    double vertical_fov;
-    double vertical_fov_upper;
-    double vertical_fov_lower;
+    double vertical_fov_rad;
+    double vertical_fov_upper_rad;
+    double vertical_fov_lower_rad;
 
     // raycast enhancement 参数
     double depth_image_min_range;

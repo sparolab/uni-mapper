@@ -16,7 +16,7 @@
 namespace open_lmm {
 
 struct VisualizationSnapshotResult {
-  char agent = 0;
+  AgentId agent;
   uint64_t request_generation = 0;
   Result<VisualizationSnapshot> result;
 };
@@ -26,7 +26,7 @@ struct VisualizationSnapshotResult {
 // during an active copy is retained as the next generation.
 class VisualizationSnapshotWorker {
  public:
-  using Provider = std::function<Result<VisualizationSnapshot>(char)>;
+  using Provider = std::function<Result<VisualizationSnapshot>(const AgentId&)>;
 
   explicit VisualizationSnapshotWorker(Provider provider);
   ~VisualizationSnapshotWorker();
@@ -34,7 +34,7 @@ class VisualizationSnapshotWorker {
   VisualizationSnapshotWorker& operator=(const VisualizationSnapshotWorker&) =
       delete;
 
-  void Request(char agent);
+  void Request(AgentId agent);
   [[nodiscard]] std::vector<VisualizationSnapshotResult> Drain();
   void Stop();
   void Join();
@@ -45,7 +45,7 @@ class VisualizationSnapshotWorker {
   Provider provider_;
   std::mutex mutex_;
   std::condition_variable ready_;
-  std::map<char, uint64_t> pending_;
+  std::map<AgentId, uint64_t> pending_;
   std::vector<VisualizationSnapshotResult> completed_;
   uint64_t next_generation_ = 1;
   bool stopping_ = false;

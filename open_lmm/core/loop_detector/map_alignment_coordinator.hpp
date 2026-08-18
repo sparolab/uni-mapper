@@ -10,24 +10,31 @@
 
 namespace open_lmm {
 
+enum class InteractiveAlignmentIntent : uint8_t {
+  kChooseMethod,
+  kManualOnly,
+};
+
 struct MapAlignmentCoordinatorInput {
-  std::string feedback_mode{"interactive"};
+  InteractiveAlignmentIntent intent =
+      InteractiveAlignmentIntent::kChooseMethod;
   std::chrono::milliseconds feedback_timeout{};
   std::shared_ptr<AlignmentFeedbackBroker> feedback;
   std::shared_ptr<CancellationToken> cancellation;
   std::vector<AlignmentVisualizationPoint> target_points;
   std::vector<AlignmentVisualizationPoint> source_points;
   std::shared_ptr<AlignmentVisualizationData> visualization;
-  std::function<std::optional<MapAlignmentProposal>()> kiss_proposer;
-  std::function<std::optional<MapAlignmentProposal>()> descriptor_proposer;
+  std::function<Result<std::optional<MapAlignmentProposal>>()> kiss_proposer;
+  std::function<Result<std::optional<MapAlignmentProposal>>()>
+      descriptor_proposer;
   std::function<Result<void>(const MapAlignmentProposal&)> proposal_validator;
-  char target_agent = 0;
-  char source_agent = 0;
+  AgentId target_agent;
+  AgentId source_agent;
 };
 
-// Owns only fallback and approval policy. Algorithm-specific computation and
-// loop generation remain outside this class and are invoked lazily through
-// proposer callbacks.
+// Interactive transport driver only. Algorithm-specific computation is
+// invoked lazily through proposer callbacks; final approval metadata and
+// headless/stored selection belong to AlignmentDecisionPolicy.
 class MapAlignmentCoordinator {
  public:
   Result<MapAlignmentProposal> Align(

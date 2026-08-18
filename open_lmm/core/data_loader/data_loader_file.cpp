@@ -1,14 +1,17 @@
 #include "data_loader_file.hpp"
 
 #include <pcl/common/transforms.h>
+#include <tqdmcpp/tqdmcpp.hpp>
+
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/common/profiling.hpp>
+#include <open_lmm/core/algorithm_invariants.hpp>
 
 namespace fs = std::filesystem;
 namespace open_lmm {
 
-DataLoaderFile::DataLoaderFile(Config config) {
-  parseConfig(config);
+DataLoaderFile::DataLoaderFile(DataLoaderConfig config)
+    : param_(std::move(config)) {
 
   if (param_.pose_file_name.empty() || param_.scan_dir_name.empty()) {
     initialization_error_ = Error::InvalidArgument(
@@ -29,11 +32,12 @@ DataLoaderFile::DataLoaderFile(Config config) {
   } else if (param_.pose_format == "tum") {
     transformFunctor = tumPoseToIsometry3d;
   } else if (param_.pose_format == "custom") {
-    transformFunctor = customPoseToIsometry3d;
+    initialization_error_ = Error::InvalidArgument(
+        "pose format 'custom' is not implemented");
   } else {
     initialization_error_ = Error::InvalidArgument(
         "Unsupported pose format: '" + param_.pose_format +
-        "'. Supported: kitti, tum, custom");
+        "'. Supported: kitti, tum");
   }
 
   if (param_.scan_type == "pcd") {
@@ -47,31 +51,44 @@ DataLoaderFile::DataLoaderFile(Config config) {
   }
 }
 
-void DataLoaderFile::parseConfig(Config config) {
-  param_.pose_format =
-      config.param<std::string>("data_loader", "pose_format", "");
-  param_.scan_type = config.param<std::string>("data_loader", "scan_type", "");
-  param_.scan_dir_name =
-      config.param<std::string>("data_loader", "scan_dir_name", "");
-  param_.pose_file_name =
-      config.param<std::string>("data_loader", "pose_file_name", "");
-  param_.extrinsic = config.param<Eigen::Isometry3d>(
-      "data_loader", "extrinsic", Eigen::Isometry3d::Identity());
-  param_.voxel_size = config.param<float>("data_loader", "voxel_size", 0.1f);
-  param_.min_range = config.param<float>("data_loader", "min_range", 0.0f);
-  param_.max_range = config.param<float>("data_loader", "max_range", 100.0f);
-  param_.delimiter = config.param<std::string>("data_loader", "delimiter", " ");
+Result<AgentRawData> DataLoaderFile::Process(
+    const AlgorithmExecutionContext& context, const DataLoaderInput& input) {
+  AlgorithmExecutionTimer timer(context);
+  auto cancellation = CheckAlgorithmCancellation(context, "before data load");
+  if (!cancellation) {
+    return Result<AgentRawData>::Failure(cancellation.GetError());
+  }
+  try {
+    auto result = Load(context, input.data_directory);
+    if (!result) {
+      return Result<AgentRawData>::Failure(
+          WithAlgorithmContext(result.GetError(), context));
+    }
+    cancellation = CheckAlgorithmCancellation(context, "after data load");
+    if (!cancellation) {
+      return Result<AgentRawData>::Failure(cancellation.GetError());
+    }
+    return result;
+  } catch (const std::exception& error) {
+    return Result<AgentRawData>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument(std::string("data loader exception: ") +
+                               error.what()),
+        context));
+  } catch (...) {
+    return Result<AgentRawData>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument("unknown data loader exception"), context));
+  }
 }
 
-Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
-                                             const fs::path& data_dir) {
+Result<AgentRawData> DataLoaderFile::Load(
+    const AlgorithmExecutionContext& context, const fs::path& data_dir) {
   OPEN_LMM_ZONE_N("DataLoader.Process");
   if (initialization_error_) {
     return Result<AgentRawData>::Failure(*initialization_error_);
   }
-  auto poses_result = loadPoseData(data_dir);
+  auto poses_result = loadPoseData(context, data_dir);
   if (!poses_result) return Result<AgentRawData>::Failure(poses_result.GetError());
-  auto scans_result = loadFilteredScanData(data_dir);
+  auto scans_result = loadFilteredScanData(context, data_dir);
   if (!scans_result) return Result<AgentRawData>::Failure(scans_result.GetError());
   auto poses = std::move(poses_result).Value();
   auto filtered_scans = std::move(scans_result).Value();
@@ -87,6 +104,11 @@ Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
   // KISSMatcher용 2m voxel 다운샘플 맵 포인트 생성
   pcl::PointCloud<pcl::PointXYZI>::Ptr map(new pcl::PointCloud<pcl::PointXYZI>);
   for (size_t i = 0; i < filtered_scans.size(); ++i) {
+    auto cancellation =
+        CheckAlgorithmCancellation(context, "while building data-load map");
+    if (!cancellation) {
+      return Result<AgentRawData>::Failure(cancellation.GetError());
+    }
     pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan(
         new pcl::PointCloud<pcl::PointXYZI>);
     pcl::transformPointCloud(*filtered_scans[i], *transformed_scan,
@@ -102,16 +124,22 @@ Result<AgentRawData> DataLoaderFile::Process(const AgentContext& ctx,
   pclToEigen(*map_ds, map_points);
   }
 
-  return Result<AgentRawData>::Ok(AgentRawData{
-      .agent_id       = ctx.id,
+  AgentRawData output{
+      .agent_id       = context.agent.id,
       .odom_poses     = std::move(poses),
       .filtered_scans = std::move(filtered_scans),
       .map_points     = std::move(map_points),
-  });
+  };
+  auto valid_output = ValidateAgentRawData(
+      output, "DataLoader agent '" + context.agent.id.Value() + "'");
+  if (!valid_output) {
+    return Result<AgentRawData>::Failure(valid_output.GetError());
+  }
+  return Result<AgentRawData>::Ok(std::move(output));
 }
 
 Result<PoseVec> DataLoaderFile::loadPoseData(
-    fs::path data_dir_path) {
+    const AlgorithmExecutionContext& context, fs::path data_dir_path) {
   OPEN_LMM_ZONE_N("DataLoader.LoadPoses");
   const fs::path pose_file_path = data_dir_path / param_.pose_file_name;
   if (!fs::exists(pose_file_path)) {
@@ -137,6 +165,11 @@ Result<PoseVec> DataLoaderFile::loadPoseData(
 
   std::size_t line_number = 0;
   for (auto line : lines) {
+    auto cancellation =
+        CheckAlgorithmCancellation(context, "while loading poses");
+    if (!cancellation) {
+      return Result<PoseVec>::Failure(cancellation.GetError());
+    }
     ++line_number;
     std::istringstream iss(line);
     std::vector<double> values;
@@ -167,31 +200,49 @@ Result<PoseVec> DataLoaderFile::loadPoseData(
 
 // const fs::path data_dir_name = data_dir_path.filename();
 // const fs::path scan_save_dir =
-//     GlobalConfig::get_save_dir_path() / data_dir_name / param_.scan_dir_name;
+//     configured_save_dir / data_dir_name / param_.scan_dir_name;
 // fs::create_directories(scan_save_dir);
 // const fs::path file_name = scan_file.filename();
 // const fs::path save_file_path = scan_save_dir / file_name;
 // filtered_scans.push_back(p_scan_preprocessed);
 // pcl::io::savePCDFileBinaryCompressed(save_file_path, *p_scan_preprocessed);
 
-Result<ScanVec> DataLoaderFile::loadFilteredScanData(fs::path data_dir_path) {
+Result<ScanVec> DataLoaderFile::loadFilteredScanData(
+    const AlgorithmExecutionContext& context, fs::path data_dir_path) {
   OPEN_LMM_ZONE_N("DataLoader.DownsampleScans");
-  auto raw_result = loadRawScanData(data_dir_path);
+  auto raw_result = LoadRawScans(data_dir_path);
   if (!raw_result) return Result<ScanVec>::Failure(raw_result.GetError());
   auto raw_scans = std::move(raw_result).Value();
   ScanVec p_filtered_scans;
 
-  auto T = tq::tqdm(raw_scans);
-  T.set_prefix("Data Loader");
-  for (auto scan : T) {
-    p_filtered_scans.push_back(downsampleWithRangeFilter(
-        scan, param_.voxel_size, param_.min_range, param_.max_range));
+  if (param_.show_progress) {
+    auto progress = tq::tqdm(raw_scans);
+    progress.set_prefix("Data Loader");
+    for (auto scan : progress) {
+      auto cancellation =
+          CheckAlgorithmCancellation(context, "while filtering scans");
+      if (!cancellation) {
+        return Result<ScanVec>::Failure(cancellation.GetError());
+      }
+      p_filtered_scans.push_back(downsampleWithRangeFilter(
+          scan, param_.voxel_size, param_.min_range, param_.max_range));
+    }
+    progress.finish();
+  } else {
+    for (const auto& scan : raw_scans) {
+      auto cancellation =
+          CheckAlgorithmCancellation(context, "while filtering scans");
+      if (!cancellation) {
+        return Result<ScanVec>::Failure(cancellation.GetError());
+      }
+      p_filtered_scans.push_back(downsampleWithRangeFilter(
+          scan, param_.voxel_size, param_.min_range, param_.max_range));
+    }
   }
-  T.finish();
   return Result<ScanVec>::Ok(std::move(p_filtered_scans));
 }
 
-Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
+Result<ScanVec> DataLoaderFile::LoadRawScans(fs::path data_dir_path) {
   OPEN_LMM_ZONE_N("DataLoader.ReloadRawScans");
   const fs::path scan_dir_path = data_dir_path / param_.scan_dir_name;
   if (!fs::exists(scan_dir_path) || !fs::is_directory(scan_dir_path)) {
@@ -228,6 +279,70 @@ Result<ScanVec> DataLoaderFile::loadRawScanData(fs::path data_dir_path) {
   }
 
   return Result<ScanVec>::Ok(std::move(raw_scans));
+}
+
+Result<std::size_t> DataLoaderFile::VisitRawScanData(
+    const AlgorithmExecutionContext& context,
+    const fs::path& data_dir_path, const RawScanVisitor& visitor) {
+  AlgorithmExecutionTimer timer(context);
+  auto cancellation =
+      CheckAlgorithmCancellation(context, "before raw scan streaming");
+  if (!cancellation) {
+    return Result<std::size_t>::Failure(cancellation.GetError());
+  }
+  try {
+    OPEN_LMM_ZONE_N("DataLoader.StreamRawScans");
+    const fs::path scan_dir_path = data_dir_path / param_.scan_dir_name;
+    if (!fs::exists(scan_dir_path) || !fs::is_directory(scan_dir_path)) {
+      return Result<std::size_t>::Failure(WithAlgorithmContext(
+          Error::FileNotFound(scan_dir_path.string()), context));
+    }
+    std::vector<fs::path> scan_files;
+    for (const auto& scan_file : fs::directory_iterator(scan_dir_path)) {
+      const auto extension = scan_file.path().extension().string();
+      if (scan_file.is_regular_file() && extension.size() > 1 &&
+          extension.substr(1) == param_.scan_type) {
+        scan_files.push_back(scan_file.path());
+      }
+    }
+    std::sort(scan_files.begin(), scan_files.end());
+    if (scan_files.empty()) {
+      return Result<std::size_t>::Failure(WithAlgorithmContext(
+          Error::InvalidArgument("No ." + param_.scan_type +
+                                 " scan files found in " +
+                                 scan_dir_path.string()),
+          context));
+    }
+    for (std::size_t index = 0; index < scan_files.size(); ++index) {
+      cancellation =
+          CheckAlgorithmCancellation(context, "during raw scan streaming");
+      if (!cancellation) {
+        return Result<std::size_t>::Failure(cancellation.GetError());
+      }
+      auto scan = convertScanFunctor(scan_files[index].string());
+      auto visited = visitor(index, scan);
+      if (!visited) {
+        return Result<std::size_t>::Failure(
+            WithAlgorithmContext(visited.GetError(), context));
+      }
+    }
+    cancellation =
+        CheckAlgorithmCancellation(context, "after raw scan streaming");
+    if (!cancellation) {
+      return Result<std::size_t>::Failure(cancellation.GetError());
+    }
+    return Result<std::size_t>::Ok(scan_files.size());
+  } catch (const std::exception& error) {
+    return Result<std::size_t>::Failure(WithAlgorithmContext(
+        Error::IoError("agent data " + data_dir_path.string() +
+                       ": raw scan streaming exception: " + error.what()),
+        context));
+  } catch (...) {
+    return Result<std::size_t>::Failure(WithAlgorithmContext(
+        Error::IoError("agent data " + data_dir_path.string() +
+                       ": unknown raw scan streaming exception"),
+        context));
+  }
 }
 
 }  // namespace open_lmm

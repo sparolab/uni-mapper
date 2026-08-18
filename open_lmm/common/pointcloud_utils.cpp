@@ -6,6 +6,7 @@
 #include <memory>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/shared_data.hpp>
+#include <open_lmm/common/validation.hpp>
 #include <vector>
 
 namespace open_lmm {
@@ -44,6 +45,10 @@ std::vector<Eigen::Vector3f> transformEigenPoints(
 pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan, const float voxel_size,
     const float min_range, const float max_range, const bool use_range_filter) {
+  auto valid = ValidateVoxelizationInput(p_scan, voxel_size, min_range,
+                                         max_range, use_range_filter,
+                                         "point-cloud downsample");
+  if (!valid) throw std::invalid_argument(valid.GetError().Message());
   if (voxel_size < 0.01f) return p_scan;
 
   std::unordered_map<VOXEL_LOC, M_POINT> voxel_map;
@@ -66,9 +71,14 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
       }
     }
 
-    const VOXEL_LOC voxel_idx(static_cast<uint32_t>(loc_xyz[0]),
-                              static_cast<uint32_t>(loc_xyz[1]),
-                              static_cast<uint32_t>(loc_xyz[2]));
+    // Direct float-to-unsigned conversion is undefined for negative voxel
+    // coordinates. Convert through a signed integral type first; the following
+    // signed-to-unsigned conversion is well-defined modulo 2^32 and preserves
+    // the existing VOXEL_LOC bit pattern.
+    const VOXEL_LOC voxel_idx(
+        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[0])),
+        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[1])),
+        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[2])));
     auto iter = voxel_map.find(voxel_idx);
     if (iter != voxel_map.end()) {
       iter->second.xyz[0] += point.x;

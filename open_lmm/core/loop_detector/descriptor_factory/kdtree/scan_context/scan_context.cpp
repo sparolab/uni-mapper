@@ -11,16 +11,11 @@
 #include <numeric>
 
 
-ScanContextParams::ScanContextParams() {
-  open_lmm::Config config = open_lmm::Config(
-      open_lmm::GlobalConfig::get_global_config_path("config_loop_detector"));
-  number_sectors = config.param<int>("loop_detector", "num_sector", 60);
-  number_rings = config.param<int>("loop_detector", "num_ring", 20);
-  max_range = config.param<double>("loop_detector", "max_range", 80);
-  if (number_sectors <= 0 || number_rings <= 0 || max_range <= 0.0) {
-    throw std::invalid_argument(
-        "scan_context num_sector, num_ring, and max_range must be positive");
-  }
+ScanContextParams::ScanContextParams(const open_lmm::Config& config) {
+  number_sectors = config.param_cast<int>("loop_detector", "num_sector");
+  number_rings = config.param_cast<int>("loop_detector", "num_ring");
+  max_range = config.param_cast<double>("loop_detector", "max_range");
+  descriptor_vector_dim = number_rings;
 }
 
 bool ScanContextParams::equals(const ScanContextParams& other) const {
