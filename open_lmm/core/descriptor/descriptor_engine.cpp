@@ -158,7 +158,9 @@ Result<DescriptorMatch> BuiltInDescriptorEngine::Compare(
     }
     auto [score, relative_pose] =
         lhs_payload->descriptor->distance(rhs_payload->descriptor);
-    if (!std::isfinite(score) || !IsFiniteRigidTransform(relative_pose)) {
+    auto valid_pose = ValidateRigidTransform(relative_pose,
+                                             "descriptor match output");
+    if (!std::isfinite(score) || !valid_pose) {
       return Result<DescriptorMatch>::Failure(WithAlgorithmContext(
           Error::InvalidArgument("descriptor match output is invalid"),
           context));

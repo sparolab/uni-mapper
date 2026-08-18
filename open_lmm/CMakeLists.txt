@@ -195,6 +195,7 @@ set(_open_lmm_public_headers
   common/data_types.hpp
   common/descriptor_index.hpp
   common/result.hpp
+  common/rigid_transform.hpp
   common/runtime_contracts.hpp
   common/runtime_api.hpp
   common/visualization_snapshot.hpp

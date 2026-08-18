@@ -670,21 +670,42 @@ void TestAlgorithmInvariants() {
       0.985941, 0.152187, -0.0689935, 14.2673,
       -0.149647, 0.987905, 0.0406254, -1.93745,
       0.0743416, -0.0297296, 0.99679, 0.81812;
-  Expect(open_lmm::ValidateFiniteRigidPose(quantized_pose,
+  Expect(open_lmm::ValidateRigidTransform(quantized_pose,
                                            "six-digit pose").IsOk(),
          "six-digit KITTI rotation quantization must remain valid");
 
   Eigen::Isometry3d sheared_pose = quantized_pose;
   sheared_pose.matrix()(0, 0) += 1e-3;
-  Expect(!open_lmm::ValidateFiniteRigidPose(sheared_pose,
+  Expect(!open_lmm::ValidateRigidTransform(sheared_pose,
                                             "sheared pose").IsOk(),
          "materially non-orthonormal rotation must still fail");
 
   Eigen::Isometry3d reflected_pose = Eigen::Isometry3d::Identity();
   reflected_pose.matrix()(0, 0) = -1.0;
-  Expect(!open_lmm::ValidateFiniteRigidPose(reflected_pose,
+  Expect(!open_lmm::ValidateRigidTransform(reflected_pose,
                                             "reflected pose").IsOk(),
          "orthonormal reflection must fail the proper-rotation check");
+
+  Eigen::Isometry3d nonfinite_transform = Eigen::Isometry3d::Identity();
+  nonfinite_transform.translation().y() =
+      std::numeric_limits<double>::infinity();
+  Expect(!open_lmm::ValidateRigidTransform(nonfinite_transform,
+                                            "non-finite transform").IsOk(),
+         "all transform boundaries must reject non-finite values");
+
+  Eigen::Isometry3d loose_only_pose = Eigen::Isometry3d::Identity();
+  // This was accepted by the former 1e-5 alignment-only check, but exceeds
+  // the common 5e-6 orthonormal residual bound.
+  loose_only_pose.matrix()(0, 0) += 3e-6;
+  Expect(!open_lmm::ValidateRigidTransform(loose_only_pose,
+                                            "strict rotation pose").IsOk(),
+         "all transform boundaries must use the strict rotation tolerance");
+
+  Eigen::Isometry3d malformed_homogeneous = Eigen::Isometry3d::Identity();
+  malformed_homogeneous.matrix()(3, 0) = 2e-9;
+  Expect(!open_lmm::ValidateRigidTransform(malformed_homogeneous,
+                                            "homogeneous row pose").IsOk(),
+         "all transform boundaries must reject malformed homogeneous rows");
 
   open_lmm::LoopPair invalid_intra{
       .to = {Id("A"), 0},

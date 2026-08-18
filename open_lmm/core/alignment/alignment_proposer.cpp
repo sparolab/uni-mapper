@@ -32,11 +32,8 @@ Result<void> ValidateProposal(const MapAlignmentProposal& proposal,
     return Result<void>::Failure(Error::InvalidArgument(
         "alignment proposer returned a policy-owned method"));
   }
-  if (!IsFiniteRigidTransform(proposal.target_T_source)) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "alignment proposer returned a non-rigid transform"));
-  }
-  return Result<void>::Ok();
+  return ValidateRigidTransform(proposal.target_T_source,
+                                "alignment proposer output");
 }
 
 }  // namespace

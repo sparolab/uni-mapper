@@ -30,7 +30,7 @@ Result<void> ValidateAcceptedAlignment(
     return Result<void>::Failure(
         Error::InvalidArgument("pending alignment cannot produce constraints"));
   }
-  auto transform = ValidateFiniteRigidPose(
+  auto transform = ValidateRigidTransform(
       proposal.target_T_source, "accepted alignment transform");
   if (!transform) return transform;
   if (!std::isfinite(input.pose_nn_distance_threshold) ||
@@ -136,7 +136,7 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
             static_cast<std::size_t>(indices.front())];
         auto relative = TargetFromSourceScanTransform(
             best.second, transformed[source_frame]);
-        auto valid_relative = ValidateFiniteRigidPose(
+        auto valid_relative = ValidateRigidTransform(
             relative, "generated loop constraint transform");
         if (!valid_relative) {
           return Result<ValidatedLoopConstraints>::Failure(

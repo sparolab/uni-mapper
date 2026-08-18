@@ -10,6 +10,7 @@ common/data_types.hpp
 common/descriptor_index.hpp
 common/plugin_api.h
 common/result.hpp
+common/rigid_transform.hpp
 common/runtime_contracts.hpp
 common/runtime_api.hpp
 common/visualization_snapshot.hpp

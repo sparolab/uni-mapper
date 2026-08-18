@@ -1,12 +1,12 @@
 #pragma once
 
 #include <open_lmm/common/agent_id.hpp>
+#include <open_lmm/common/rigid_transform.hpp>
 
 #include <Eigen/Geometry>
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <vector>
 
@@ -88,14 +88,5 @@ struct StoredAlignment {
   AlignmentApproval approval = AlignmentApproval::kAutomatic;
   uint64_t accepted_at_unix_ms = 0;
 };
-
-inline bool IsFiniteRigidTransform(const Eigen::Isometry3d& transform,
-                                   double tolerance = 1.0e-5) {
-  if (!transform.matrix().allFinite()) return false;
-  const Eigen::Matrix3d rotation = transform.linear();
-  return (rotation.transpose() * rotation)
-             .isApprox(Eigen::Matrix3d::Identity(), tolerance) &&
-         std::abs(rotation.determinant() - 1.0) <= tolerance;
-}
 
 }  // namespace open_lmm

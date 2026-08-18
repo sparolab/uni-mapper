@@ -1,6 +1,7 @@
 #pragma once
 
 #include <open_lmm/common/agent_data.hpp>
+#include <open_lmm/common/rigid_transform.hpp>
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/validation.hpp>
 
@@ -26,39 +27,6 @@ inline Error InvariantError(std::string_view context, std::string detail) {
                                 std::move(detail));
 }
 
-inline Result<void> ValidateFiniteRigidPose(const Eigen::Isometry3d& pose,
-                                            std::string_view context) {
-  const Eigen::Matrix4d matrix = pose.matrix();
-  if (!matrix.allFinite()) {
-    return Result<void>::Failure(
-        InvariantError(context, "pose contains a non-finite value"));
-  }
-  constexpr double kHomogeneousTolerance = 1e-9;
-  // KITTI text poses are commonly serialized with six digits after the
-  // decimal point.  Quantizing nine rotation coefficients at that precision
-  // produces orthogonality/determinant residuals slightly above 1e-6 even for
-  // a valid SO(3) matrix.  Keep a small bound above that representation error;
-  // this is validation only and deliberately does not alter the input pose.
-  constexpr double kRotationTolerance = 5e-6;
-  if (!matrix.row(3).isApprox(
-          Eigen::RowVector4d(0.0, 0.0, 0.0, 1.0),
-          kHomogeneousTolerance)) {
-    return Result<void>::Failure(
-        InvariantError(context, "pose has an invalid homogeneous row"));
-  }
-  const Eigen::Matrix3d rotation = matrix.topLeftCorner<3, 3>();
-  const double orthonormal_residual =
-      (rotation.transpose() * rotation - Eigen::Matrix3d::Identity())
-          .cwiseAbs()
-          .maxCoeff();
-  if (orthonormal_residual > kRotationTolerance ||
-      std::abs(rotation.determinant() - 1.0) > kRotationTolerance) {
-    return Result<void>::Failure(
-        InvariantError(context, "pose rotation is not a proper orthonormal matrix"));
-  }
-  return Result<void>::Ok();
-}
-
 inline Result<void> ValidateAgentRawData(const AgentRawData& raw,
                                          std::string_view context) {
   if (!raw.agent_id.IsValid()) {
@@ -76,7 +44,7 @@ inline Result<void> ValidateAgentRawData(const AgentRawData& raw,
                      std::to_string(raw.filtered_scans.size()) + " scans"));
   }
   for (std::size_t index = 0; index < raw.odom_poses.size(); ++index) {
-    auto valid_pose = ValidateFiniteRigidPose(
+    auto valid_pose = ValidateRigidTransform(
         raw.odom_poses[index],
         std::string(context) + " pose frame " + std::to_string(index));
     if (!valid_pose) return valid_pose;
@@ -172,7 +140,7 @@ inline Result<void> ValidateLoopPairs(
     auto to = ValidateFrameIndex(all_raw_data, current, loop.to.first,
                                  loop.to.second, loop_context + " target");
     if (!to) return Result<void>::Failure(to.GetError());
-    return ValidateFiniteRigidPose(loop.init_rel_pose,
+    return ValidateRigidTransform(loop.init_rel_pose,
                                    loop_context + " transform");
   };
   for (std::size_t index = 0; index < intra_loops.size(); ++index) {
@@ -217,7 +185,7 @@ inline Result<void> ValidateOptimizedData(const AgentOptimizedData& optimized,
                        std::to_string(frame_id)));
     }
     covered[static_cast<std::size_t>(frame_id)] = true;
-    auto valid = ValidateFiniteRigidPose(
+    auto valid = ValidateRigidTransform(
         pose, std::string(context) + " optimized frame " +
                   std::to_string(frame_id));
     if (!valid) return valid;
@@ -264,7 +232,7 @@ inline Result<PoseVec> OrderOptimizedPosesByFrameId(
           context, "duplicate optimized frame ID " +
                        std::to_string(frame_id)));
     }
-    auto valid = ValidateFiniteRigidPose(
+    auto valid = ValidateRigidTransform(
         pose, std::string(context) + " optimized frame " +
                   std::to_string(frame_id));
     if (!valid) return Result<PoseVec>::Failure(valid.GetError());

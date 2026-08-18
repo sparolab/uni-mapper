@@ -18,11 +18,8 @@ Result<void> ValidateProposal(const MapAlignmentProposal& proposal,
     return Result<void>::Failure(Error::InvalidArgument(
         std::string(origin) + " alignment method is invalid"));
   }
-  if (!IsFiniteRigidTransform(proposal.target_T_source)) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        std::string(origin) + " alignment transform is not finite and rigid"));
-  }
-  return Result<void>::Ok();
+  return ValidateRigidTransform(proposal.target_T_source,
+                                std::string(origin) + " alignment");
 }
 
 Result<AlignmentPolicyOutcome> Accept(

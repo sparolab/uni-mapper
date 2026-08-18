@@ -235,7 +235,7 @@ std::optional<Eigen::Isometry3d> MatrixFromJson(const nlohmann::json& value) {
     }
   }
   Eigen::Isometry3d transform(matrix);
-  return IsFiniteRigidTransform(transform)
+  return ValidateRigidTransform(transform, "alignment cache transform")
              ? std::optional<Eigen::Isometry3d>(transform)
              : std::nullopt;
 }

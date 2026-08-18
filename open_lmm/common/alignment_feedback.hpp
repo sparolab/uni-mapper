@@ -88,11 +88,13 @@ class AlignmentFeedbackBroker {
           Error::InvalidArgument("stale or unknown alignment request"));
     }
     if (response.decision == AlignmentDecision::kManual) {
-      if (!response.manual_target_T_source ||
-          !IsFiniteRigidTransform(*response.manual_target_T_source)) {
+      if (!response.manual_target_T_source) {
         return Result<void>::Failure(
             Error::InvalidArgument("manual alignment requires a finite rigid transform"));
       }
+      auto valid = ValidateRigidTransform(*response.manual_target_T_source,
+                                          "manual alignment");
+      if (!valid) return valid;
     } else if (response.manual_target_T_source) {
       return Result<void>::Failure(Error::InvalidArgument(
           "only a manual alignment response may include a transform"));

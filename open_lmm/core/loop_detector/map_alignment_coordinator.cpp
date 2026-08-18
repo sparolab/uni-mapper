@@ -79,10 +79,14 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::ResolveResponse(
     return Result<MapAlignmentProposal>::Ok(proposal);
   }
   if (response.decision == AlignmentDecision::kManual) {
-    if (!response.manual_target_T_source ||
-        !IsFiniteRigidTransform(*response.manual_target_T_source)) {
+    if (!response.manual_target_T_source) {
       return Result<MapAlignmentProposal>::Failure(Error::InvalidArgument(
           "manual alignment requires a finite rigid transform"));
+    }
+    auto valid = ValidateRigidTransform(*response.manual_target_T_source,
+                                        "manual alignment");
+    if (!valid) {
+      return Result<MapAlignmentProposal>::Failure(valid.GetError());
     }
     auto manual = proposal;
     manual.method = AlignmentMethod::kManual;

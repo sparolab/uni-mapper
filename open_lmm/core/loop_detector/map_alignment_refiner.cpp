@@ -95,7 +95,8 @@ MapAlignmentRefinementResult RefineMapAlignment(
         break;
       }
     }
-    if (result.refined && IsFiniteRigidTransform(current)) {
+    if (result.refined &&
+        ValidateRigidTransform(current, "ICP refinement output")) {
       result.target_T_source = current;
     }
   }
