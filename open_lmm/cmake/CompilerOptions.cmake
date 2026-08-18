@@ -22,6 +22,7 @@
 # SOFTWARE.
 
 function(openlmm_set_global_target_properties target)
+  get_target_property(openlmm_target_type ${target} TYPE)
   target_compile_features(${target} PUBLIC cxx_std_20)
   target_compile_definitions(${target} PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:_USE_MATH_DEFINES>)
   if(OPEN_LMM_ENABLE_ASAN_UBSAN)
@@ -35,6 +36,19 @@ function(openlmm_set_global_target_properties target)
       $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fno-omit-frame-pointer>)
     target_link_options(${target} PRIVATE
       $<$<LINK_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fsanitize=address,undefined>)
+    if(openlmm_target_type STREQUAL "EXECUTABLE")
+      # LLVM's statically linked ASan runtime can fail before main() when a PIE
+      # executable is randomized in a Linux process with a wide mmap ASLR
+      # range. Keep production artifacts position independent, but make the
+      # sanitizer test executables deterministic so a runtime-startup collision
+      # cannot masquerade as a product test failure. LLVM compiler-rt commit
+      # fb77ca05 fixes the allocator conflict in newer runtimes; Clang 15 in the
+      # supported release matrix predates that fix.
+      target_compile_options(${target} PRIVATE
+        $<$<AND:$<PLATFORM_ID:Linux>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-fno-pie>)
+      target_link_options(${target} PRIVATE
+        $<$<AND:$<PLATFORM_ID:Linux>,$<LINK_LANG_AND_ID:CXX,GNU,Clang>>:-no-pie>)
+    endif()
   elseif(OPEN_LMM_ENABLE_TSAN)
     target_compile_options(${target} PRIVATE
       $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-fsanitize=thread>
@@ -73,6 +87,12 @@ function(openlmm_set_global_target_properties target)
   get_filename_component(INCLUDE_DIRS ${INCLUDE_DIRS} PATH)
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                              PUBLIC $<BUILD_INTERFACE:${INCLUDE_DIRS}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  if(openlmm_target_type STREQUAL "SHARED_LIBRARY")
+    set_target_properties(${target} PROPERTIES
+      VERSION ${PROJECT_VERSION}
+      SOVERSION ${PROJECT_VERSION_MAJOR}
+    )
+  endif()
 endfunction()
 
 

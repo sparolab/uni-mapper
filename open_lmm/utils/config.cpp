@@ -1,11 +1,24 @@
 #include "config.hpp"
 #include "config_impl.hpp"
+#include "config_schema.hpp"
 #include <open_lmm/utils/logging.hpp>
 
 namespace open_lmm {
 
 GlobalConfig* GlobalConfig::inst = nullptr;
 std::mutex GlobalConfig::inst_mutex;
+
+GlobalConfig::GlobalConfig(const std::string& global_config_path)
+    : Config(global_config_path) {
+  if (!is_valid()) return;
+  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kRoot, ToJson(), global_config_path);
+  if (!validated) {
+    error_message_ = validated.GetError().Message();
+    return;
+  }
+  config = validated.Value().Document();
+}
 
 Result<void> GlobalConfig::reload(const std::string& config_path) {
   auto candidate = std::unique_ptr<GlobalConfig>(

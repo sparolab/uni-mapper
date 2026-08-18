@@ -22,11 +22,11 @@ GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controlle
     auto locked = weak.lock();
     return locked ? locked->SubmitStage(stage) : ControllerExpired<uint64_t>();
   };
-  services.submit_node = [weak](NodeId node, char agent) {
+  services.submit_node = [weak](NodeId node, AgentId agent) {
     auto locked = weak.lock();
     return locked ? locked->SubmitNode(node, agent) : ControllerExpired<uint64_t>();
   };
-  services.submit_optimize_through = [weak](char agent) {
+  services.submit_optimize_through = [weak](AgentId agent) {
     auto locked = weak.lock();
     return locked ? locked->SubmitOptimizeThrough(agent) : ControllerExpired<uint64_t>();
   };
@@ -47,7 +47,7 @@ GuiServices MakeGuiServices(const std::shared_ptr<PipelineController>& controlle
     auto locked = weak.lock();
     return locked ? locked->Snapshot() : PipelineSnapshot{};
   };
-  services.visualization_snapshot = [weak](char agent) {
+  services.visualization_snapshot = [weak](const AgentId& agent) {
     auto locked = weak.lock();
     return locked ? locked->GetVisualizationSnapshot(agent)
                   : ControllerExpired<VisualizationSnapshot>();

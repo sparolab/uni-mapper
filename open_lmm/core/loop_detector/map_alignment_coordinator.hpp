@@ -21,8 +21,8 @@ struct MapAlignmentCoordinatorInput {
   std::function<std::optional<MapAlignmentProposal>()> kiss_proposer;
   std::function<std::optional<MapAlignmentProposal>()> descriptor_proposer;
   std::function<Result<void>(const MapAlignmentProposal&)> proposal_validator;
-  char target_agent = 0;
-  char source_agent = 0;
+  AgentId target_agent;
+  AgentId source_agent;
 };
 
 // Owns only fallback and approval policy. Algorithm-specific computation and

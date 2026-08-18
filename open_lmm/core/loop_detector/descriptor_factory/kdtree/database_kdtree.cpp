@@ -22,7 +22,7 @@ DatabaseKdtree::DatabaseKdtree(
 }
 
 /*********************************************************************************************************************/
-void DatabaseKdtree::insert(char agent_id, size_t key,
+void DatabaseKdtree::insert(open_lmm::AgentId agent_id, size_t key,
                             const std::shared_ptr<IDescriptorKdtree>& descriptor) {
   // Guard Code
   // if (!params_.descriptor_params.equals(descriptor.params())) {
@@ -40,9 +40,9 @@ void DatabaseKdtree::insert(char agent_id, size_t key,
 
 // TODO(gil) : refactor query/queryK/sc-distance more readable
 /*********************************************************************************************************************/
-std::optional<std::tuple<char, size_t, Eigen::Isometry3d>>
+std::optional<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>>
 DatabaseKdtree::query(const std::shared_ptr<IDescriptorKdtree>& query) const {
-  std::vector<std::tuple<char, size_t, Eigen::Isometry3d>> matches =
+  std::vector<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> matches =
       queryK(query, 1);
   if (matches.size()) {
     return std::make_tuple(std::get<0>(matches[0]), std::get<1>(matches[0]),
@@ -53,7 +53,7 @@ DatabaseKdtree::query(const std::shared_ptr<IDescriptorKdtree>& query) const {
 }
 
 /*********************************************************************************************************************/
-std::vector<std::tuple<char, size_t, Eigen::Isometry3d>> DatabaseKdtree::queryK(
+std::vector<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> DatabaseKdtree::queryK(
     const std::shared_ptr<IDescriptorKdtree>& query, size_t k) const {
   // Determine the number of descriptor-key nearest neighbors to retrieve
   size_t number_rink_key_nn = std::max(k, params_.num_candidates);
@@ -85,10 +85,10 @@ std::vector<std::tuple<char, size_t, Eigen::Isometry3d>> DatabaseKdtree::queryK(
             keyDistPoseTupleComp);
 
   // Accumulate the final results
-  std::vector<std::tuple<char, size_t, Eigen::Isometry3d>> knn;
+  std::vector<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> knn;
   for (size_t i = 0; i < std::min(k, descriptor_neighbors.size()); i++) {
     const size_t global_key = std::get<0>(descriptor_neighbors[i]);
-    const char agent_id = std::get<0>(database_[global_key]);
+    const open_lmm::AgentId agent_id = std::get<0>(database_[global_key]);
     const size_t local_key = std::get<1>(database_[global_key]);
     const Eigen::Isometry3d init_rel_pose =
         std::get<2>(descriptor_neighbors[i]);

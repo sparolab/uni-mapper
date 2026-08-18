@@ -75,6 +75,25 @@ const char* StageName(StageId stage) {
   return "unknown";
 }
 
+void AppendCancellation(std::ostringstream& output,
+                        const CancellationTelemetry& cancellation) {
+  output << ";cancel_cooperative="
+         << (cancellation.capability.cooperative ? "true" : "false")
+         << ";cancel_pending=" << (cancellation.Pending() ? "true" : "false");
+  if (cancellation.cancel_requested_at_unix_ns) {
+    output << ";cancel_requested_at_unix_ns="
+           << *cancellation.cancel_requested_at_unix_ns;
+  }
+  if (cancellation.cancel_observed_at_unix_ns) {
+    output << ";cancel_observed_at_unix_ns="
+           << *cancellation.cancel_observed_at_unix_ns;
+  }
+  if (cancellation.cancel_completed_at_unix_ns) {
+    output << ";cancel_completed_at_unix_ns="
+           << *cancellation.cancel_completed_at_unix_ns;
+  }
+}
+
 std::string SnapshotText(const PipelineSnapshot& snapshot) {
   std::ostringstream output;
   output << "config_revision=" << snapshot.config_revision;
@@ -90,6 +109,7 @@ std::string SnapshotText(const PipelineSnapshot& snapshot) {
   if (!snapshot.job->message.empty()) {
     output << ";message=" << snapshot.job->message;
   }
+  AppendCancellation(output, snapshot.job->cancellation);
   return output.str();
 }
 
@@ -109,6 +129,7 @@ std::string EventText(const ExecutionEvent& event) {
   }
   if (!event.message.empty()) output << ";message=" << event.message;
   if (event.error) output << ";error=" << event.error->Message();
+  if (event.cancellation) AppendCancellation(output, *event.cancellation);
   return output.str();
 }
 

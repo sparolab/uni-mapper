@@ -15,7 +15,7 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
 
   // ISAM2 자체는 Process 호출마다 생성한다. committed graph/values는 agent 간
   // 누적하며, 각 호출은 working copy에서 처리한 후 성공 시에만 commit한다.
-  std::map<char, AgentOptimizedData> Process(
+  std::map<AgentId, AgentOptimizedData> Process(
       const AgentContext&                 ctx,
       const AgentRawData&                 raw_data,
       const LoopPairVec&                  intra_loops,
@@ -24,7 +24,7 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
 
   void initNoise();
   void Reset() override;
-  [[nodiscard]] bool HasProcessedAgent(char agent_id) const override;
+  [[nodiscard]] bool HasProcessedAgent(const AgentId& agent_id) const override;
   [[nodiscard]] std::size_t ProcessedAgentCount() const override;
 
  private:
@@ -33,7 +33,7 @@ class BackendOptimizerIncremental : public BackendOptimizerBase {
   // 에이전트 간 공유 팩터 그래프 — 클래스 멤버로 누적 (GraphStore 대체)
   gtsam::NonlinearFactorGraph accumulated_graph_;
   gtsam::Values               accumulated_values_;
-  std::set<char>              processed_agents_;
+  std::set<AgentId>           processed_agents_;
 
   gtsam::noiseModel::Diagonal::shared_ptr prior_noise_;
   gtsam::noiseModel::Diagonal::shared_ptr odometry_noise_;

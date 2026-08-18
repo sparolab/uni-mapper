@@ -96,9 +96,9 @@ endif()
 # Install only the selected ABI entry libraries.
 foreach(create_target ${OPEN_LMM_CREATE_LIBRARIES})
   install(TARGETS ${create_target}
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Plugins
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Plugins
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Plugins
   )
 endforeach()
 
@@ -114,14 +114,14 @@ install(TARGETS
   open_lmm_gui_core
   open_lmm_core
   EXPORT open_lmmTargets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 install(TARGETS open_lmm_batch
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Tools
 )
 
 # Runtime-loaded remover plugins depend on their support DSOs. Descriptor
@@ -134,15 +134,16 @@ foreach(plugin_support_target IN ITEMS free_dom hmm_mos dufomap otd erasor)
 endforeach()
 if(_open_lmm_plugin_support_targets)
   install(TARGETS ${_open_lmm_plugin_support_targets}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Plugins
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Plugins
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Plugins
   )
 endif()
 
 foreach(public_header_dir common core gui server utils)
   install(DIRECTORY ${PROJECT_SOURCE_DIR}/${public_header_dir}/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/${public_header_dir}
+    COMPONENT Development
     FILES_MATCHING
       PATTERN "*.hpp"
       PATTERN "*.h"
@@ -151,12 +152,14 @@ foreach(public_header_dir common core gui server utils)
 endforeach()
 install(DIRECTORY ${nlohmann_json_SOURCE_DIR}/include/nlohmann
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  COMPONENT Development
 )
 
 install(EXPORT open_lmmTargets
   FILE open_lmmTargets.cmake
   NAMESPACE open_lmm::
   DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/cmake
+  COMPONENT Development
 )
 
 write_basic_package_version_file(
@@ -164,7 +167,6 @@ write_basic_package_version_file(
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY SameMajorVersion
 )
-
 if(NOT (DEFINED ENV{ROS_VERSION} AND "$ENV{ROS_VERSION}" EQUAL "2"))
   configure_package_config_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/open_lmm-config.cmake.in
@@ -175,15 +177,36 @@ if(NOT (DEFINED ENV{ROS_VERSION} AND "$ENV{ROS_VERSION}" EQUAL "2"))
     ${CMAKE_CURRENT_BINARY_DIR}/open_lmmConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/open_lmmConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/cmake
+    COMPONENT Development
   )
 endif()
+
+install(FILES
+  ${PROJECT_SOURCE_DIR}/../LICENCE
+  ${PROJECT_SOURCE_DIR}/../RELEASE_POLICY.md
+  ${PROJECT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md
+  ${PROJECT_SOURCE_DIR}/cmake/open_lmm-install-components.txt
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
+  COMPONENT Runtime
+)
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/thirdparty/
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/licenses/thirdparty
+  COMPONENT Runtime
+  FILES_MATCHING PATTERN "LICENSE"
+)
+install(FILES
+  ${PROJECT_SOURCE_DIR}/core/dynamic_remover/remover_factory/offline/erasor/LICENCE
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/licenses/erasor
+  COMPONENT Runtime
+)
 
 ### if ROS-related ###
 if(DEFINED ENV{ROS_VERSION})
   if($ENV{ROS_VERSION} EQUAL 2)
     # ROS2
     find_package(ament_cmake REQUIRED)
-    install(DIRECTORY config DESTINATION share/${PROJECT_NAME}/)
+    install(DIRECTORY config DESTINATION share/${PROJECT_NAME}/
+      COMPONENT Runtime)
     ament_export_targets(open_lmmTargets HAS_LIBRARY_TARGET)
     ament_package(CONFIG_EXTRAS cmake/open_lmm_dependencies.cmake)
   elseif($ENV{ROS_VERSION} EQUAL 1)

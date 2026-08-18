@@ -1,4 +1,5 @@
 #pragma once
+#include <open_lmm/common/agent_id.hpp>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -27,9 +28,13 @@ struct Error {
     std::optional<uint64_t> session_revision;
     std::string stage;
     std::string node;
-    std::optional<char> agent;
+    std::optional<AgentId> agent;
     std::string plugin;
     std::string config;
+    std::string json_pointer;
+    std::string expected;
+    std::string actual;
+    std::optional<uint32_t> schema_version;
   };
 
   Code        code;
@@ -56,14 +61,14 @@ struct Error {
     return std::move(*this);
   }
   Error& WithExecution(std::string stage_name, std::string node_name = {},
-                       std::optional<char> agent_id = std::nullopt) & {
+                       std::optional<AgentId> agent_id = std::nullopt) & {
     context.stage = std::move(stage_name);
     context.node = std::move(node_name);
     context.agent = agent_id;
     return *this;
   }
   Error&& WithExecution(std::string stage_name, std::string node_name = {},
-                        std::optional<char> agent_id = std::nullopt) && {
+                        std::optional<AgentId> agent_id = std::nullopt) && {
     context.stage = std::move(stage_name);
     context.node = std::move(node_name);
     context.agent = agent_id;
@@ -83,6 +88,22 @@ struct Error {
   }
   Error&& WithConfig(std::string config_name) && {
     context.config = std::move(config_name);
+    return std::move(*this);
+  }
+  Error& WithValidation(std::string pointer, std::string expected_value,
+                        std::string actual_value, uint32_t version) & {
+    context.json_pointer = std::move(pointer);
+    context.expected = std::move(expected_value);
+    context.actual = std::move(actual_value);
+    context.schema_version = version;
+    return *this;
+  }
+  Error&& WithValidation(std::string pointer, std::string expected_value,
+                         std::string actual_value, uint32_t version) && {
+    context.json_pointer = std::move(pointer);
+    context.expected = std::move(expected_value);
+    context.actual = std::move(actual_value);
+    context.schema_version = version;
     return std::move(*this);
   }
 

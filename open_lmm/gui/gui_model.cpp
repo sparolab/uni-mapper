@@ -50,6 +50,7 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
   if (event.job_id != 0 && job_) {
     job_->message = event.message;
     job_->active_stage = event.stage;
+    if (event.cancellation) job_->cancellation = *event.cancellation;
   }
 
   switch (event.type) {
@@ -124,7 +125,7 @@ bool GuiModel::CanCancel() const {
 
 uint64_t GuiModel::LastSequence() const { return last_sequence_; }
 uint64_t GuiModel::ConfigRevision() const { return config_revision_; }
-const std::vector<char>& GuiModel::Agents() const { return agents_; }
+const std::vector<AgentId>& GuiModel::Agents() const { return agents_; }
 const std::vector<ArtifactMetadata>& GuiModel::Artifacts() const {
   return artifacts_;
 }

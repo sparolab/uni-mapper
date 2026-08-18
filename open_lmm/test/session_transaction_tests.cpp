@@ -13,6 +13,8 @@
 namespace open_lmm {
 namespace {
 
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 void Check(bool condition, const char* message) {
   if (condition) return;
   std::cerr << "FAILED: " << message << '\n';
@@ -21,16 +23,16 @@ void Check(bool condition, const char* message) {
 
 class FakeOptimizer final : public BackendOptimizerBase {
  public:
-  explicit FakeOptimizer(std::set<char> processed = {})
+  explicit FakeOptimizer(std::set<AgentId> processed = {})
       : processed_(std::move(processed)) {}
 
-  std::map<char, AgentOptimizedData> Process(
+  std::map<AgentId, AgentOptimizedData> Process(
       const AgentContext&, const AgentRawData&, const LoopPairVec&,
       const LoopPairVec&, const AgentRawDataMap&) override {
     return {};
   }
   void Reset() override { processed_.clear(); }
-  bool HasProcessedAgent(char agent) const override {
+  bool HasProcessedAgent(const AgentId& agent) const override {
     return processed_.contains(agent);
   }
   std::size_t ProcessedAgentCount() const override {
@@ -38,7 +40,7 @@ class FakeOptimizer final : public BackendOptimizerBase {
   }
 
  private:
-  std::set<char> processed_;
+  std::set<AgentId> processed_;
 };
 
 std::shared_ptr<const SessionConfig> TestConfig() {
@@ -53,12 +55,12 @@ std::shared_ptr<const SessionConfig> TestConfig() {
 
 std::shared_ptr<const SessionState> DataLoadedState() {
   auto raw = std::make_shared<AgentRawData>();
-  raw->agent_id = 'A';
+  raw->agent_id = Id("A");
   raw->odom_poses.push_back(Eigen::Isometry3d::Identity());
   auto database = std::make_shared<SharedDatabase>();
-  database->raw_data['A'] = raw;
+  database->raw_data[Id("A")] = raw;
   AgentPipelineCtx context;
-  context.agent = {.id = 'A', .role = AgentRole::kAnchor, .order = 0};
+  context.agent = {.id = Id("A"), .role = AgentRole::kAnchor, .order = 0};
   context.raw_data = raw;
   auto payload = std::make_shared<SessionPayload>();
   payload->contexts.push_back(std::move(context));
@@ -67,10 +69,10 @@ std::shared_ptr<const SessionState> DataLoadedState() {
   auto state = std::make_shared<SessionState>();
   state->revision = 7;
   state->config = TestConfig();
-  state->ordered_agents = {'A'};
+  state->ordered_agents = {Id("A")};
   state->payload = std::move(payload);
   state->artifacts.push_back(
-      {{ArtifactType::kRawData, 'A'}, ArtifactState::kReady, 11,
+      {{ArtifactType::kRawData, Id("A")}, ArtifactState::kReady, 11,
        "data_load"});
   return state;
 }
@@ -80,10 +82,10 @@ std::shared_ptr<const SessionState> AlignedState() {
   auto database = std::make_shared<SharedDatabase>();
   database->raw_data = base->payload->database->raw_data;
   auto optimized = std::make_shared<AgentOptimizedData>();
-  optimized->agent_id = 'A';
+  optimized->agent_id = Id("A");
   optimized->optimized_poses.emplace_back(
       0, Eigen::Isometry3d::Identity());
-  database->optimized_data['A'] = optimized;
+  database->optimized_data[Id("A")] = optimized;
   AgentPipelineCtx context = base->payload->contexts.front();
   auto loop = std::make_shared<LoopDetectorOutput>();
   loop->accepted_global_T_agent = Eigen::Isometry3d::Identity();
@@ -93,24 +95,24 @@ std::shared_ptr<const SessionState> AlignedState() {
   auto payload = std::make_shared<SessionPayload>();
   payload->contexts.push_back(std::move(context));
   payload->database = std::move(database);
-  payload->optimizer = std::make_shared<FakeOptimizer>(std::set<char>{'A'});
+  payload->optimizer = std::make_shared<FakeOptimizer>(std::set<AgentId>{Id("A")});
   auto state = std::make_shared<SessionState>();
   state->revision = 12;
   state->config = base->config;
-  state->ordered_agents = {'A'};
+  state->ordered_agents = {Id("A")};
   state->payload = std::move(payload);
-  state->optimizer.processed_agents = {'A'};
+  state->optimizer.processed_agents = {Id("A")};
   state->artifacts = {
-      {{ArtifactType::kRawData, 'A'}, ArtifactState::kReady, 20, "data_load"},
-      {{ArtifactType::kLoopCandidates, 'A'}, ArtifactState::kReady, 21,
+      {{ArtifactType::kRawData, Id("A")}, ArtifactState::kReady, 20, "data_load"},
+      {{ArtifactType::kLoopCandidates, Id("A")}, ArtifactState::kReady, 21,
        "loop_detect"},
-      {{ArtifactType::kMapAlignment, 'A'}, ArtifactState::kReady, 22,
+      {{ArtifactType::kMapAlignment, Id("A")}, ArtifactState::kReady, 22,
        "loop_detect"},
       {{ArtifactType::kDescriptorState, std::nullopt}, ArtifactState::kReady,
        23, "loop_detect"},
       {{ArtifactType::kOptimizerState, std::nullopt}, ArtifactState::kReady,
        24, "optimize"},
-      {{ArtifactType::kOptimizedPoses, 'A'}, ArtifactState::kReady, 25,
+      {{ArtifactType::kOptimizedPoses, Id("A")}, ArtifactState::kReady, 25,
        "optimize"},
   };
   return state;
@@ -119,14 +121,14 @@ std::shared_ptr<const SessionState> AlignedState() {
 void TestCancelledDataLoadPreservesCommittedRawPayload() {
   auto base = DataLoadedState();
   const auto* committed_raw =
-      base->payload->database->raw_data.at('A').get();
+      base->payload->database->raw_data.at(Id("A")).get();
   const auto committed_artifacts = base->artifacts;
   SessionTransaction transaction(base);
   auto replacement = std::make_shared<AgentRawData>();
-  replacement->agent_id = 'A';
+  replacement->agent_id = Id("A");
   replacement->odom_poses.resize(2, Eigen::Isometry3d::Identity());
   auto database = std::make_shared<SharedDatabase>();
-  database->raw_data['A'] = replacement;
+  database->raw_data[Id("A")] = replacement;
   auto payload = std::make_shared<SessionPayload>(*base->payload);
   payload->contexts.front().raw_data = replacement;
   payload->database = std::move(database);
@@ -137,7 +139,7 @@ void TestCancelledDataLoadPreservesCommittedRawPayload() {
   Check(!result && result.GetError().code == Error::Code::kCancelled,
         "cancelled DataLoad transaction fails before commit");
   Check(base->revision == 7, "cancelled DataLoad preserves revision");
-  Check(base->payload->database->raw_data.at('A').get() == committed_raw,
+  Check(base->payload->database->raw_data.at(Id("A")).get() == committed_raw,
         "cancelled DataLoad preserves actual raw payload handle");
   Check(base->artifacts.front().revision == committed_artifacts.front().revision,
         "cancelled DataLoad preserves artifact metadata");
@@ -147,7 +149,7 @@ void TestCancelledAlignmentPreservesDescriptorPoseAndOptimizer() {
   auto base = AlignedState();
   const auto* committed_loop = base->payload->contexts.front().loop_output.get();
   const auto* committed_pose =
-      base->payload->database->optimized_data.at('A').get();
+      base->payload->database->optimized_data.at(Id("A")).get();
   const auto* committed_optimizer = base->payload->optimizer.get();
   SessionTransaction transaction(base);
   auto payload = std::make_shared<SessionPayload>(*base->payload);
@@ -156,8 +158,8 @@ void TestCancelledAlignmentPreservesDescriptorPoseAndOptimizer() {
   auto database = std::make_shared<SharedDatabase>();
   database->raw_data = base->payload->database->raw_data;
   auto replacement_pose = std::make_shared<AgentOptimizedData>();
-  replacement_pose->agent_id = 'A';
-  database->optimized_data['A'] = replacement_pose;
+  replacement_pose->agent_id = Id("A");
+  database->optimized_data[Id("A")] = replacement_pose;
   payload->database = std::move(database);
   payload->optimizer = std::make_shared<FakeOptimizer>();
   transaction.SetPayload(std::move(payload));
@@ -169,17 +171,17 @@ void TestCancelledAlignmentPreservesDescriptorPoseAndOptimizer() {
   Check(base->revision == 12, "cancelled Alignment preserves revision");
   Check(base->payload->contexts.front().loop_output.get() == committed_loop,
         "cancelled Alignment preserves descriptor/loop payload");
-  Check(base->payload->database->optimized_data.at('A').get() == committed_pose,
+  Check(base->payload->database->optimized_data.at(Id("A")).get() == committed_pose,
         "cancelled Alignment preserves optimized pose payload");
   Check(base->payload->optimizer.get() == committed_optimizer &&
-            base->payload->optimizer->HasProcessedAgent('A'),
+            base->payload->optimizer->HasProcessedAgent(Id("A")),
         "cancelled Alignment preserves optimizer instance and lifecycle");
 }
 
 void TestInvalidWorkingStateCannotReplaceCommittedAlignment() {
   auto base = AlignedState();
   const auto* committed_pose =
-      base->payload->database->optimized_data.at('A').get();
+      base->payload->database->optimized_data.at(Id("A")).get();
   SessionTransaction transaction(base);
   auto payload = std::make_shared<SessionPayload>(*base->payload);
   auto invalid_database = std::make_shared<SharedDatabase>();
@@ -189,7 +191,7 @@ void TestInvalidWorkingStateCannotReplaceCommittedAlignment() {
   auto result = std::move(transaction).Finalize(nullptr);
   Check(!result, "ready metadata without working pose payload is rejected");
   Check(base->revision == 12 &&
-            base->payload->database->optimized_data.at('A').get() ==
+            base->payload->database->optimized_data.at(Id("A")).get() ==
                 committed_pose,
         "failed Alignment validation preserves committed state");
 }

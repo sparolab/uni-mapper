@@ -16,6 +16,8 @@ void Check(bool condition, const char* message) {
   std::exit(1);
 }
 
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 class TestDescriptorIndex final : public DescriptorIndex {
  public:
   explicit TestDescriptorIndex(std::size_t size) : size_(size) {}
@@ -30,15 +32,15 @@ class TestDescriptorIndex final : public DescriptorIndex {
     Check(typed != nullptr, "descriptor store merges compatible index types");
     size_ += typed->size_;
   }
-  void insert(char, std::size_t,
+  void insert(AgentId, std::size_t,
               const std::shared_ptr<IDescriptorKdtree>&) override {
     ++size_;
   }
-  std::optional<std::tuple<char, std::size_t, Eigen::Isometry3d>> query(
+  std::optional<std::tuple<AgentId, std::size_t, Eigen::Isometry3d>> query(
       const std::shared_ptr<IDescriptorKdtree>&) const override {
     return std::nullopt;
   }
-  std::vector<std::tuple<char, std::size_t, Eigen::Isometry3d>> queryK(
+  std::vector<std::tuple<AgentId, std::size_t, Eigen::Isometry3d>> queryK(
       const std::shared_ptr<IDescriptorKdtree>&,
       std::size_t) const override {
     return {};
@@ -48,7 +50,7 @@ class TestDescriptorIndex final : public DescriptorIndex {
   std::size_t size_ = 0;
 };
 
-DescriptorIndexHandle MakeDatabase(char agent, std::size_t count,
+DescriptorIndexHandle MakeDatabase(AgentId agent, std::size_t count,
                                    double offset) {
   (void)agent;
   (void)offset;
@@ -57,7 +59,7 @@ DescriptorIndexHandle MakeDatabase(char agent, std::size_t count,
 
 ArtifactState StateOf(const std::vector<ArtifactMetadata>& artifacts,
                       ArtifactType type,
-                      std::optional<char> agent = std::nullopt) {
+                      std::optional<AgentId> agent = std::nullopt) {
   for (const auto& artifact : artifacts) {
     if (artifact.key == ArtifactKey{type, agent}) return artifact.state;
   }
@@ -87,62 +89,62 @@ void TestExecutionSpecIsSingleOrderedSource() {
   Check(std::find(optimize.invalidates.begin(), optimize.invalidates.end(),
                   ArtifactType::kLoopCandidates) != optimize.invalidates.end(),
         "optimizer replay invalidates follower loop outputs");
-  Check(ProgressTotal(NodeId::kLoopDetect, {'A', 'B', 'C'}, 'B') == 2,
+  Check(ProgressTotal(NodeId::kLoopDetect, {Id("A"), Id("B"), Id("C")}, Id("B")) == 2,
         "ordered progress total uses replay prefix");
 }
 
 void TestOrderedValidationUsesRawAndLoopPrefix() {
   ArtifactRepository artifacts;
-  artifacts.Reset({'A', 'B'});
+  artifacts.Reset({Id("A"), Id("B")});
   artifacts.BeginStage(StageId::kDataLoad);
   artifacts.CompleteStage(StageId::kDataLoad);
-  Check(static_cast<bool>(artifacts.ValidateNode(NodeId::kLoopDetect, 'B')),
+  Check(static_cast<bool>(artifacts.ValidateNode(NodeId::kLoopDetect, Id("B"))),
         "LoopDetect(B) derives A..B replay dependencies from raw prefix");
-  artifacts.CompleteLoopDetectThrough('B', {'A', 'B'});
-  Check(static_cast<bool>(artifacts.ValidateNode(NodeId::kOptimize, 'B')),
+  artifacts.CompleteLoopDetectThrough(Id("B"), {Id("A"), Id("B")});
+  Check(static_cast<bool>(artifacts.ValidateNode(NodeId::kOptimize, Id("B"))),
         "Optimize(B) validates A..B loop prefix");
   const auto snapshot = artifacts.Snapshot();
-  Check(StateOf(snapshot, ArtifactType::kLoopCandidates, 'A') ==
+  Check(StateOf(snapshot, ArtifactType::kLoopCandidates, Id("A")) ==
             ArtifactState::kReady &&
-            StateOf(snapshot, ArtifactType::kLoopCandidates, 'B') ==
+            StateOf(snapshot, ArtifactType::kLoopCandidates, Id("B")) ==
                 ArtifactState::kReady,
         "loop replay marks the committed prefix ready");
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, 'A') ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
             ArtifactState::kReady &&
-            StateOf(snapshot, ArtifactType::kOptimizedPoses, 'B') ==
+            StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("B")) ==
                 ArtifactState::kStale,
         "loop replay metadata matches the actual optimizer prefix");
 
   ArtifactRepository three_agents;
-  three_agents.Reset({'A', 'B', 'C'});
+  three_agents.Reset({Id("A"), Id("B"), Id("C")});
   three_agents.BeginStage(StageId::kDataLoad);
   three_agents.CompleteStage(StageId::kDataLoad);
-  three_agents.CompleteLoopDetectThrough('C', {'A', 'B', 'C'});
-  three_agents.CompleteOptimizeThrough('B', {'A', 'B', 'C'});
+  three_agents.CompleteLoopDetectThrough(Id("C"), {Id("A"), Id("B"), Id("C")});
+  three_agents.CompleteOptimizeThrough(Id("B"), {Id("A"), Id("B"), Id("C")});
   const auto middle_replay = three_agents.Snapshot();
-  Check(StateOf(middle_replay, ArtifactType::kLoopCandidates, 'B') ==
+  Check(StateOf(middle_replay, ArtifactType::kLoopCandidates, Id("B")) ==
             ArtifactState::kReady &&
-            StateOf(middle_replay, ArtifactType::kLoopCandidates, 'C') ==
+            StateOf(middle_replay, ArtifactType::kLoopCandidates, Id("C")) ==
                 ArtifactState::kStale &&
-            StateOf(middle_replay, ArtifactType::kOptimizedPoses, 'C') ==
+            StateOf(middle_replay, ArtifactType::kOptimizedPoses, Id("C")) ==
                 ArtifactState::kStale,
         "middle optimizer replay stales follower loop and pose artifacts");
 }
 
 void TestDescriptorStoreRebuildReplacesRepeatedAgent() {
   DescriptorStore store;
-  const auto anchor = MakeDatabase('A', 2, 0.0);
-  const auto follower = MakeDatabase('B', 3, 10.0);
-  store.set_anchor_descriptor('A', anchor);
-  store.merge_descriptor_db('B', follower);
+  const auto anchor = MakeDatabase(Id("A"), 2, 0.0);
+  const auto follower = MakeDatabase(Id("B"), 3, 10.0);
+  store.set_anchor_descriptor(Id("A"), anchor);
+  store.merge_descriptor_db(Id("B"), follower);
   Check(store.total_db && store.total_db->getSize() == 5,
         "descriptor store combines ordered per-agent outputs");
   Check(store.per_agent_db.size() == 2 &&
-            store.descriptor_order == std::vector<char>({'A', 'B'}),
+            store.descriptor_order == std::vector<AgentId>({Id("A"), Id("B")}),
         "descriptor store retains reconstructable per-agent outputs");
 
-  const auto repeated_follower = MakeDatabase('B', 3, 20.0);
-  store.merge_descriptor_db('B', repeated_follower);
+  const auto repeated_follower = MakeDatabase(Id("B"), 3, 20.0);
+  store.merge_descriptor_db(Id("B"), repeated_follower);
   Check(store.total_db && store.total_db->getSize() == 5,
         "repeated LoopDetect(B) replaces rather than appends descriptors");
   store.rebuild_descriptor_db();

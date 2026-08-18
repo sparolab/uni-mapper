@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include <Eigen/Geometry>
 #include <pcl/io/pcd_io.h>
 #include <pcl/kdtree/kdtree_flann.h>
@@ -157,15 +159,94 @@ double Parse(char* text, const char* name) {
   if (value < 0.0) throw std::invalid_argument(std::string(name) + " must be nonnegative");
   return value;
 }
+
+std::map<std::string, std::string> ParseAgentMap(const std::string& value) {
+  std::map<std::string, std::string> result;
+  std::istringstream input(value);
+  for (std::string entry; std::getline(input, entry, ',');) {
+    const auto separator = entry.find('=');
+    if (separator == std::string::npos || separator == 0 ||
+        separator + 1 == entry.size()) {
+      throw std::invalid_argument("agent map entries must use BASELINE=CANDIDATE");
+    }
+    if (!result.emplace(entry.substr(0, separator),
+                        entry.substr(separator + 1)).second) {
+      throw std::invalid_argument("duplicate baseline agent in agent map");
+    }
+  }
+  return result;
+}
+
+std::map<int, std::string> LoadManifest(const fs::path& directory) {
+  std::ifstream input(directory / "agent_manifest.json");
+  if (!input) return {};
+  nlohmann::json manifest;
+  input >> manifest;
+  if (manifest.value("version", 0) != 1 || !manifest["agents"].is_array()) {
+    throw std::invalid_argument("unsupported agent manifest");
+  }
+  std::map<int, std::string> result;
+  for (const auto& agent : manifest["agents"]) {
+    const int byte = agent.at("symbol_byte").get<int>();
+    const std::string id = agent.at("id").get<std::string>();
+    if (byte < 1 || byte > 255 || id.empty() ||
+        !result.emplace(byte, id).second) {
+      throw std::invalid_argument("invalid or duplicate agent manifest entry");
+    }
+  }
+  return result;
+}
+
+std::string ResolveCandidateAgent(
+    const std::string& baseline_agent,
+    const std::map<std::string, std::string>& explicit_map,
+    const std::map<int, std::string>& baseline_manifest,
+    const std::map<int, std::string>& candidate_manifest) {
+  if (const auto found = explicit_map.find(baseline_agent);
+      found != explicit_map.end()) return found->second;
+  int symbol_byte = 0;
+  for (const auto& [byte, id] : baseline_manifest) {
+    if (id == baseline_agent) {
+      symbol_byte = byte;
+      break;
+    }
+  }
+  if (symbol_byte == 0 && baseline_agent.size() == 1 &&
+      baseline_agent.front() >= 'A' && baseline_agent.front() <= 'Z') {
+    symbol_byte = baseline_agent.front() - 'A' + 1;
+  }
+  if (const auto found = candidate_manifest.find(symbol_byte);
+      found != candidate_manifest.end()) return found->second;
+  return baseline_agent;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
-  const bool compare_pcd = argc > 3 && std::string(argv[3]) == "--pcd";
-  const int first_threshold = compare_pcd ? 4 : 3;
+  bool compare_pcd = false;
+  std::map<std::string, std::string> explicit_agent_map;
+  int first_threshold = 3;
+  while (first_threshold < argc && std::string(argv[first_threshold]).starts_with("--")) {
+    const std::string option = argv[first_threshold++];
+    if (option == "--pcd") {
+      compare_pcd = true;
+    } else if (option.starts_with("--agent-map=")) {
+      try {
+        explicit_agent_map = ParseAgentMap(option.substr(12));
+      } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 2;
+      }
+    } else {
+      std::cerr << "unknown option: " << option << '\n';
+      return 2;
+    }
+  }
   const int threshold_count = argc - first_threshold;
-  if (argc < 3 || threshold_count < 0 || threshold_count > (compare_pcd ? 5 : 2)) {
+  if (argc < 3 || threshold_count < 0 || threshold_count > 5 ||
+      (!compare_pcd && threshold_count > 2)) {
     std::cerr << "usage: open_lmm_artifact_compare BASELINE_DIR CANDIDATE_DIR "
-                 "[--pcd] [pose_translation_m] [pose_rotation_rad] "
+                 "[--pcd] [--agent-map=A=test1,B=test2] "
+                 "[pose_translation_m] [pose_rotation_rad] "
                  "[pcd_rms_m] [pcd_max_m] [point_count_ratio]\n";
     return 2;
   }
@@ -185,16 +266,21 @@ int main(int argc, char** argv) {
       limits.point_count_ratio = Parse(argv[first_threshold + 4], "point_count_ratio");
     const auto agents = FindAgents(baseline);
     if (agents.empty()) { std::cerr << "baseline has no pose files\n"; return 2; }
+    const auto baseline_manifest = LoadManifest(baseline);
+    const auto candidate_manifest = LoadManifest(candidate);
     bool passed = true;
     for (const auto& agent : agents) {
-      std::cout << "agent=" << agent << '\n';
+      const std::string candidate_agent = ResolveCandidateAgent(
+          agent, explicit_agent_map, baseline_manifest, candidate_manifest);
+      std::cout << "agent=" << agent << " candidate_agent="
+                << candidate_agent << '\n';
       const bool pose_ok = ComparePoses(
           baseline / ("optimized_poses_" + agent + ".txt"),
-          candidate / ("optimized_poses_" + agent + ".txt"), limits);
+          candidate / ("optimized_poses_" + candidate_agent + ".txt"), limits);
       bool cloud_ok = true;
       if (compare_pcd) {
         cloud_ok = CompareClouds(baseline / ("global_map_" + agent + ".pcd"),
-                                 candidate / ("global_map_" + agent + ".pcd"), limits);
+                                 candidate / ("global_map_" + candidate_agent + ".pcd"), limits);
       } else {
         std::cout << "  pcd=SKIP (use --pcd to enable)\n";
       }

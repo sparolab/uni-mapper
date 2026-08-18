@@ -4,7 +4,7 @@
 
 namespace open_lmm {
 
-void ArtifactRepository::Reset(const std::vector<char>& agents) {
+void ArtifactRepository::Reset(const std::vector<AgentId>& agents) {
   {
     std::lock_guard lock(mutex_);
     artifacts_.clear();
@@ -31,14 +31,14 @@ bool ArtifactRepository::IsPerAgent(ArtifactType type) {
          type != ArtifactType::kConfigSnapshot;
 }
 
-void ArtifactRepository::RegisterAgents(const std::vector<char>& agents) {
+void ArtifactRepository::RegisterAgents(const std::vector<AgentId>& agents) {
   std::lock_guard lock(mutex_);
   agents_ = agents;
   for (auto type : {ArtifactType::kRawData, ArtifactType::kLoopCandidates,
                     ArtifactType::kMapAlignment,
                     ArtifactType::kOptimizedPoses, ArtifactType::kGlobalMap,
                     ArtifactType::kPoseFile, ArtifactType::kPcdFile}) {
-    for (char agent : agents_) {
+    for (const AgentId& agent : agents_) {
       ArtifactKey key{type, agent};
       artifacts_.try_emplace(key, ArtifactMetadata{key});
     }
@@ -50,7 +50,7 @@ void ArtifactRepository::RegisterAgents(const std::vector<char>& agents) {
   ArtifactKey config{ArtifactType::kConfigSnapshot, std::nullopt};
   artifacts_[config] = ArtifactMetadata{config, ArtifactState::kReady,
                                         next_revision_++, "session"};
-  for (char agent : agents_) {
+  for (const AgentId& agent : agents_) {
     ArtifactKey input{ArtifactType::kAgentInput, agent};
     artifacts_[input] = ArtifactMetadata{input, ArtifactState::kReady,
                                          next_revision_++, "session"};
@@ -63,7 +63,7 @@ void ArtifactRepository::setTypes(const std::vector<ArtifactType>& types,
                                   const std::string& detail) {
   for (auto type : types) {
     if (IsPerAgent(type)) {
-      for (char agent : agents_) {
+      for (const AgentId& agent : agents_) {
         auto& item = artifacts_[ArtifactKey{type, agent}];
         item.key = {type, agent};
         item.state = state;
@@ -100,14 +100,14 @@ void ArtifactRepository::FailStage(StageId stage, std::string detail) {
 }
 
 void ArtifactRepository::CompleteOptimizeThrough(
-    char target_agent, const std::vector<char>& ordered_agents) {
+    const AgentId& target_agent, const std::vector<AgentId>& ordered_agents) {
   std::lock_guard lock(mutex_);
   const auto target = std::find(
       ordered_agents.begin(), ordered_agents.end(), target_agent);
   if (target == ordered_agents.end()) return;
   setTypes({ArtifactType::kOptimizerState}, ArtifactState::kReady,
            "optimizer_replay");
-  const auto set = [this](ArtifactType type, std::optional<char> agent,
+  const auto set = [this](ArtifactType type, std::optional<AgentId> agent,
                           ArtifactState state) {
     ArtifactKey key{type, agent};
     auto& item = artifacts_[key];
@@ -134,12 +134,12 @@ void ArtifactRepository::CompleteOptimizeThrough(
 }
 
 void ArtifactRepository::CompleteLoopDetectThrough(
-    char target_agent, const std::vector<char>& ordered_agents) {
+    const AgentId& target_agent, const std::vector<AgentId>& ordered_agents) {
   std::lock_guard lock(mutex_);
   const auto target = std::find(
       ordered_agents.begin(), ordered_agents.end(), target_agent);
   if (target == ordered_agents.end()) return;
-  const auto set = [this](ArtifactType type, std::optional<char> agent,
+  const auto set = [this](ArtifactType type, std::optional<AgentId> agent,
                           ArtifactState state) {
     ArtifactKey key{type, agent};
     auto& item = artifacts_[key];
@@ -191,7 +191,7 @@ void ArtifactRepository::Restore(
 }
 
 void ArtifactRepository::RecordExternalFile(
-    ArtifactType type, char agent, std::string path,
+    ArtifactType type, AgentId agent, std::string path,
     std::string fingerprint) {
   std::lock_guard lock(mutex_);
   ArtifactKey key{type, std::nullopt};
@@ -207,7 +207,7 @@ void ArtifactRepository::RecordExternalFile(
 }
 
 Result<void> ArtifactRepository::ValidateNode(
-    NodeId node, std::optional<char> agent) const {
+    NodeId node, std::optional<AgentId> agent) const {
   std::lock_guard lock(mutex_);
   if (!agent) {
     return Result<void>::Failure(
@@ -217,15 +217,15 @@ Result<void> ArtifactRepository::ValidateNode(
     return Result<void>::Failure(Error::InvalidArgument("unknown agent"));
   }
   const auto& spec = ExecutionSpecFor(node);
-  std::vector<char> execution_agents{*agent};
+  std::vector<AgentId> execution_agents{*agent};
   if (spec.ordered) {
     auto prefix = OrderedAgentPrefix(agents_, *agent);
     if (!prefix) return Result<void>::Failure(prefix.GetError());
     execution_agents = std::move(prefix).Value();
   }
-  for (char execution_agent : execution_agents) {
+  for (const AgentId& execution_agent : execution_agents) {
     for (auto type : spec.required_artifacts) {
-      std::optional<char> key_agent;
+      std::optional<AgentId> key_agent;
       if (IsPerAgent(type)) key_agent = execution_agent;
       ArtifactKey key{type, key_agent};
       auto it = artifacts_.find(key);
@@ -239,7 +239,7 @@ Result<void> ArtifactRepository::ValidateNode(
   return Result<void>::Ok();
 }
 
-void ArtifactRepository::BeginNode(NodeId node, std::optional<char> agent) {
+void ArtifactRepository::BeginNode(NodeId node, std::optional<AgentId> agent) {
   std::lock_guard lock(mutex_);
   if (!agent) return;
   const auto start = std::find(agents_.begin(), agents_.end(), *agent);
@@ -265,11 +265,11 @@ void ArtifactRepository::BeginNode(NodeId node, std::optional<char> agent) {
   }
 }
 
-void ArtifactRepository::CompleteNode(NodeId node, std::optional<char> agent) {
+void ArtifactRepository::CompleteNode(NodeId node, std::optional<AgentId> agent) {
   std::lock_guard lock(mutex_);
   if (!agent) return;
   for (auto type : DescribeNode(node).produced_artifacts) {
-    std::optional<char> key_agent;
+    std::optional<AgentId> key_agent;
     if (IsPerAgent(type)) key_agent = agent;
     ArtifactKey key{type, key_agent};
     auto& item = artifacts_[key];
@@ -281,12 +281,12 @@ void ArtifactRepository::CompleteNode(NodeId node, std::optional<char> agent) {
   }
 }
 
-void ArtifactRepository::FailNode(NodeId node, std::optional<char> agent,
+void ArtifactRepository::FailNode(NodeId node, std::optional<AgentId> agent,
                                   std::string detail) {
   std::lock_guard lock(mutex_);
   if (!agent) return;
   for (auto type : DescribeNode(node).produced_artifacts) {
-    std::optional<char> key_agent;
+    std::optional<AgentId> key_agent;
     if (IsPerAgent(type)) key_agent = agent;
     ArtifactKey key{type, key_agent};
     auto& item = artifacts_[key];

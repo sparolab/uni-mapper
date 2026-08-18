@@ -1,5 +1,7 @@
 #pragma once
 
+#include <open_lmm/common/agent_id.hpp>
+
 #include <Eigen/Geometry>
 
 #include <cstddef>
@@ -43,8 +45,8 @@ struct AlignmentMetrics {
 // into the target/global map frame.
 struct MapAlignmentProposal {
   uint64_t request_id = 0;
-  char target_agent = 0;
-  char source_agent = 0;
+  AgentId target_agent;
+  AgentId source_agent;
   AlignmentMethod method = AlignmentMethod::kKissMatcher;
   Eigen::Isometry3d target_T_source = Eigen::Isometry3d::Identity();
   AlignmentMetrics metrics;

@@ -13,21 +13,21 @@ namespace open_lmm {
 
 class ArtifactRepository {
  public:
-  void RegisterAgents(const std::vector<char>& agents);
-  void Reset(const std::vector<char>& agents);
+  void RegisterAgents(const std::vector<AgentId>& agents);
+  void Reset(const std::vector<AgentId>& agents);
   void BeginStage(StageId stage);
   void CompleteStage(StageId stage);
   void FailStage(StageId stage, std::string detail);
-  void CompleteOptimizeThrough(char target_agent,
-                               const std::vector<char>& ordered_agents);
-  void CompleteLoopDetectThrough(char target_agent,
-                                 const std::vector<char>& ordered_agents);
-  Result<void> ValidateNode(NodeId node, std::optional<char> agent) const;
-  void BeginNode(NodeId node, std::optional<char> agent);
-  void CompleteNode(NodeId node, std::optional<char> agent);
-  void FailNode(NodeId node, std::optional<char> agent, std::string detail);
+  void CompleteOptimizeThrough(const AgentId& target_agent,
+                               const std::vector<AgentId>& ordered_agents);
+  void CompleteLoopDetectThrough(const AgentId& target_agent,
+                                 const std::vector<AgentId>& ordered_agents);
+  Result<void> ValidateNode(NodeId node, std::optional<AgentId> agent) const;
+  void BeginNode(NodeId node, std::optional<AgentId> agent);
+  void CompleteNode(NodeId node, std::optional<AgentId> agent);
+  void FailNode(NodeId node, std::optional<AgentId> agent, std::string detail);
   void ApplyConfig(ConfigDomain domain, uint64_t config_revision);
-  void RecordExternalFile(ArtifactType type, char agent,
+  void RecordExternalFile(ArtifactType type, AgentId agent,
                           std::string path, std::string fingerprint);
   [[nodiscard]] std::vector<ArtifactMetadata> Snapshot() const;
   void Restore(const std::vector<ArtifactMetadata>& snapshot);
@@ -40,7 +40,7 @@ class ArtifactRepository {
 
   mutable std::mutex mutex_;
   std::map<ArtifactKey, ArtifactMetadata> artifacts_;
-  std::vector<char> agents_;
+  std::vector<AgentId> agents_;
   uint64_t next_revision_ = 1;
 };
 

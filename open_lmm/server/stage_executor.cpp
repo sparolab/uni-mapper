@@ -7,6 +7,7 @@
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 #include <open_lmm/utils/load_module.hpp>
 #include <open_lmm/utils/logging.hpp>
 #include <chrono>
@@ -81,6 +82,48 @@ std::optional<Eigen::Isometry3d> MatrixFromJson(const nlohmann::json& value) {
              ? std::optional<Eigen::Isometry3d>(transform)
              : std::nullopt;
 }
+
+Result<Config> LoadValidatedConfig(ConfigDocumentKind kind,
+                                   const std::string& path) {
+  Config source(path);
+  if (!source.is_valid()) {
+    return Result<Config>::Failure(Error::ParseError(source.error_message())
+                                       .WithConfig(path));
+  }
+  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      kind, source.ToJson(), path);
+  if (!validated) return Result<Config>::Failure(validated.GetError());
+  return Result<Config>::Ok(
+      Config::FromJson(validated.Value().CanonicalJson(), path));
+}
+
+Result<void> WriteAgentManifest(const fs::path& output_directory,
+                                const AgentSymbolCatalog& catalog) {
+  nlohmann::json manifest;
+  manifest["version"] = AgentSymbolCatalog::kVersion;
+  manifest["agents"] = nlohmann::json::array();
+  for (const AgentId& id : catalog.OrderedIds()) {
+    auto symbol = catalog.SymbolFor(id);
+    if (!symbol) return Result<void>::Failure(symbol.GetError());
+    manifest["agents"].push_back({
+        {"id", id.Value()}, {"symbol_byte", symbol.Value().Byte()}});
+  }
+  const fs::path destination = output_directory / "agent_manifest.json";
+  const fs::path temporary = destination.string() + ".tmp";
+  {
+    std::ofstream output(temporary);
+    if (!output) {
+      return Result<void>::Failure(
+          Error::IoError("failed to open agent manifest " + temporary.string()));
+    }
+    output << manifest.dump(2) << '\n';
+    if (!output) {
+      return Result<void>::Failure(
+          Error::IoError("failed to write agent manifest " + temporary.string()));
+    }
+  }
+  return CommitFileSet({{temporary, destination}});
+}
 }  // namespace
 
 StageExecutor::StageExecutor() {
@@ -97,6 +140,12 @@ void StageExecutor::parseConfig() {
   auto* global = GlobalConfig::instance();
   if (!global->is_valid()) {
     initialization_error_ = Error::ParseError(global->error_message());
+    return;
+  }
+  auto root_document = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kRoot, global->ToJson(), "config.json");
+  if (!root_document) {
+    initialization_error_ = root_document.GetError();
     return;
   }
   for (const char* config_name : {"config_map_server", "config_data_loader",
@@ -123,19 +172,29 @@ void StageExecutor::parseConfig() {
     return;
   }
   for (const std::string& sub_dir : sub_dirs) {
-    if (sub_dir.empty()) {
-      initialization_error_ = Error::InvalidArgument(
-          "directory/sub_dir_list must not contain empty agent paths");
+    auto agent_id = AgentId::Parse(sub_dir);
+    if (!agent_id) {
+      initialization_error_ = agent_id.GetError();
       return;
     }
     const fs::path data_dir = root_data_dir / sub_dir;
+    configured_agent_ids_.push_back(std::move(agent_id).Value());
+    data_dir_list_.push_back(data_dir);
+  }
+  agent_num_ = data_dir_list_.size();
+  auto catalog = AgentSymbolCatalog::Build(configured_agent_ids_);
+  if (!catalog) {
+    initialization_error_ = catalog.GetError();
+    return;
+  }
+  agent_catalog_ = std::make_shared<const AgentSymbolCatalog>(
+      std::move(catalog).Value());
+  for (const fs::path& data_dir : data_dir_list_) {
     if (!fs::is_directory(data_dir)) {
       initialization_error_ = Error::FileNotFound(data_dir.string());
       return;
     }
-    data_dir_list_.push_back(data_dir);
   }
-  agent_num_ = data_dir_list_.size();
 
   output_save_dir_ = (root_save_dir / global->date).string();
   std::error_code directory_error;
@@ -146,11 +205,25 @@ void StageExecutor::parseConfig() {
         directory_error.message());
     return;
   }
-
-  config_map_server_ =
-      Config(GlobalConfig::get_global_config_path("config_map_server"));
-  if (!config_map_server_->is_valid()) {
-    initialization_error_ = Error::ParseError(config_map_server_->error_message());
+  auto map_document = LoadValidatedConfig(
+      ConfigDocumentKind::kMapServer,
+      GlobalConfig::get_global_config_path("config_map_server"));
+  if (!map_document) {
+    initialization_error_ = map_document.GetError();
+    return;
+  }
+  config_map_server_ = std::move(map_document).Value();
+  auto validated_map = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kMapServer, config_map_server_->ToJson(),
+      GlobalConfig::get_global_config_path("config_map_server"));
+  if (!validated_map) {
+    initialization_error_ = validated_map.GetError();
+    return;
+  }
+  auto session_schema = ValidateSessionConfigDocuments(
+      root_document.Value(), validated_map.Value());
+  if (!session_schema) {
+    initialization_error_ = session_schema.GetError();
     return;
   }
   enable_map_updater_ =
@@ -164,9 +237,9 @@ void StageExecutor::parseConfig() {
   }
   agent_ids_.clear();
   agent_ids_.reserve(data_dir_list_.size());
-  agent_ids_.push_back(static_cast<char>('A' + anchor_agent_index_));
+  agent_ids_.push_back(configured_agent_ids_[anchor_agent_index_]);
   for (int i = 0; i < agent_num_; ++i) {
-    if (i != anchor_agent_index_) agent_ids_.push_back(static_cast<char>('A' + i));
+    if (i != anchor_agent_index_) agent_ids_.push_back(configured_agent_ids_[i]);
   }
   save_voxel_size_ =
       config_map_server_->param<double>("map_server", "save_voxel_size", 0.2);
@@ -176,33 +249,39 @@ void StageExecutor::parseConfig() {
     return;
   }
 
-  config_data_loader_ =
-      Config(GlobalConfig::get_global_config_path("config_data_loader"));
-  if (!config_data_loader_->is_valid()) {
-    initialization_error_ = Error::ParseError(config_data_loader_->error_message());
+  auto data_document = LoadValidatedConfig(
+      ConfigDocumentKind::kDataLoader,
+      GlobalConfig::get_global_config_path("config_data_loader"));
+  if (!data_document) {
+    initialization_error_ = data_document.GetError();
     return;
   }
-  config_loop_detector_ =
-      Config(GlobalConfig::get_global_config_path("config_loop_detector"));
-  if (!config_loop_detector_->is_valid()) {
-    initialization_error_ = Error::ParseError(config_loop_detector_->error_message());
+  config_data_loader_ = std::move(data_document).Value();
+  auto loop_document = LoadValidatedConfig(
+      ConfigDocumentKind::kLoopDetector,
+      GlobalConfig::get_global_config_path("config_loop_detector"));
+  if (!loop_document) {
+    initialization_error_ = loop_document.GetError();
     return;
   }
-  config_dynamic_remover_ =
-      Config(GlobalConfig::get_global_config_path("config_dynamic_remover"));
-  if (!config_dynamic_remover_->is_valid()) {
-    initialization_error_ = Error::ParseError(
-        config_dynamic_remover_->error_message());
+  config_loop_detector_ = std::move(loop_document).Value();
+  auto remover_document = LoadValidatedConfig(
+      ConfigDocumentKind::kDynamicRemover,
+      GlobalConfig::get_global_config_path("config_dynamic_remover"));
+  if (!remover_document) {
+    initialization_error_ = remover_document.GetError();
     return;
   }
+  config_dynamic_remover_ = std::move(remover_document).Value();
 
-  config_backend_optimizer_ =
-      Config(GlobalConfig::get_global_config_path("config_backend_optimizer"));
-  if (!config_backend_optimizer_->is_valid()) {
-    initialization_error_ = Error::ParseError(
-        config_backend_optimizer_->error_message());
+  auto optimizer_document = LoadValidatedConfig(
+      ConfigDocumentKind::kBackendOptimizer,
+      GlobalConfig::get_global_config_path("config_backend_optimizer"));
+  if (!optimizer_document) {
+    initialization_error_ = optimizer_document.GetError();
     return;
   }
+  config_backend_optimizer_ = std::move(optimizer_document).Value();
   auto data_loader_config = ParseDataLoaderConfig(*config_data_loader_);
   if (!data_loader_config) {
     initialization_error_ = data_loader_config.GetError();
@@ -255,6 +334,11 @@ void StageExecutor::parseConfig() {
   }
   auto optimizer = std::shared_ptr<BackendOptimizerBase>(
       std::move(optimizer_result).Value());
+  auto manifest = WriteAgentManifest(output_save_dir_, *agent_catalog_);
+  if (!manifest) {
+    initialization_error_ = manifest.GetError();
+    return;
+  }
   computeAlignmentFingerprints();
   loadAlignmentCache();
 
@@ -294,6 +378,7 @@ void StageExecutor::parseConfig() {
   state->revision = 1;
   state->config = std::move(session_config);
   state->ordered_agents = agent_ids_;
+  state->agent_catalog = agent_catalog_;
   state->payload = std::move(payload);
   state->artifacts = initial_artifacts.Snapshot();
   session_manager_.Initialize(std::move(state));
@@ -340,12 +425,12 @@ void StageExecutor::computeAlignmentFingerprints() {
       const auto modified = fs::last_write_time(scan, error);
       if (!error) HashText(input_hash, std::to_string(modified.time_since_epoch().count()));
     }
-    alignment_input_fingerprints_[static_cast<char>('A' + i)] =
+    alignment_input_fingerprints_[configured_agent_ids_[i]] =
         HexFingerprint(input_hash);
   }
   uint64_t session_hash = config_hash;
   for (const auto& [agent, fingerprint] : alignment_input_fingerprints_) {
-    HashText(session_hash, std::string(1, agent));
+    HashText(session_hash, agent.Value());
     HashText(session_hash, fingerprint);
   }
   alignment_session_fingerprint_ = HexFingerprint(session_hash);
@@ -361,7 +446,7 @@ void StageExecutor::loadAlignmentCache() {
   try {
     nlohmann::json root;
     input >> root;
-    if (root.value("version", 0) != 2 ||
+    if (root.value("version", 0) != 3 ||
         root.value("session_fingerprint", std::string()) !=
             alignment_session_fingerprint_) {
       return;
@@ -370,12 +455,16 @@ void StageExecutor::loadAlignmentCache() {
       if (item.value("approval", std::string()) != "user") continue;
       const auto source = item.value("source_agent", std::string());
       const auto target = item.value("target_agent", std::string());
-      if (source.size() != 1 || target.size() != 1) continue;
+      auto source_id = AgentId::Parse(source);
+      auto target_id = AgentId::Parse(target);
+      if (!source_id || !target_id || !agent_catalog_ ||
+          !agent_catalog_->SymbolFor(source_id.Value()) ||
+          !agent_catalog_->SymbolFor(target_id.Value())) continue;
       auto transform = MatrixFromJson(item["accepted_global_T_agent"]);
       if (!transform) continue;
       StoredAlignment stored;
-      stored.proposal.source_agent = source.front();
-      stored.proposal.target_agent = target.front();
+      stored.proposal.source_agent = source_id.Value();
+      stored.proposal.target_agent = target_id.Value();
       const auto method = item.value("method", std::string());
       if (method == "manual") {
         stored.proposal.method = AlignmentMethod::kManual;
@@ -407,7 +496,7 @@ void StageExecutor::loadAlignmentCache() {
       }
       stored.approval = AlignmentApproval::kUser;
       stored.accepted_at_unix_ms = item.value("accepted_at_unix_ms", 0ULL);
-      cached_alignments_[source.front()] = std::move(stored);
+      cached_alignments_[source_id.Value()] = std::move(stored);
     }
   } catch (const std::exception&) {
     cached_alignments_.clear();
@@ -423,7 +512,9 @@ std::vector<AgentPipelineCtx> StageExecutor::buildContexts() const {
   for (int i = 0; i < agent_num_; i++) {
     AgentPipelineCtx ctx;
     ctx.agent = {
-        .id    = static_cast<char>('A' + i),
+        .id    = configured_agent_ids_[i],
+        .symbol = agent_catalog_->SymbolFor(configured_agent_ids_[i]).Value(),
+        .catalog = agent_catalog_,
         .role  = (i == anchor_agent_index_) ? AgentRole::kAnchor
                                             : AgentRole::kFollower,
         .order = i,
@@ -461,9 +552,9 @@ Result<void> StageExecutor::ensureReady() {
   if (agent_num_ <= 0) {
     return Result<void>::Failure(Error::InvalidArgument("No agents configured"));
   }
-  if (agent_num_ > 26) {
+  if (agent_num_ > static_cast<int>(AgentSymbolCatalog::kMaximumAgents)) {
     return Result<void>::Failure(Error::InvalidArgument(
-        "At most 26 agents are supported by character agent IDs"));
+        "At most 255 agents are supported by the GTSAM symbol catalog"));
   }
   if (anchor_agent_index_ < 0 || anchor_agent_index_ >= agent_num_) {
     return Result<void>::Failure(Error::InvalidArgument(
@@ -494,16 +585,16 @@ Result<void> StageExecutor::validateInputFiles() const {
   const auto scan_type = config_data_loader_->param<std::string>(
       "data_loader", "scan_type", "");
   for (std::size_t i = 0; i < data_dir_list_.size(); ++i) {
-    const char agent = static_cast<char>('A' + i);
+    const AgentId& agent = configured_agent_ids_[i];
     const auto pose_path = data_dir_list_[i] / pose_name;
     const auto scan_path = data_dir_list_[i] / scan_dir_name;
     if (!fs::is_regular_file(pose_path)) {
       return Result<void>::Failure(Error::FileNotFound(
-          "agent " + std::string(1, agent) + " pose " + pose_path.string()));
+          "agent " + agent.Value() + " pose " + pose_path.string()));
     }
     if (!fs::is_directory(scan_path)) {
       return Result<void>::Failure(Error::FileNotFound(
-          "agent " + std::string(1, agent) + " scans " + scan_path.string()));
+          "agent " + agent.Value() + " scans " + scan_path.string()));
     }
     std::ifstream poses(pose_path);
     std::size_t pose_count = 0;
@@ -516,7 +607,7 @@ Result<void> StageExecutor::validateInputFiles() const {
     }
     if (pose_count == 0 || scan_count == 0 || pose_count != scan_count) {
       return Result<void>::Failure(Error::InvalidArgument(
-          "agent " + std::string(1, agent) + " input count mismatch: poses=" +
+          "agent " + agent.Value() + " input count mismatch: poses=" +
           std::to_string(pose_count) + ", scans=" + std::to_string(scan_count)));
     }
   }
@@ -556,18 +647,18 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
 
   if (domain == ConfigDomain::kLoopDetector ||
       domain == ConfigDomain::kOptimizer) {
-    Config loop_config(
+    auto loop_document = LoadValidatedConfig(
+        ConfigDocumentKind::kLoopDetector,
         GlobalConfig::get_global_config_path("config_loop_detector"));
-    if (!loop_config.is_valid()) {
-      return Result<void>::Failure(
-          Error::ParseError(loop_config.error_message()));
-    }
-    Config optimizer_config(
+    if (!loop_document)
+      return Result<void>::Failure(loop_document.GetError());
+    Config loop_config = std::move(loop_document).Value();
+    auto optimizer_document = LoadValidatedConfig(
+        ConfigDocumentKind::kBackendOptimizer,
         GlobalConfig::get_global_config_path("config_backend_optimizer"));
-    if (!optimizer_config.is_valid()) {
-      return Result<void>::Failure(
-          Error::ParseError(optimizer_config.error_message()));
-    }
+    if (!optimizer_document)
+      return Result<void>::Failure(optimizer_document.GetError());
+    Config optimizer_config = std::move(optimizer_document).Value();
     auto typed_loop_config = ParseLoopDetectorConfig(loop_config);
     if (!typed_loop_config) {
       return Result<void>::Failure(typed_loop_config.GetError());
@@ -623,23 +714,36 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
 
   if (domain == ConfigDomain::kDynamicRemover ||
       domain == ConfigDomain::kMapSave) {
-    Config remover_config(
+    auto remover_document = LoadValidatedConfig(
+        ConfigDocumentKind::kDynamicRemover,
         GlobalConfig::get_global_config_path("config_dynamic_remover"));
-    if (!remover_config.is_valid()) {
-      return Result<void>::Failure(
-          Error::ParseError(remover_config.error_message()));
-    }
+    if (!remover_document)
+      return Result<void>::Failure(remover_document.GetError());
+    Config remover_config = std::move(remover_document).Value();
     auto typed_remover_config = ParseDynamicRemoverConfig(remover_config);
     if (!typed_remover_config) {
       return Result<void>::Failure(typed_remover_config.GetError());
     }
     config_dynamic_remover_ = std::move(remover_config);
-    Config map_config(
+    auto map_document = LoadValidatedConfig(
+        ConfigDocumentKind::kMapServer,
         GlobalConfig::get_global_config_path("config_map_server"));
-    if (!map_config.is_valid()) {
-      return Result<void>::Failure(
-          Error::ParseError(map_config.error_message()));
-    }
+    if (!map_document)
+      return Result<void>::Failure(map_document.GetError());
+    Config map_config = std::move(map_document).Value();
+    auto root_document = BuiltinConfigSchemaRegistry().ParseAndValidate(
+        ConfigDocumentKind::kRoot, GlobalConfig::instance()->ToJson(),
+        "config.json");
+    auto validated_map = BuiltinConfigSchemaRegistry().ParseAndValidate(
+        ConfigDocumentKind::kMapServer, map_config.ToJson(),
+        GlobalConfig::get_global_config_path("config_map_server"));
+    if (!root_document)
+      return Result<void>::Failure(root_document.GetError());
+    if (!validated_map)
+      return Result<void>::Failure(validated_map.GetError());
+    auto session_schema = ValidateSessionConfigDocuments(
+        root_document.Value(), validated_map.Value());
+    if (!session_schema) return session_schema;
     auto typed_map_config = ParseMapSaveConfig(map_config);
     if (!typed_map_config) {
       return Result<void>::Failure(typed_map_config.GetError());
@@ -678,7 +782,7 @@ Result<void> StageExecutor::Reconfigure(ConfigDomain domain, uint64_t revision) 
       "data/global config requires a new pipeline session"));
 }
 
-std::vector<char> StageExecutor::AgentIds() const {
+std::vector<AgentId> StageExecutor::AgentIds() const {
   return agent_ids_;
 }
 
@@ -761,6 +865,17 @@ void StageExecutor::SetCancellationToken(
   cancellation_ = std::move(token);
 }
 
+CancellationCapability StageExecutor::CancellationMetadata() const {
+  return {
+      .cooperative = false,
+      .mode = CancellationMode::kHostSafePoints,
+      .non_interruptible_operations =
+          {"descriptor plugin call", "map alignment registration",
+           "dynamic remover plugin call", "GTSAM optimize"},
+      .requires_process_isolation = true,
+  };
+}
+
 void StageExecutor::SetAlignmentFeedbackBroker(
     std::shared_ptr<AlignmentFeedbackBroker> broker) {
   std::lock_guard lock(state_mutex_);
@@ -793,7 +908,7 @@ Result<void> StageExecutor::RunStage(StageId stage) {
   return result;
 }
 
-Result<void> StageExecutor::RunNode(NodeId node, std::optional<char> agent) {
+Result<void> StageExecutor::RunNode(NodeId node, std::optional<AgentId> agent) {
   ExecutionLease execution(execution_active_);
   if (!execution) {
     return Result<void>::Failure(
@@ -896,7 +1011,7 @@ Result<void> StageExecutor::RunNode(NodeId node, std::optional<char> agent) {
         output_save_dir_, save_voxel_size_, true);
     auto pending = output_repository_.Begin();
     const fs::path destination = fs::path(output_save_dir_) /
-        ("global_map_" + std::string{*agent} + ".pcd");
+        ("global_map_" + agent->Value() + ".pcd");
     pending.Add(destination.string() + ".tmp", destination);
     auto result = update_node.Process(context, *database);
     if (!result) return Result<void>::Failure(result.GetError());
@@ -930,7 +1045,7 @@ Result<void> StageExecutor::RunNode(NodeId node, std::optional<char> agent) {
   return Result<void>::Failure(Error::InvalidArgument("unknown node"));
 }
 
-Result<void> StageExecutor::runLoopDetectThrough(char target_agent) {
+Result<void> StageExecutor::runLoopDetectThrough(const AgentId& target_agent) {
   OPEN_LMM_ZONE_N("MapServer.LoopDetectReplay");
   const auto base = committedState();
   auto prefix = OrderedAgentPrefix(base->ordered_agents, target_agent);
@@ -966,7 +1081,7 @@ Result<void> StageExecutor::runLoopDetectThrough(char target_agent) {
   OptimizeNode optimize_node(optimizer.Value());
   const auto& replay_agents = prefix.Value();
   for (std::size_t index = 0; index < replay_agents.size(); ++index) {
-    const char agent_id = replay_agents[index];
+    const AgentId& agent_id = replay_agents[index];
     auto context = std::find_if(
         contexts.begin(), contexts.end(), [agent_id](const auto& item) {
           return item.agent.id == agent_id;
@@ -1101,7 +1216,7 @@ Result<void> StageExecutor::prepareAlignmentArtifacts(
   const auto& contexts = state.payload->contexts;
   const auto& shared_data = *state.payload->database;
   nlohmann::json root;
-  root["version"] = 2;
+  root["version"] = 3;
   root["transform_convention"] = "global_T_agent";
   root["generated_at_unix_ms"] = static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1110,7 +1225,7 @@ Result<void> StageExecutor::prepareAlignmentArtifacts(
   root["session_fingerprint"] = alignment_session_fingerprint_;
   root["input_fingerprints"] = nlohmann::json::object();
   for (const auto& [agent, fingerprint] : alignment_input_fingerprints_) {
-    root["input_fingerprints"][std::string(1, agent)] = fingerprint;
+    root["input_fingerprints"][agent.Value()] = fingerprint;
   }
   root["alignments"] = nlohmann::json::array();
   const auto method_name = [](AlignmentMethod method) {
@@ -1141,13 +1256,13 @@ Result<void> StageExecutor::prepareAlignmentArtifacts(
         !ctx.loop_output->accepted_alignment_approval) {
       return Result<void>::Failure(Error::IoError(
           "cannot save incomplete alignment artifact for agent " +
-          std::string(1, ctx.agent.id)));
+          ctx.agent.id.Value()));
     }
     nlohmann::json item;
-    item["agent"] = std::string(1, ctx.agent.id);
-    item["source_agent"] = std::string(1, ctx.agent.id);
+    item["agent"] = ctx.agent.id.Value();
+    item["source_agent"] = ctx.agent.id.Value();
     item["target_agent"] =
-        std::string(1, ctx.loop_output->accepted_target_agent);
+        ctx.loop_output->accepted_target_agent.Value();
     item["method"] = method_name(*ctx.loop_output->accepted_alignment_method);
     item["approval"] = approval_name(
         *ctx.loop_output->accepted_alignment_approval);
@@ -1191,7 +1306,7 @@ Result<void> StageExecutor::prepareAlignmentArtifacts(
           "failed to write alignment artifact " + temporary.string()));
     }
   }
-  for (char agent : state.ordered_agents) {
+  for (const AgentId& agent : state.ordered_agents) {
     artifacts.RecordExternalFile(ArtifactType::kMapAlignment, agent,
                                  destination.string(), HexFingerprint([&] {
                                    uint64_t hash = 14695981039346656037ULL;
@@ -1224,7 +1339,7 @@ Result<void> StageExecutor::prepareAlignmentArtifacts(
   return Result<void>::Ok();
 }
 
-Result<void> StageExecutor::RunOptimizeThrough(char target_agent) {
+Result<void> StageExecutor::RunOptimizeThrough(const AgentId& target_agent) {
   ExecutionLease execution(execution_active_);
   if (!execution) {
     return Result<void>::Failure(
@@ -1235,9 +1350,8 @@ Result<void> StageExecutor::RunOptimizeThrough(char target_agent) {
   return result;
 }
 
-Result<void> StageExecutor::runOptimizeThrough(char target_agent) {
+Result<void> StageExecutor::runOptimizeThrough(const AgentId& target_agent) {
   OPEN_LMM_ZONE_N("MapServer.OptimizeReplay");
-  OPEN_LMM_PLOT("optimizer.target_agent", static_cast<int>(target_agent));
   auto ready = ensureReady();
   if (!ready) return ready;
   const auto base = committedState();
@@ -1262,7 +1376,7 @@ Result<void> StageExecutor::runOptimizeThrough(char target_agent) {
     database->alignment_feedback = alignment_feedback_;
   }
   bool anchor_descriptor = true;
-  for (char agent_id : prefix.Value()) {
+  for (const AgentId& agent_id : prefix.Value()) {
     const auto context = std::find_if(
         contexts.begin(), contexts.end(), [agent_id](const auto& item) {
           return item.agent.id == agent_id;
@@ -1270,7 +1384,7 @@ Result<void> StageExecutor::runOptimizeThrough(char target_agent) {
     if (context == contexts.end() || !context->loop_output) {
       return Result<void>::Failure(Error::InvalidArgument(
           "Alignment loop artifacts are missing for agent " +
-          std::string{agent_id}));
+          agent_id.Value()));
     }
     if (anchor_descriptor) {
       database->descriptor_store.set_anchor_descriptor(
@@ -1282,7 +1396,7 @@ Result<void> StageExecutor::runOptimizeThrough(char target_agent) {
     }
   }
   OptimizeNode optimize_node(optimizer.Value());
-  for (char agent_id : prefix.Value()) {
+  for (const AgentId& agent_id : prefix.Value()) {
     auto context = std::find_if(
         contexts.begin(), contexts.end(), [agent_id](const auto& item) {
           return item.agent.id == agent_id;
@@ -1314,7 +1428,7 @@ Result<void> StageExecutor::runOptimizeThrough(char target_agent) {
 }
 
 Result<VisualizationSnapshot> StageExecutor::CreateVisualizationSnapshot(
-    char agent) const {
+    const AgentId& agent) const {
   std::shared_ptr<const VisualizationState> state;
   {
     std::lock_guard lock(state_mutex_);
@@ -1402,7 +1516,7 @@ void StageExecutor::publishVisualizationState(
     }
     if (include_maps) {
       const fs::path map_path = fs::path(output_save_dir_) /
-          ("global_map_" + std::string{agent} + ".pcd");
+          ("global_map_" + agent.Value() + ".pcd");
       if (fs::is_regular_file(map_path)) state->map_paths[agent] = map_path;
     }
   }
@@ -1455,7 +1569,7 @@ Result<void> StageExecutor::runMapUpdateStage() {
   auto pending = output_repository_.Begin();
   for (const auto& ctx : contexts) {
     fs::path final_path = fs::path(output_save_dir_) /
-        ("global_map_" + std::string{ctx.agent.id} + ".pcd");
+        ("global_map_" + ctx.agent.id.Value() + ".pcd");
     fs::path temporary = final_path;
     temporary += ".tmp";
     pending.Add(std::move(temporary), std::move(final_path));
@@ -1467,7 +1581,7 @@ Result<void> StageExecutor::runMapUpdateStage() {
   artifacts->CompleteStage(StageId::kMapUpdate);
   for (const auto& ctx : contexts) {
     fs::path final_path = fs::path(output_save_dir_) /
-        ("global_map_" + std::string{ctx.agent.id} + ".pcd");
+        ("global_map_" + ctx.agent.id.Value() + ".pcd");
     fs::path temporary = final_path;
     temporary += ".tmp";
     uint64_t hash = 14695981039346656037ULL;
@@ -1525,10 +1639,10 @@ Result<void> StageExecutor::prepareOptimizedPoses(
   for (const auto& [agent_id, opt_data] : database.optimized_data) {
     if (opt_data->optimized_poses.empty()) {
       return Result<void>::Failure(Error::InvalidArgument(
-          "No optimized poses to save for agent " + std::string{agent_id}));
+          "No optimized poses to save for agent " + agent_id.Value()));
     }
     fs::path final_path = fs::path(output_save_dir) /
-        ("optimized_poses_" + std::string{agent_id} + ".txt");
+        ("optimized_poses_" + agent_id.Value() + ".txt");
     fs::path temporary = final_path;
     temporary += ".tmp";
     std::error_code ignored;
@@ -1611,12 +1725,12 @@ Result<void> StageExecutor::prepareOptimizedMap(
 
     if (optimized_map->empty()) {
       return Result<void>::Failure(Error::InvalidArgument(
-          "Optimized map is empty for agent " + std::string{agent_id}));
+          "Optimized map is empty for agent " + agent_id.Value()));
     }
 
     fs::path output_map_file =
         fs::path(output_save_dir) /
-        ("global_map_" + std::string{agent_id} + ".pcd");
+        ("global_map_" + agent_id.Value() + ".pcd");
     fs::path temporary = output_map_file;
     temporary += ".tmp";
     pending.Add(temporary, output_map_file);

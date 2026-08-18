@@ -36,7 +36,7 @@ class IridescenceGui final : public GuiPlugin {
   void RefreshDatasetCatalog();
   void LoadAlignmentEditor();
   void SynchronizeModel();
-  void RequestVisualization(char agent);
+  void RequestVisualization(AgentId agent);
   void DrainVisualizationSnapshots();
   void UpdateDrawables(
       const std::shared_ptr<const VisualizationSnapshot>& snapshot,

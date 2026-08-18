@@ -11,7 +11,7 @@ namespace open_lmm {
 std::optional<MapAlignmentProposal> KissAlignmentProposer::Propose(
     const std::vector<Eigen::Vector3f>& target_map,
     const std::vector<Eigen::Vector3f>& source_map,
-    char target_agent, char source_agent,
+    AgentId target_agent, AgentId source_agent,
     float leaf_size, bool use_quatro) const {
   kiss_matcher::KISSMatcherConfig config(leaf_size);
   config.use_quatro_ = use_quatro;

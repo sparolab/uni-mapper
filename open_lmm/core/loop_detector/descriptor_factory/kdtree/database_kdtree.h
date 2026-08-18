@@ -96,17 +96,17 @@ class DatabaseKdtree final : public DescriptorIndex {
   }
 
   // TODO(gil) : need this?
-  void setAgentId(const char agent_id) { agent_id_ = agent_id; }
+  void setAgentId(open_lmm::AgentId agent_id) { agent_id_ = std::move(agent_id); }
 
   void merge(const DescriptorIndex& other) override;
 
-  void insert(char agent_id, size_t key,
+  void insert(open_lmm::AgentId agent_id, size_t key,
               const std::shared_ptr<IDescriptorKdtree>& descriptor) override;
 
-  std::optional<std::tuple<char, size_t, Eigen::Isometry3d>> query(
+  std::optional<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> query(
       const std::shared_ptr<IDescriptorKdtree>& query) const override;
 
-  std::vector<std::tuple<char, size_t, Eigen::Isometry3d>> queryK(
+  std::vector<std::tuple<open_lmm::AgentId, size_t, Eigen::Isometry3d>> queryK(
       const std::shared_ptr<IDescriptorKdtree>& query,
       size_t k) const override;
 
@@ -159,7 +159,7 @@ class DatabaseKdtree final : public DescriptorIndex {
   // This member is declared before database_ so reverse destruction releases
   // descriptor objects before their plugin handles.
   std::vector<std::shared_ptr<IDescriptorKdtree>> plugin_owners_;
-  std::vector<std::tuple<char, size_t, std::shared_ptr<IDescriptorKdtree>>>
+  std::vector<std::tuple<open_lmm::AgentId, size_t, std::shared_ptr<IDescriptorKdtree>>>
       database_;
-  char agent_id_;
+  open_lmm::AgentId agent_id_;
 };

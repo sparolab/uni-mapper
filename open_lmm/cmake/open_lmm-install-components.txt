@@ -1,0 +1,13 @@
+OpenLMM install components, version 1.0.0
+
+Runtime
+  Versioned OpenLMM runtime shared libraries, license and release metadata.
+
+Development
+  Public headers, static archives and CMake package/export metadata.
+
+Plugins
+  Runtime-loaded plugin entry libraries and their support shared libraries.
+
+Tools
+  Standalone open_lmm_batch executable.

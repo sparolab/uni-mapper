@@ -5,7 +5,7 @@
   <version>1.0.0</version>
   <description>Lidar Map Merging and Long-term Map Management Package</description>
   <maintainer email="gilhwan@hyundai.com">gilhwan kang</maintainer>
-  <license>TODO</license>
+  <license>GPL-3.0-only</license>
 
   <!-- buildtool depend -->
   <buildtool_depend condition="$ROS_VERSION == 2">ament_cmake</buildtool_depend>

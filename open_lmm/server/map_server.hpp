@@ -21,17 +21,18 @@ class MapServer final : public StageRunner {
 
   Result<void> process();
   void SetCancellationToken(std::shared_ptr<CancellationToken> token) override;
+  [[nodiscard]] CancellationCapability CancellationMetadata() const override;
   void SetAlignmentFeedbackBroker(
       std::shared_ptr<AlignmentFeedbackBroker> broker) override;
   Result<void> RunStage(StageId stage) override;
-  Result<void> RunNode(NodeId node, std::optional<char> agent) override;
-  Result<void> RunOptimizeThrough(char target_agent) override;
+  Result<void> RunNode(NodeId node, std::optional<AgentId> agent) override;
+  Result<void> RunOptimizeThrough(const AgentId& target_agent) override;
   Result<void> Reconfigure(ConfigDomain domain, uint64_t revision) override;
-  [[nodiscard]] std::vector<char> AgentIds() const override;
+  [[nodiscard]] std::vector<AgentId> AgentIds() const override;
   [[nodiscard]] std::optional<CommittedSessionSnapshot>
   SessionSnapshot() const override;
   [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
-      char agent) const override;
+      const AgentId& agent) const override;
   Result<void> ValidateReady();
 
  private:

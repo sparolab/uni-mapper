@@ -16,6 +16,10 @@
 #include <thread>
 
 namespace {
+open_lmm::AgentId Id(const char* value) {
+  return open_lmm::AgentId::Parse(value).Value();
+}
+
 class FakeGui final : public open_lmm::GuiPlugin {
  public:
   open_lmm::Result<void> Start(open_lmm::GuiServices) override { started = open = true; return open_lmm::Result<void>::Ok(); }
@@ -33,15 +37,15 @@ class NoopRunner final : public open_lmm::StageRunner {
     return open_lmm::Result<void>::Ok();
   }
   open_lmm::Result<void> RunNode(
-      open_lmm::NodeId, std::optional<char>) override {
+      open_lmm::NodeId, std::optional<open_lmm::AgentId>) override {
     return open_lmm::Result<void>::Ok();
   }
-  open_lmm::Result<void> RunOptimizeThrough(char) override {
+  open_lmm::Result<void> RunOptimizeThrough(const open_lmm::AgentId&) override {
     return open_lmm::Result<void>::Ok();
   }
-  std::vector<char> AgentIds() const override { return {'A'}; }
+  std::vector<open_lmm::AgentId> AgentIds() const override { return {Id("A")}; }
   open_lmm::Result<open_lmm::VisualizationSnapshot>
-  CreateVisualizationSnapshot(char agent) const override {
+  CreateVisualizationSnapshot(const open_lmm::AgentId& agent) const override {
     open_lmm::VisualizationSnapshot snapshot;
     snapshot.agent = agent;
     snapshot.poses.push_back({});
@@ -87,7 +91,8 @@ int main() {
               std::vector<std::string>({"agent_a", "agent_b"}),
           "dataset catalog contains sorted child directories only");
   const auto alignment_path = dataset_root / "loop.json";
-  std::ofstream(alignment_path) << R"({"loop_detector":{"model":"scan_context"}})";
+  std::ofstream(alignment_path)
+      << R"({"loop_detector":{"loop_detector_type":"kdtree","model":"scan_context"}})";
   auto alignment = open_lmm::LoadAlignmentConfig(alignment_path);
   Require(alignment.IsOk() && alignment.Value().kiss_voxel_size == 2.0,
           "alignment editor provides backward-compatible defaults");
@@ -97,6 +102,21 @@ int main() {
   alignment_values.pose_nn_distance_threshold = 7.5;
   Require(open_lmm::SaveAlignmentConfig(alignment_path, alignment_values).IsOk(),
           "alignment editor saves validated values");
+  const auto saved_before_invalid = [&] {
+    std::ifstream input(alignment_path);
+    return std::string(std::istreambuf_iterator<char>(input), {});
+  }();
+  auto invalid_alignment_values = alignment_values;
+  invalid_alignment_values.kiss_voxel_size = -1.0;
+  Require(!open_lmm::SaveAlignmentConfig(alignment_path,
+                                         invalid_alignment_values).IsOk(),
+          "alignment editor rejects values rejected by runtime schema");
+  const auto saved_after_invalid = [&] {
+    std::ifstream input(alignment_path);
+    return std::string(std::istreambuf_iterator<char>(input), {});
+  }();
+  Require(saved_after_invalid == saved_before_invalid,
+          "failed alignment save leaves the original file unchanged");
   auto saved_alignment = open_lmm::LoadAlignmentConfig(alignment_path);
   Require(saved_alignment.IsOk() && saved_alignment.Value().kiss_use_quatro &&
               saved_alignment.Value().pose_nn_distance_threshold == 7.5,
@@ -152,8 +172,8 @@ int main() {
           "applied config revision is visible in snapshot");
   Require(services.node_descriptors().size() == 5,
           "node descriptors are exposed to GUI controls");
-  auto visualization = services.visualization_snapshot('A');
-  Require(visualization.IsOk() && visualization.Value().agent == 'A',
+  auto visualization = services.visualization_snapshot(Id("A"));
+  Require(visualization.IsOk() && visualization.Value().agent == Id("A"),
           "visualization snapshot is bridged without exposing runner state");
   int subscriber_one = 0;
   int subscriber_two = 0;
@@ -181,7 +201,7 @@ int main() {
   open_lmm::GuiModel model;
   open_lmm::PipelineSnapshot initial;
   initial.config_revision = 4;
-  initial.agents = {'A', 'B'};
+  initial.agents = {Id("A"), Id("B")};
   model.Synchronize(initial);
   Require(model.ConfigRevision() == 4 && model.Agents().size() == 2,
           "snapshot initializes GUI projection");
@@ -218,37 +238,37 @@ int main() {
 
   open_lmm::VisualizationRepository repository;
   auto revision_one = std::make_shared<open_lmm::VisualizationSnapshot>();
-  revision_one->agent = 'A';
+  revision_one->agent = Id("A");
   revision_one->revision = 1;
   revision_one->points.resize(10);
   auto first_update = repository.Commit(revision_one);
   Require(first_update.changed && first_update.remove_drawables.empty(),
           "first visualization revision creates drawables");
-  Require(repository.Latest('A')->points.empty(),
+  Require(repository.Latest(Id("A"))->points.empty(),
           "visualization repository retains metadata without point cache");
   Require(!repository.Commit(revision_one).changed,
           "same visualization revision is idempotent");
   auto stale = std::make_shared<open_lmm::VisualizationSnapshot>();
-  stale->agent = 'A';
+  stale->agent = Id("A");
   Require(!repository.Commit(stale).changed,
           "older visualization revision cannot replace the latest");
   auto revision_two = std::make_shared<open_lmm::VisualizationSnapshot>();
-  revision_two->agent = 'A';
+  revision_two->agent = Id("A");
   revision_two->revision = 2;
   auto replacement = repository.Commit(revision_two);
   Require(replacement.changed && replacement.remove_drawables.size() == 4 &&
-              repository.Latest('A')->revision == 2,
+              repository.Latest(Id("A"))->revision == 2,
           "new revision atomically replaces logical drawables");
-  Require(open_lmm::VisualizationRepository::MapName('A', 2) ==
+  Require(open_lmm::VisualizationRepository::MapName(Id("A"), 2) ==
               "agent/A/map/2",
           "drawable names are stable and revisioned");
 
   std::atomic<int> snapshot_calls = 0;
   open_lmm::VisualizationSnapshotWorker snapshot_worker(
-      [&](char agent) {
+      [&](const open_lmm::AgentId& agent) {
         const int call = ++snapshot_calls;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        if (agent == 'B') {
+        if (agent == Id("B")) {
           return open_lmm::Result<open_lmm::VisualizationSnapshot>::Failure(
               open_lmm::Error::IoError("synthetic load failure"));
         }
@@ -258,16 +278,16 @@ int main() {
         return open_lmm::Result<open_lmm::VisualizationSnapshot>::Ok(
             std::move(value));
       });
-  snapshot_worker.Request('A');
+  snapshot_worker.Request(Id("A"));
   while (snapshot_calls.load() < 1) std::this_thread::yield();
-  snapshot_worker.Request('A');
-  snapshot_worker.Request('A');
+  snapshot_worker.Request(Id("A"));
+  snapshot_worker.Request(Id("A"));
   while (snapshot_calls.load() < 2) std::this_thread::yield();
   std::this_thread::sleep_for(std::chrono::milliseconds(15));
   auto worker_results = snapshot_worker.Drain();
   Require(worker_results.size() == 2,
           "active request and latest coalesced revision both complete");
-  snapshot_worker.Request('B');
+  snapshot_worker.Request(Id("B"));
   while (snapshot_calls.load() < 3) std::this_thread::yield();
   std::this_thread::sleep_for(std::chrono::milliseconds(15));
   auto failed_results = snapshot_worker.Drain();

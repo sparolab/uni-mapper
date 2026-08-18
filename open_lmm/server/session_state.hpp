@@ -35,7 +35,7 @@ struct SessionConfig {
 };
 
 struct OptimizerStateMetadata {
-  std::vector<char> processed_agents;
+  std::vector<AgentId> processed_agents;
 };
 
 struct SessionPayload {
@@ -47,7 +47,8 @@ struct SessionPayload {
 struct SessionState {
   uint64_t revision = 0;
   std::shared_ptr<const SessionConfig> config;
-  std::vector<char> ordered_agents;
+  std::vector<AgentId> ordered_agents;
+  AgentSymbolCatalogHandle agent_catalog;
   std::shared_ptr<const SessionPayload> payload;
   OptimizerStateMetadata optimizer;
   std::vector<ArtifactMetadata> artifacts;

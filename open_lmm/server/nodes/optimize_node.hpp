@@ -27,7 +27,7 @@ class OptimizeNode : public PipelineNodeBase {
           "alignment output is missing its accepted global transform"));
     }
 
-    std::map<char, AgentOptimizedData> all_opt;
+    std::map<AgentId, AgentOptimizedData> all_opt;
     try {
       optimizer_->SetCancellationToken(ctx.cancellation);
       all_opt = optimizer_->Process(
@@ -37,10 +37,10 @@ class OptimizeNode : public PipelineNodeBase {
       return Result<ControlFlow>::Failure(Error::Cancelled(e.what()));
     } catch (const std::exception& e) {
       return Result<ControlFlow>::Failure(Error::OptimizationFailed(
-          "agent " + std::string{ctx.agent.id} + ": " + e.what()));
+          "agent " + ctx.agent.id.Value() + ": " + e.what()));
     }
 
-    std::map<char, Eigen::Isometry3d> optimized_map_transforms;
+    std::map<AgentId, Eigen::Isometry3d> optimized_map_transforms;
     for (auto& [id, opt] : all_opt) {
       const auto raw = db.raw_data.find(id);
       if (raw != db.raw_data.end() && !opt.optimized_poses.empty()) {

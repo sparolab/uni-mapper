@@ -32,7 +32,7 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   auto it = db.optimized_data.find(ctx.agent.id);
   if (it == db.optimized_data.end()) {
     LogWarning("[MapUpdateNode] No optimized data for agent " +
-               std::string(1, ctx.agent.id) + ". Skipping.");
+               ctx.agent.id.Value() + ". Skipping.");
     return Result<ControlFlow>::Ok(ControlFlow::kSkip);
   }
 
@@ -67,7 +67,7 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   if (!static_map || static_map->empty()) {
     return Result<ControlFlow>::Failure(Error::InvalidArgument(
         "Dynamic remover produced an empty map for agent " +
-        std::string{ctx.agent.id}));
+        ctx.agent.id.Value()));
   }
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr ds_map;
@@ -79,11 +79,11 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   OPEN_LMM_PLOT("map_update.point_count", ds_map ? ds_map->size() : 0);
   if (!ds_map || ds_map->empty()) {
     return Result<ControlFlow>::Failure(Error::InvalidArgument(
-        "Downsampled map is empty for agent " + std::string{ctx.agent.id}));
+        "Downsampled map is empty for agent " + ctx.agent.id.Value()));
   }
 
   fs::path map_file = fs::path(save_dir_) /
-                      ("global_map_" + std::string{ctx.agent.id} + ".pcd");
+                      ("global_map_" + ctx.agent.id.Value() + ".pcd");
   fs::path temp_file = map_file;
   temp_file += ".tmp";
   std::error_code cleanup_error;

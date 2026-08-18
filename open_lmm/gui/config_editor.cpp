@@ -1,26 +1,11 @@
 #include <open_lmm/gui/config_editor.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 
 namespace open_lmm {
-namespace {
-Result<std::string> RequiredString(const nlohmann::json& json,
-                                   const char* section, const char* key) {
-  if (!json.contains(section) || !json[section].is_object() ||
-      !json[section].contains(key) || !json[section][key].is_string()) {
-    return Result<std::string>::Failure(Error::ParseError(
-        std::string(section) + "/" + key + " must be a string"));
-  }
-  auto value = json[section][key].get<std::string>();
-  if (value.empty()) {
-    return Result<std::string>::Failure(Error::InvalidArgument(
-        std::string(section) + "/" + key + " must be non-empty"));
-  }
-  return Result<std::string>::Ok(std::move(value));
-}
-}  // namespace
 
 Result<std::vector<std::string>> DiscoverDatasetDirectories(
     const std::filesystem::path& root) {
@@ -49,58 +34,50 @@ Result<AlignmentConfigValues> LoadAlignmentConfig(
   std::ifstream input(path);
   if (!input) return Result<AlignmentConfigValues>::Failure(
       Error::FileNotFound(path.string()));
-  try {
-    auto json = nlohmann::json::parse(input, nullptr, true, true);
-    const auto alignment = json.value("alignment", nlohmann::json::object());
-    AlignmentConfigValues values;
-    values.kiss_voxel_size = alignment.value("kiss_voxel_size", 2.0);
-    values.kiss_use_quatro = alignment.value("kiss_use_quatro", false);
-    values.pose_nn_distance_threshold =
-        alignment.value("pose_nn_distance_threshold", 10.0);
-    if (values.kiss_voxel_size <= 0.0 ||
-        values.pose_nn_distance_threshold <= 0.0) {
-      return Result<AlignmentConfigValues>::Failure(Error::InvalidArgument(
-          "alignment voxel size and pose-NN distance must be positive"));
-    }
-    return Result<AlignmentConfigValues>::Ok(values);
-  } catch (const nlohmann::json::exception& error) {
-    return Result<AlignmentConfigValues>::Failure(
-        Error::ParseError(error.what()));
-  }
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector, contents.str(), path.string());
+  if (!validated)
+    return Result<AlignmentConfigValues>::Failure(validated.GetError());
+  const auto& alignment = validated.Value().Document().at("alignment");
+  return Result<AlignmentConfigValues>::Ok(
+      {alignment.at("kiss_voxel_size").get<double>(),
+       alignment.at("kiss_use_quatro").get<bool>(),
+       alignment.at("pose_nn_distance_threshold").get<double>()});
 }
 
 Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
                                  const AlignmentConfigValues& values) {
-  if (values.kiss_voxel_size <= 0.0 ||
-      values.pose_nn_distance_threshold <= 0.0) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "alignment voxel size and pose-NN distance must be positive"));
-  }
   std::ifstream input(path);
   if (!input) return Result<void>::Failure(Error::FileNotFound(path.string()));
-  try {
-    auto json = nlohmann::json::parse(input, nullptr, true, true);
-    json["alignment"]["kiss_voxel_size"] = values.kiss_voxel_size;
-    json["alignment"]["kiss_use_quatro"] = values.kiss_use_quatro;
-    json["alignment"]["pose_nn_distance_threshold"] =
-        values.pose_nn_distance_threshold;
-    const auto temporary = path.string() + ".tmp";
-    {
-      std::ofstream output(temporary, std::ios::trunc);
-      if (!output) return Result<void>::Failure(Error::IoError(temporary));
-      output << json.dump(2) << '\n';
-      if (!output) return Result<void>::Failure(Error::IoError(temporary));
-    }
-    std::error_code error;
-    std::filesystem::rename(temporary, path, error);
-    if (error) {
-      std::filesystem::remove(temporary);
-      return Result<void>::Failure(Error::IoError(error.message()));
-    }
-    return Result<void>::Ok();
-  } catch (const nlohmann::json::exception& error) {
-    return Result<void>::Failure(Error::ParseError(error.what()));
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  auto current = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector, contents.str(), path.string());
+  if (!current) return Result<void>::Failure(current.GetError());
+  auto candidate = current.Value().Document();
+  candidate["alignment"]["kiss_voxel_size"] = values.kiss_voxel_size;
+  candidate["alignment"]["kiss_use_quatro"] = values.kiss_use_quatro;
+  candidate["alignment"]["pose_nn_distance_threshold"] =
+      values.pose_nn_distance_threshold;
+  auto validated = BuiltinConfigSchemaRegistry().Validate(
+      ConfigDocumentKind::kLoopDetector, candidate, path.string());
+  if (!validated) return Result<void>::Failure(validated.GetError());
+  const auto temporary = path.string() + ".tmp";
+  {
+    std::ofstream output(temporary, std::ios::trunc);
+    if (!output) return Result<void>::Failure(Error::IoError(temporary));
+    output << validated.Value().CanonicalJson(2) << '\n';
+    if (!output) return Result<void>::Failure(Error::IoError(temporary));
   }
+  std::error_code error;
+  std::filesystem::rename(temporary, path, error);
+  if (error) {
+    std::filesystem::remove(temporary);
+    return Result<void>::Failure(Error::IoError(error.message()));
+  }
+  return Result<void>::Ok();
 }
 
 Result<ConfigEditorDocument> ConfigEditorDocument::Load(
@@ -116,40 +93,19 @@ Result<ConfigEditorDocument> ConfigEditorDocument::Load(
 
 Result<ConfigEditorDocument> ConfigEditorDocument::Parse(
     std::string text, std::filesystem::path path) {
-  try {
-    auto json = nlohmann::json::parse(text, nullptr, true, true);
-    auto valid = Validate(json);
-    if (!valid) return Result<ConfigEditorDocument>::Failure(valid.GetError());
-    return Result<ConfigEditorDocument>::Ok(
-        ConfigEditorDocument(std::move(json), std::move(path)));
-  } catch (const nlohmann::json::exception& e) {
-    return Result<ConfigEditorDocument>::Failure(Error::ParseError(e.what()));
-  }
+  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kRoot, text,
+      path.empty() ? "<editor>" : path.string());
+  if (!validated)
+    return Result<ConfigEditorDocument>::Failure(validated.GetError());
+  return Result<ConfigEditorDocument>::Ok(ConfigEditorDocument(
+      validated.Value().Document(), std::move(path)));
 }
 
 Result<void> ConfigEditorDocument::Validate(const nlohmann::json& json) {
-  for (const char* key : {"config_map_server", "config_data_loader",
-                          "config_loop_detector", "config_backend_optimizer",
-                          "config_dynamic_remover"}) {
-    auto value = RequiredString(json, "global", key);
-    if (!value) return Result<void>::Failure(value.GetError());
-  }
-  for (const char* key : {"root_dir_path", "root_save_dir"}) {
-    auto value = RequiredString(json, "directory", key);
-    if (!value) return Result<void>::Failure(value.GetError());
-  }
-  if (!json["directory"].contains("sub_dir_list") ||
-      !json["directory"]["sub_dir_list"].is_array() ||
-      json["directory"]["sub_dir_list"].empty()) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "directory/sub_dir_list must be a non-empty string array"));
-  }
-  for (const auto& item : json["directory"]["sub_dir_list"]) {
-    if (!item.is_string() || item.get<std::string>().empty()) {
-      return Result<void>::Failure(Error::InvalidArgument(
-          "directory/sub_dir_list must contain non-empty strings"));
-    }
-  }
+  auto validated = BuiltinConfigSchemaRegistry().Validate(
+      ConfigDocumentKind::kRoot, json, "<editor>");
+  if (!validated) return Result<void>::Failure(validated.GetError());
   return Result<void>::Ok();
 }
 
@@ -194,13 +150,14 @@ Result<void> ConfigEditorDocument::Save() const {
 
 Result<void> ConfigEditorDocument::SaveAs(
     const std::filesystem::path& path) const {
-  auto valid = Validate(json_);
-  if (!valid) return valid;
+  auto validated = BuiltinConfigSchemaRegistry().Validate(
+      ConfigDocumentKind::kRoot, json_, path.string());
+  if (!validated) return Result<void>::Failure(validated.GetError());
   const auto temporary = path.string() + ".tmp";
   {
     std::ofstream output(temporary, std::ios::trunc);
     if (!output) return Result<void>::Failure(Error::IoError(temporary));
-    output << json_.dump(2) << '\n';
+    output << validated.Value().CanonicalJson(2) << '\n';
     if (!output) return Result<void>::Failure(Error::IoError(temporary));
   }
   std::error_code error;

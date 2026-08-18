@@ -63,6 +63,9 @@ if [[ -e "$configuration_root" ]]; then
   exit 1
 fi
 
+mkdir -p "$configuration_root"
+exec > >(tee "$configuration_root/ci.log") 2>&1
+
 cmake -S "$repository_root/open_lmm" -B "$build_root" \
   -DCMAKE_BUILD_TYPE=Debug \
   "-DCMAKE_C_FLAGS_DEBUG=-O0 -g1" \
@@ -90,11 +93,13 @@ if [[ "$sanitizer" == ASAN_UBSAN ]]; then
   ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
   UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
     ctest --test-dir "$build_root" --output-on-failure \
-      --repeat until-pass:3 -R "$test_pattern"
+      --output-junit "$configuration_root/ctest.xml" \
+      -R "$test_pattern"
 else
   TSAN_OPTIONS="halt_on_error=1:suppressions=$script_dir/tsan.supp" \
     ctest --test-dir "$build_root" --output-on-failure \
-      --repeat until-pass:3 -R "$test_pattern"
+      --output-junit "$configuration_root/ctest.xml" \
+      -R "$test_pattern"
 fi
 
 echo "==> sanitizer verified: $configuration_name ($sanitizer)"

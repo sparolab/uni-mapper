@@ -18,7 +18,7 @@ class BackendOptimizerBase {
 
   // Agent별 graph/value를 누적해 매 호출 시 새 ISAM2로 joint batch 최적화한다.
   // lifecycle은 Reset과 processed-agent metadata로 명시적으로 관리한다.
-  virtual std::map<char, AgentOptimizedData> Process(
+  virtual std::map<AgentId, AgentOptimizedData> Process(
       const AgentContext&                 ctx,
       const AgentRawData&                 raw_data,
       const LoopPairVec&                  intra_loops,
@@ -29,7 +29,7 @@ class BackendOptimizerBase {
     cancellation_ = std::move(token);
   }
   virtual void Reset() = 0;
-  [[nodiscard]] virtual bool HasProcessedAgent(char agent_id) const = 0;
+  [[nodiscard]] virtual bool HasProcessedAgent(const AgentId& agent_id) const = 0;
   [[nodiscard]] virtual std::size_t ProcessedAgentCount() const = 0;
   static Result<std::unique_ptr<BackendOptimizerBase>> createInstance(
       const OptimizerConfig& config);

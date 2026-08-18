@@ -1,5 +1,7 @@
 #pragma once
 
+#include <open_lmm/common/agent_id.hpp>
+
 #include <Eigen/Geometry>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -32,13 +34,13 @@ class DescriptorIndex {
   virtual void clear() = 0;
   virtual void merge(const DescriptorIndex& other) = 0;
   virtual void insert(
-      char agent_id, std::size_t key,
+      open_lmm::AgentId agent_id, std::size_t key,
       const std::shared_ptr<IDescriptorKdtree>& descriptor) = 0;
   [[nodiscard]] virtual std::optional<
-      std::tuple<char, std::size_t, Eigen::Isometry3d>>
+      std::tuple<open_lmm::AgentId, std::size_t, Eigen::Isometry3d>>
   query(const std::shared_ptr<IDescriptorKdtree>& query) const = 0;
   [[nodiscard]] virtual std::vector<
-      std::tuple<char, std::size_t, Eigen::Isometry3d>>
+      std::tuple<open_lmm::AgentId, std::size_t, Eigen::Isometry3d>>
   queryK(const std::shared_ptr<IDescriptorKdtree>& query,
          std::size_t count) const = 0;
 };

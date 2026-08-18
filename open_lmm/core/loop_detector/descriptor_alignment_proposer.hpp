@@ -27,7 +27,7 @@ class DescriptorAlignmentProposer {
   explicit DescriptorAlignmentProposer(DescriptorAlignmentOptions options);
 
   std::optional<MapAlignmentProposal> Propose(
-      char target_agent, char source_agent,
+      AgentId target_agent, AgentId source_agent,
       const PoseVec& source_odometry,
       const AgentOptimizedDataMap& optimized_agents,
       const LoopPairVec& descriptor_loops,

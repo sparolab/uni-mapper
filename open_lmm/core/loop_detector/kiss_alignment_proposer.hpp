@@ -13,7 +13,7 @@ class KissAlignmentProposer {
   std::optional<MapAlignmentProposal> Propose(
       const std::vector<Eigen::Vector3f>& target_map,
       const std::vector<Eigen::Vector3f>& source_map,
-      char target_agent, char source_agent,
+      AgentId target_agent, AgentId source_agent,
       float leaf_size, bool use_quatro = false) const;
 };
 

@@ -29,17 +29,18 @@ class StageExecutor {
 
   Result<void> process();
   void SetCancellationToken(std::shared_ptr<CancellationToken> token);
+  [[nodiscard]] CancellationCapability CancellationMetadata() const;
   void SetAlignmentFeedbackBroker(
       std::shared_ptr<AlignmentFeedbackBroker> broker);
   Result<void> RunStage(StageId stage);
-  Result<void> RunNode(NodeId node, std::optional<char> agent);
-  Result<void> RunOptimizeThrough(char target_agent);
+  Result<void> RunNode(NodeId node, std::optional<AgentId> agent);
+  Result<void> RunOptimizeThrough(const AgentId& target_agent);
   Result<void> Reconfigure(ConfigDomain domain, uint64_t revision);
-  [[nodiscard]] std::vector<char> AgentIds() const;
+  [[nodiscard]] std::vector<AgentId> AgentIds() const;
   [[nodiscard]] std::optional<CommittedSessionSnapshot>
   SessionSnapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> CreateVisualizationSnapshot(
-      char agent) const;
+      const AgentId& agent) const;
   Result<void> ValidateReady();
 
  private:
@@ -49,7 +50,7 @@ class StageExecutor {
   Result<void> validateInputFiles() const;
   Result<void> runDataLoadStage();
   Result<void> runAlignmentStage();
-  Result<void> runLoopDetectThrough(char target_agent);
+  Result<void> runLoopDetectThrough(const AgentId& target_agent);
   Result<void> prepareAlignmentArtifacts(
       const SessionState& state, PendingOutputSet& pending,
       ArtifactRepository& artifacts) const;
@@ -58,7 +59,7 @@ class StageExecutor {
   void installStoredAlignments(SharedDatabase& database) const;
   Result<void> runMapUpdateStage();
   Result<void> runSaveStage();
-  Result<void> runOptimizeThrough(char target_agent);
+  Result<void> runOptimizeThrough(const AgentId& target_agent);
   void publishVisualizationState(
       const std::shared_ptr<const SessionState>& state, bool include_maps);
   void publishEmptyVisualizationState(uint64_t session_revision);
@@ -78,19 +79,21 @@ class StageExecutor {
 
   struct VisualizationState {
     uint64_t revision = 0;
-    std::map<char, VisualizationSnapshot> agents;
-    std::map<char, fs::path> map_paths;
+    std::map<AgentId, VisualizationSnapshot> agents;
+    std::map<AgentId, fs::path> map_paths;
   };
 
   int agent_num_ = 0;
-  std::vector<char> agent_ids_;
+  std::vector<AgentId> configured_agent_ids_;
+  std::vector<AgentId> agent_ids_;
+  AgentSymbolCatalogHandle agent_catalog_;
   std::vector<fs::path> data_dir_list_;
   std::string output_save_dir_;
   fs::path alignment_cache_path_;
   std::string alignment_config_fingerprint_;
-  std::map<char, std::string> alignment_input_fingerprints_;
+  std::map<AgentId, std::string> alignment_input_fingerprints_;
   std::string alignment_session_fingerprint_;
-  std::map<char, StoredAlignment> cached_alignments_;
+  std::map<AgentId, StoredAlignment> cached_alignments_;
   std::optional<Config> config_map_server_;
   bool enable_map_updater_ = false;
   int anchor_agent_index_ = 0;

@@ -33,7 +33,7 @@ enum class ArtifactState : uint8_t { kMissing, kReady, kStale, kFailed };
 
 struct ArtifactKey {
   ArtifactType type;
-  std::optional<char> agent;
+  std::optional<AgentId> agent;
   auto operator<=>(const ArtifactKey&) const = default;
 };
 
@@ -50,10 +50,10 @@ struct ArtifactMetadata {
 struct CommittedSessionSnapshot {
   uint64_t revision = 0;
   uint64_t config_revision = 0;
-  std::vector<char> ordered_agents;
+  std::vector<AgentId> ordered_agents;
   std::vector<ArtifactMetadata> artifacts;
   std::size_t descriptor_count = 0;
-  std::map<char, std::size_t> per_agent_descriptor_count;
+  std::map<AgentId, std::size_t> per_agent_descriptor_count;
 };
 
 enum class ExecutionScope : uint8_t { kPerAgent, kSession };
@@ -86,11 +86,11 @@ struct NodeDescriptor {
 [[nodiscard]] const std::vector<NodeId>& PipelineNodes();
 [[nodiscard]] const std::vector<StageId>& PipelineStages();
 [[nodiscard]] std::vector<NodeId> StageNodes(StageId stage);
-[[nodiscard]] Result<std::vector<char>> OrderedAgentPrefix(
-    const std::vector<char>& ordered_agents, char target_agent);
+[[nodiscard]] Result<std::vector<AgentId>> OrderedAgentPrefix(
+    const std::vector<AgentId>& ordered_agents, const AgentId& target_agent);
 [[nodiscard]] std::size_t ProgressTotal(
-    NodeId node, const std::vector<char>& ordered_agents,
-    std::optional<char> target_agent);
+    NodeId node, const std::vector<AgentId>& ordered_agents,
+    std::optional<AgentId> target_agent);
 [[nodiscard]] std::vector<ArtifactType> ProducedArtifacts(StageId stage);
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(NodeId node);
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(StageId stage);
@@ -100,24 +100,27 @@ class StageRunner {
  public:
   virtual ~StageRunner() = default;
   virtual void SetCancellationToken(std::shared_ptr<CancellationToken> token) = 0;
+  [[nodiscard]] virtual CancellationCapability CancellationMetadata() const {
+    return {};
+  }
   virtual void SetAlignmentFeedbackBroker(
       std::shared_ptr<AlignmentFeedbackBroker>) {}
   virtual Result<void> RunStage(StageId stage) = 0;
-  virtual Result<void> RunNode(NodeId node, std::optional<char> agent) = 0;
-  virtual Result<void> RunOptimizeThrough(char target_agent) = 0;
+  virtual Result<void> RunNode(NodeId node, std::optional<AgentId> agent) = 0;
+  virtual Result<void> RunOptimizeThrough(const AgentId& target_agent) = 0;
   virtual Result<void> Reconfigure(ConfigDomain domain,
                                    uint64_t revision = 0) {
     (void)domain;
     (void)revision;
     return Result<void>::Ok();
   }
-  [[nodiscard]] virtual std::vector<char> AgentIds() const = 0;
+  [[nodiscard]] virtual std::vector<AgentId> AgentIds() const = 0;
   [[nodiscard]] virtual std::optional<CommittedSessionSnapshot>
   SessionSnapshot() const {
     return std::nullopt;
   }
   [[nodiscard]] virtual Result<VisualizationSnapshot>
-  CreateVisualizationSnapshot(char) const {
+  CreateVisualizationSnapshot(const AgentId&) const {
     return Result<VisualizationSnapshot>::Failure(
         Error::InvalidArgument("visualization snapshots are not supported"));
   }

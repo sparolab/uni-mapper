@@ -56,7 +56,7 @@ const char* ArtifactStateName(ArtifactState state) {
   }
   return "Unknown";
 }
-Eigen::Vector4f AgentColor(char agent) {
+Eigen::Vector4f AgentColor(const AgentId& agent) {
   static const std::array<Eigen::Vector4f, 8> colors = {
       Eigen::Vector4f(0.90F, 0.20F, 0.20F, 1.0F),
       Eigen::Vector4f(0.20F, 0.65F, 1.00F, 1.0F),
@@ -67,7 +67,7 @@ Eigen::Vector4f AgentColor(char agent) {
       Eigen::Vector4f(1.00F, 0.35F, 0.75F, 1.0F),
       Eigen::Vector4f(0.75F, 0.75F, 0.20F, 1.0F),
   };
-  return colors[static_cast<unsigned char>(agent) % colors.size()];
+  return colors[std::hash<std::string>{}(agent.Value()) % colors.size()];
 }
 template <std::size_t N>
 void SetBuffer(std::array<char, N>& buffer, const std::string& value) {
@@ -149,7 +149,7 @@ void IridescenceGui::ViewerLoop() {
         if (event.type == EventType::kStageCompleted && event.stage &&
             (*event.stage == StageId::kAlignment ||
              *event.stage == StageId::kMapUpdate)) {
-          for (char agent : model_.Agents()) RequestVisualization(agent);
+          for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
         }
       }
       if (event_queue_->Stats().resync_required && services_.snapshot) {
@@ -192,11 +192,11 @@ void IridescenceGui::SynchronizeModel() {
   if (services_.snapshot) {
     model_.Synchronize(services_.snapshot());
     config_revision_draft_ = model_.ConfigRevision() + 1;
-    for (char agent : model_.Agents()) RequestVisualization(agent);
+    for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
   }
 }
 
-void IridescenceGui::RequestVisualization(char agent) {
+void IridescenceGui::RequestVisualization(AgentId agent) {
   if (visualization_worker_) visualization_worker_->Request(agent);
 }
 
@@ -288,7 +288,7 @@ void IridescenceGui::UpdateDrawables(
         guik::VertexColor(snapshot->poses[i].transform.matrix()).scale(0.25F));
   }
 
-  std::map<std::pair<char, std::size_t>, Eigen::Vector3f> pose_lookup;
+  std::map<std::pair<AgentId, std::size_t>, Eigen::Vector3f> pose_lookup;
   for (const auto& current : visualization_.Snapshots()) {
     for (const auto& pose : current->poses) {
       pose_lookup[{current->agent, static_cast<std::size_t>(pose.index)}] =
@@ -426,9 +426,9 @@ void IridescenceGui::DrawPipelineUi() {
                 (*picked_point_).y(), (*picked_point_).z());
   }
   ImGui::Text("Agents");
-  for (const char agent : model_.Agents()) {
-    ImGui::BulletText("Agent %c", agent);
-    ImGui::PushID(static_cast<int>(agent));
+  for (const AgentId& agent : model_.Agents()) {
+    ImGui::BulletText("Agent %s", agent.Value().c_str());
+    ImGui::PushID(agent.Value().c_str());
     for (const auto& descriptor : node_descriptors_) {
       if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
       const std::string label = std::string(descriptor.name) + "##node";
@@ -463,7 +463,9 @@ void IridescenceGui::DrawPipelineUi() {
       ImGui::TableSetColumnIndex(0);
       ImGui::TextUnformatted(ArtifactName(artifact.key.type));
       ImGui::TableSetColumnIndex(1);
-      if (artifact.key.agent) ImGui::Text("%c", *artifact.key.agent);
+      if (artifact.key.agent) {
+        ImGui::Text("%s", artifact.key.agent->Value().c_str());
+      }
       else ImGui::TextUnformatted("-");
       ImGui::TableSetColumnIndex(2);
       ImGui::TextUnformatted(ArtifactStateName(artifact.state));
@@ -481,6 +483,20 @@ void IridescenceGui::DrawPipelineUi() {
     ImGui::Text("Job: %llu",
                 static_cast<unsigned long long>(model_.Job()->id));
     ImGui::TextWrapped("%s", model_.Job()->message.c_str());
+    const auto& cancellation = model_.Job()->cancellation;
+    ImGui::Text("Cancellation: %s%s",
+                cancellation.capability.cooperative ? "cooperative"
+                                                    : "non-cooperative",
+                cancellation.Pending() ? " (pending)" : "");
+    if (cancellation.cancel_requested_at_unix_ns) {
+      ImGui::Text("requested=%lld observed=%lld completed=%lld",
+                  static_cast<long long>(
+                      *cancellation.cancel_requested_at_unix_ns),
+                  static_cast<long long>(
+                      cancellation.cancel_observed_at_unix_ns.value_or(0)),
+                  static_cast<long long>(
+                      cancellation.cancel_completed_at_unix_ns.value_or(0)));
+    }
   } else {
     ImGui::TextUnformatted("No job submitted");
   }
@@ -686,8 +702,8 @@ void IridescenceGui::DrawAlignmentUi() {
                            : proposal.method == AlignmentMethod::kDescriptor
                                  ? "Descriptor"
                                  : "Manual";
-  ImGui::Text("Agent: %c <- %c", proposal.target_agent,
-              proposal.source_agent);
+  ImGui::Text("Agent: %s <- %s", proposal.target_agent.Value().c_str(),
+              proposal.source_agent.Value().c_str());
   ImGui::Text("Method: %s", method);
   if (proposal.method == AlignmentMethod::kDescriptor) {
     const auto& loops = alignment_feedback_->diagnostics.descriptor_loops;

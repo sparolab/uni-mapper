@@ -16,6 +16,19 @@
 #include "BetweenFactorWithAnchoring.h"
 
 namespace open_lmm {
+namespace {
+
+gtsam::Symbol GraphSymbol(const AgentContext& context, const AgentId& agent,
+                          uint64_t index) {
+  if (!context.catalog) {
+    throw std::invalid_argument("optimizer agent symbol catalog is missing");
+  }
+  auto symbol = context.catalog->SymbolFor(agent);
+  if (!symbol) throw std::invalid_argument(symbol.GetError().Message());
+  return gtsam::Symbol(symbol.Value().Byte(), index);
+}
+
+}  // namespace
 
 BackendOptimizerIncremental::BackendOptimizerIncremental(OptimizerConfig config)
     : param_(std::move(config)) {
@@ -30,7 +43,7 @@ void BackendOptimizerIncremental::Reset() {
   processed_agents_.clear();
 }
 
-bool BackendOptimizerIncremental::HasProcessedAgent(char agent_id) const {
+bool BackendOptimizerIncremental::HasProcessedAgent(const AgentId& agent_id) const {
   return processed_agents_.contains(agent_id);
 }
 
@@ -38,7 +51,7 @@ std::size_t BackendOptimizerIncremental::ProcessedAgentCount() const {
   return processed_agents_.size();
 }
 
-std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
+std::map<AgentId, AgentOptimizedData> BackendOptimizerIncremental::Process(
     const AgentContext&                 ctx,
     const AgentRawData&                 raw_data,
     const LoopPairVec&                  intra_loops,
@@ -52,7 +65,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     throw std::invalid_argument("optimizer agent context/raw data ID mismatch");
   }
   if (processed_agents_.contains(ctx.id)) {
-    throw std::invalid_argument("optimizer agent " + std::string{ctx.id} +
+    throw std::invalid_argument("optimizer agent " + ctx.id.Value() +
                                 " was already processed; call Reset before retry");
   }
   if (processed_agents_.empty() && !ctx.is_anchor()) {
@@ -76,7 +89,7 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
   const auto& anchor_prior = ctx.is_anchor() ? prior_noise_ : large_noise_;
 
   //! 1. anchor prior
-  gtsam::Symbol anchor_symbol(ctx.id, ANCHOR_IDX);
+  gtsam::Symbol anchor_symbol = GraphSymbol(ctx, ctx.id, ANCHOR_IDX);
   working_graph.add(gtsam::PriorFactor<gtsam::Pose3>(
       anchor_symbol, anchor_node, anchor_prior));
   working_values.insert(anchor_symbol, anchor_node);
@@ -84,14 +97,14 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
   //! 2. odometry
   for (size_t i = 0; i < raw_data.odom_poses.size(); i++) {
     ThrowIfCancellationRequested(cancellation_, "optimizer odometry");
-    gtsam::Symbol node_current(ctx.id, i);
+    gtsam::Symbol node_current = GraphSymbol(ctx, ctx.id, i);
     working_values.insert(node_current,
                                gtsam::Pose3(raw_data.odom_poses[i].matrix()));
     if (i == 0) {
       working_graph.add(gtsam::PriorFactor<gtsam::Pose3>(
           node_current, gtsam::Pose3(raw_data.odom_poses[i].matrix()), anchor_prior));
     } else {
-      gtsam::Symbol node_prev(ctx.id, i - 1);
+      gtsam::Symbol node_prev = GraphSymbol(ctx, ctx.id, i - 1);
       Eigen::Isometry3d rel = raw_data.odom_poses[i - 1].inverse() * raw_data.odom_poses[i];
       working_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
           node_prev, node_current, gtsam::Pose3(rel.matrix()), odometry_noise_));
@@ -105,8 +118,8 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     ThrowIfCancellationRequested(cancellation_, "optimizer intra loop");
     if (loop.from.second - loop.to.second <
         static_cast<size_t>(param_.min_loop_frame_gap)) continue;
-    gtsam::Symbol node_from(loop.from.first, loop.from.second);
-    gtsam::Symbol node_to(loop.to.first,   loop.to.second);
+    gtsam::Symbol node_from = GraphSymbol(ctx, loop.from.first, loop.from.second);
+    gtsam::Symbol node_to = GraphSymbol(ctx, loop.to.first, loop.to.second);
     auto refined = registerPointCloud(
         raw_data.filtered_scans, raw_data.odom_poses,
         raw_data.filtered_scans[loop.from.second], loop, param_.icp_search_num);
@@ -125,8 +138,8 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
     T2.set_prefix("Inter Backend Optimizer");
     for (auto loop : T2) {
       ThrowIfCancellationRequested(cancellation_, "optimizer inter loop");
-      gtsam::Symbol node_from(loop.from.first, loop.from.second);
-      gtsam::Symbol node_to(loop.to.first,   loop.to.second);
+      gtsam::Symbol node_from = GraphSymbol(ctx, loop.from.first, loop.from.second);
+      gtsam::Symbol node_to = GraphSymbol(ctx, loop.to.first, loop.to.second);
       const auto& raw_to = *all_raw_data.at(loop.to.first);
       auto refined = registerPointCloud(
           raw_to.filtered_scans, raw_to.odom_poses,
@@ -165,36 +178,45 @@ std::map<char, AgentOptimizedData> BackendOptimizerIncremental::Process(
   OPEN_LMM_PLOT("optimizer.value_count", working_values.size());
 
   //! 6. 모든 에이전트 포즈 추출
-  std::map<char, std::vector<std::pair<int, Eigen::Isometry3d>>> all_poses;
+  std::map<AgentId, std::vector<std::pair<int, Eigen::Isometry3d>>> all_poses;
   for (const auto& key_value : working_values) {
     gtsam::Key key = key_value.key;
     gtsam::Symbol symbol(key);
     if (symbol.index() == ANCHOR_IDX) continue;
 
-    char agent_chr = symbol.chr();
-    gtsam::Symbol anchor_sym(agent_chr, ANCHOR_IDX);
+    auto graph_symbol = AgentSymbol::FromByte(symbol.chr());
+    if (!graph_symbol) {
+      throw std::runtime_error(graph_symbol.GetError().Message());
+    }
+    if (!ctx.catalog) {
+      throw std::runtime_error("optimizer agent symbol catalog is missing");
+    }
+    auto agent = ctx.catalog->AgentFor(graph_symbol.Value());
+    if (!agent) throw std::runtime_error(agent.GetError().Message());
+    gtsam::Symbol anchor_sym(symbol.chr(), ANCHOR_IDX);
     if (!working_values.exists(anchor_sym)) continue;
 
     Eigen::Matrix4d anchor_pose =
         working_values.at<gtsam::Pose3>(anchor_sym).matrix();
     Eigen::Matrix4d pose = working_values.at<gtsam::Pose3>(key).matrix();
     Eigen::Isometry3d global_pose(anchor_pose * pose);
-    all_poses[agent_chr].push_back({static_cast<int>(symbol.index()), global_pose});
+    all_poses[agent.Value()].push_back(
+        {static_cast<int>(symbol.index()), global_pose});
   }
 
-  std::map<char, AgentOptimizedData> all_results;
-  for (auto& [chr, poses] : all_poses) {
+  std::map<AgentId, AgentOptimizedData> all_results;
+  for (auto& [agent, poses] : all_poses) {
     std::sort(poses.begin(), poses.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
     AgentOptimizedData opt;
-    opt.agent_id = chr;
+    opt.agent_id = agent;
     opt.optimized_poses = std::move(poses);
     for (const auto& [idx, p] : opt.optimized_poses) {
       opt.kdtree_poses.push_back(pcl::PointXYZ(p.translation().x(),
                                                 p.translation().y(),
                                                 p.translation().z()));
     }
-    all_results[chr] = std::move(opt);
+    all_results[agent] = std::move(opt);
   }
   ThrowIfCancellationRequested(cancellation_, "optimizer commit");
   accumulated_graph_ = std::move(working_graph);

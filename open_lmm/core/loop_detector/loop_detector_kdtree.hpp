@@ -29,7 +29,7 @@ class LoopDetectorKdtree : public LoopDetectorBase {
       const std::string& so_name, const std::string& config_json);
 
  private:
-  LoopPair createLoopPair(char agent_id, size_t current_idx,
+  LoopPair createLoopPair(AgentId agent_id, size_t current_idx,
                           const LoopCandidateInfo& candidate_info);
 
   std::vector<LoopPair> detectIntraLoops(const ScanVec& scans,

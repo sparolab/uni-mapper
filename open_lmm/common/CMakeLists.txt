@@ -1,6 +1,7 @@
 
 add_library(open_lmm_common SHARED)
 target_sources(open_lmm_common PRIVATE
+  agent_id.cpp
   pose_conversion.cpp
   registration.cpp
   registration_log.cpp

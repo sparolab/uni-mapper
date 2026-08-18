@@ -55,6 +55,7 @@ if [[ -f /opt/ros/humble/setup.bash ]]; then
 fi
 
 mkdir -p "$configuration_root"
+exec > >(tee "$configuration_root/ci.log") 2>&1
 
 echo "==> clean build: $configuration_name"
 echo "    CC=$compiler_c"
@@ -80,8 +81,10 @@ until CC="$compiler_c" CXX="$compiler_cxx" \
   echo "compiler process failed; retrying unchanged incremental build ($build_attempt/3)" >&2
 done
 
-ctest --test-dir "$build_root/open_lmm" --output-on-failure
-ctest --test-dir "$build_root/open_lmm_ros" --output-on-failure
+ctest --test-dir "$build_root/open_lmm" --output-on-failure \
+  --output-junit "$configuration_root/ctest-open_lmm.xml"
+ctest --test-dir "$build_root/open_lmm_ros" --output-on-failure \
+  --output-junit "$configuration_root/ctest-open_lmm-ros.xml"
 
 # ament configuration intentionally excludes the mutating install/consumer
 # CTest. Run the same source-free package fixture explicitly for every compiler

@@ -29,6 +29,16 @@ using open_lmm::SharedDatabase;
 
 int failures = 0;
 
+open_lmm::AgentId Id(const char* value) {
+  return open_lmm::AgentId::Parse(value).Value();
+}
+
+open_lmm::AgentSymbolCatalogHandle Catalog() {
+  auto catalog = open_lmm::AgentSymbolCatalog::Build({Id("A"), Id("B")});
+  return std::make_shared<const open_lmm::AgentSymbolCatalog>(
+      std::move(catalog).Value());
+}
+
 void Expect(bool condition, const std::string& message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -66,15 +76,15 @@ class FailingNode final : public PipelineNodeBase {
 
 std::vector<AgentPipelineCtx> OneContext() {
   AgentPipelineCtx ctx;
-  ctx.agent = {.id = 'A', .role = open_lmm::AgentRole::kAnchor, .order = 0};
+  ctx.agent = {.id = Id("A"), .role = open_lmm::AgentRole::kAnchor, .order = 0};
   return {ctx};
 }
 
 void TestAgentContext() {
   open_lmm::AgentContext anchor{
-      .id = 'A', .role = open_lmm::AgentRole::kAnchor, .order = 0};
+      .id = Id("A"), .role = open_lmm::AgentRole::kAnchor, .order = 0};
   open_lmm::AgentContext follower{
-      .id = 'B', .role = open_lmm::AgentRole::kFollower, .order = 1};
+      .id = Id("B"), .role = open_lmm::AgentRole::kFollower, .order = 1};
   Expect(anchor.is_anchor(), "anchor role must be recognized");
   Expect(!follower.is_anchor(), "follower must not be recognized as anchor");
 }
@@ -156,14 +166,14 @@ void TestAlignedMapRebuildUsesLatestTransform() {
   open_lmm::DescriptorStore store;
   std::vector<Eigen::Vector3f> anchor{{1.0F, 0.0F, 0.0F}};
   std::vector<Eigen::Vector3f> follower{{0.0F, 2.0F, 0.0F}};
-  store.set_agent_map('A', anchor, Eigen::Isometry3d::Identity(),
+  store.set_agent_map(Id("A"), anchor, Eigen::Isometry3d::Identity(),
                       open_lmm::AlignmentMethod::kKissMatcher,
-                      open_lmm::AlignmentApproval::kAutomatic, 'A', 1);
+                      open_lmm::AlignmentApproval::kAutomatic, Id("A"), 1);
   Eigen::Isometry3d initial = Eigen::Isometry3d::Identity();
   initial.translation() = Eigen::Vector3d(10.0, 0.0, 0.0);
-  store.set_agent_map('B', follower, initial,
+  store.set_agent_map(Id("B"), follower, initial,
                       open_lmm::AlignmentMethod::kManual,
-                      open_lmm::AlignmentApproval::kUser, 'A', 2);
+                      open_lmm::AlignmentApproval::kUser, Id("A"), 2);
   Expect(store.merged_map.size() == 2,
          "aligned map store must rebuild all accepted agent maps");
   Expect(store.merged_map[1].isApprox(Eigen::Vector3f(10.0F, 2.0F, 0.0F)),
@@ -171,7 +181,7 @@ void TestAlignedMapRebuildUsesLatestTransform() {
 
   Eigen::Isometry3d optimized = Eigen::Isometry3d::Identity();
   optimized.translation() = Eigen::Vector3d(20.0, 0.0, 0.0);
-  store.update_transform('B', optimized);
+  store.update_transform(Id("B"), optimized);
   Expect(store.merged_map.size() == 2,
          "optimized rebuild must replace rather than append follower points");
   Expect(store.merged_map[1].isApprox(Eigen::Vector3f(20.0F, 2.0F, 0.0F)),
@@ -277,14 +287,16 @@ void TestOptimizerLifecycle() {
   Expect(parsed.IsOk(), "optimizer test config must parse");
   open_lmm::BackendOptimizerIncremental optimizer{
       std::move(parsed).Value()};
+  const auto catalog = Catalog();
   open_lmm::AgentContext anchor{
-      .id = "A"[0], .role = open_lmm::AgentRole::kAnchor, .order = 0};
+      .id = Id("A"), .symbol = catalog->SymbolFor(Id("A")).Value(),
+      .catalog = catalog, .role = open_lmm::AgentRole::kAnchor, .order = 0};
   open_lmm::AgentRawData raw_a;
-  raw_a.agent_id = "A"[0];
+  raw_a.agent_id = Id("A");
   raw_a.odom_poses.push_back(Eigen::Isometry3d::Identity());
   (void)optimizer.Process(anchor, raw_a, {}, {}, {});
   Expect(optimizer.ProcessedAgentCount() == 1 &&
-             optimizer.HasProcessedAgent("A"[0]),
+             optimizer.HasProcessedAgent(Id("A")),
          "successful optimizer call must commit its agent");
 
   try {
@@ -296,13 +308,14 @@ void TestOptimizerLifecycle() {
          "duplicate failure must not mutate optimizer lifecycle");
 
   open_lmm::AgentContext follower{
-      .id = "B"[0], .role = open_lmm::AgentRole::kFollower, .order = 1};
+      .id = Id("B"), .symbol = catalog->SymbolFor(Id("B")).Value(),
+      .catalog = catalog, .role = open_lmm::AgentRole::kFollower, .order = 1};
   open_lmm::AgentRawData raw_b;
-  raw_b.agent_id = "B"[0];
+  raw_b.agent_id = Id("B");
   raw_b.odom_poses.push_back(Eigen::Isometry3d::Identity());
   open_lmm::LoopPair inter_loop{
-      .to = {"A"[0], 0},
-      .from = {"B"[0], 0},
+      .to = {Id("A"), 0},
+      .from = {Id("B"), 0},
       .init_rel_pose = Eigen::Isometry3d::Identity()};
   try {
     (void)optimizer.Process(follower, raw_b, {}, {inter_loop}, {});
@@ -310,7 +323,7 @@ void TestOptimizerLifecycle() {
   } catch (const std::out_of_range&) {
   }
   Expect(optimizer.ProcessedAgentCount() == 1 &&
-             !optimizer.HasProcessedAgent("B"[0]),
+             !optimizer.HasProcessedAgent(Id("B")),
          "failed optimizer transaction must preserve committed state");
 
   try {
@@ -319,11 +332,11 @@ void TestOptimizerLifecycle() {
   } catch (const std::runtime_error&) {
   }
   Expect(optimizer.ProcessedAgentCount() == 1 &&
-             !optimizer.HasProcessedAgent("B"[0]),
+             !optimizer.HasProcessedAgent(Id("B")),
          "zero-factor rejection must preserve optimizer transaction");
   optimizer.Reset();
   Expect(optimizer.ProcessedAgentCount() == 0 &&
-             !optimizer.HasProcessedAgent("A"[0]),
+             !optimizer.HasProcessedAgent(Id("A")),
          "Reset must clear graph lifecycle metadata");
 
   auto cancellation = std::make_shared<open_lmm::CancellationToken>();

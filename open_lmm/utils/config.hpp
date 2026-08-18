@@ -126,7 +126,7 @@ protected:
  */
 class GlobalConfig : public Config {
 private:
-  GlobalConfig(const std::string& global_config_path) : Config(global_config_path) {}
+  explicit GlobalConfig(const std::string& global_config_path);
 
 public:
   ~GlobalConfig() override = default;

@@ -9,14 +9,14 @@ struct GuiServices {
   std::string config_file_path;
   std::function<Result<uint64_t>()> submit_run_all;
   std::function<Result<uint64_t>(StageId)> submit_stage;
-  std::function<Result<uint64_t>(NodeId, char)> submit_node;
-  std::function<Result<uint64_t>(char)> submit_optimize_through;
+  std::function<Result<uint64_t>(NodeId, AgentId)> submit_node;
+  std::function<Result<uint64_t>(AgentId)> submit_optimize_through;
   std::function<Result<void>(uint64_t)> cancel_job;
   std::function<Result<void>(ConfigDomain, uint64_t)> apply_config;
   std::function<Result<void>(const std::string&)> create_session;
   std::function<std::vector<NodeDescriptor>()> node_descriptors;
   std::function<PipelineSnapshot()> snapshot;
-  std::function<Result<VisualizationSnapshot>(char)> visualization_snapshot;
+  std::function<Result<VisualizationSnapshot>(const AgentId&)> visualization_snapshot;
   std::function<std::optional<AlignmentFeedbackSnapshot>()>
       alignment_feedback_snapshot;
   std::function<Result<void>(uint64_t, AlignmentResponse)>

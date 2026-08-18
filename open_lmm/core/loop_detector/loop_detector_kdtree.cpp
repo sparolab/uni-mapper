@@ -57,7 +57,7 @@ LoopDetectorKdtree::LoopDetectorKdtree(
 }
 
 LoopPair LoopDetectorKdtree::createLoopPair(
-    char agent_id, size_t current_idx,
+    AgentId agent_id, size_t current_idx,
     const LoopCandidateInfo& candidate_info) {
   LoopPair loop;
   auto [db_id, key, init_rel_pose] = candidate_info;
@@ -209,8 +209,8 @@ std::vector<LoopPair> LoopDetectorKdtree::detectKissMatcherLoops(
     return additional_loops;
   }
 
-  const char target_agent = input.all_optimized.empty()
-                                ? static_cast<char>(0)
+  const AgentId target_agent = input.all_optimized.empty()
+                                ? AgentId{}
                                 : input.all_optimized.begin()->first;
   out_proposal = KissAlignmentProposer().Propose(
       input.descriptor_store.merged_map, input.current.map_points,
@@ -270,7 +270,7 @@ AlignmentVisualizationPoint VisualizationPoint(
 AlignmentVisualizationData DescriptorVisualization(
     const LoopDetectorInput& input, const LoopPairVec& loops,
     const DescriptorAlignmentDiagnostics& diagnostics,
-    const Eigen::Isometry3d& target_T_source, char target_agent) {
+    const Eigen::Isometry3d& target_T_source, const AgentId& target_agent) {
   AlignmentVisualizationData output;
   const auto target = input.all_optimized.find(target_agent);
   if (target != input.all_optimized.end()) {
@@ -357,7 +357,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
   std::optional<Eigen::Isometry3d> accepted_global_T_agent;
   std::optional<AlignmentMethod> accepted_alignment_method;
   std::optional<AlignmentApproval> accepted_alignment_approval;
-  char accepted_target_agent = input.agent_ctx.id;
+  AgentId accepted_target_agent = input.agent_ctx.id;
   AlignmentMetrics accepted_alignment_metrics;
 
   const bool feedback_available = input.alignment_feedback &&
@@ -387,7 +387,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
                                         input.agent_ctx);
     descriptor_proposal = DescriptorAlignmentProposer(
         DescriptorOptions(params_)).Propose(
-        input.all_optimized.empty() ? static_cast<char>(0)
+        input.all_optimized.empty() ? AgentId{}
                                     : input.all_optimized.begin()->first,
         input.agent_ctx.id, input.current.odom_poses,
         input.all_optimized, descriptor_loops);
@@ -446,7 +446,7 @@ LoopDetectorOutput LoopDetectorKdtree::Process(const LoopDetectorInput& input) {
     coordinator_input.source_points = AlignmentPoints(input.current.map_points);
     coordinator_input.visualization = alignment_visualization;
     coordinator_input.target_agent = input.all_optimized.empty()
-                                         ? static_cast<char>(0)
+                                         ? AgentId{}
                                          : input.all_optimized.begin()->first;
     coordinator_input.source_agent = input.agent_ctx.id;
     coordinator_input.kiss_proposer = [&] {

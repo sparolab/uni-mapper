@@ -108,21 +108,21 @@ std::vector<NodeId> StageNodes(StageId stage) {
   return result;
 }
 
-Result<std::vector<char>> OrderedAgentPrefix(
-    const std::vector<char>& ordered_agents, char target_agent) {
+Result<std::vector<AgentId>> OrderedAgentPrefix(
+    const std::vector<AgentId>& ordered_agents, const AgentId& target_agent) {
   const auto target = std::find(
       ordered_agents.begin(), ordered_agents.end(), target_agent);
   if (target == ordered_agents.end()) {
-    return Result<std::vector<char>>::Failure(
+    return Result<std::vector<AgentId>>::Failure(
         Error::InvalidArgument("unknown ordered replay target agent"));
   }
-  return Result<std::vector<char>>::Ok(
-      std::vector<char>(ordered_agents.begin(), std::next(target)));
+  return Result<std::vector<AgentId>>::Ok(
+      std::vector<AgentId>(ordered_agents.begin(), std::next(target)));
 }
 
 std::size_t ProgressTotal(NodeId node,
-                          const std::vector<char>& ordered_agents,
-                          std::optional<char> target_agent) {
+                          const std::vector<AgentId>& ordered_agents,
+                          std::optional<AgentId> target_agent) {
   const auto& spec = ExecutionSpecFor(node);
   if (!spec.ordered || !target_agent) return 1;
   auto prefix = OrderedAgentPrefix(ordered_agents, *target_agent);

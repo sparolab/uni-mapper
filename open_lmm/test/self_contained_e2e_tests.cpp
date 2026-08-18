@@ -20,6 +20,10 @@ namespace fs = std::filesystem;
 
 namespace {
 
+open_lmm::AgentId Id(const char* value) {
+  return open_lmm::AgentId::Parse(value).Value();
+}
+
 void Require(bool condition, const std::string& message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -194,6 +198,15 @@ std::size_t CountNamedFiles(const fs::path& root, const std::string& prefix,
   return count;
 }
 
+fs::path FindNamedFile(const fs::path& root, const std::string& name) {
+  for (const auto& entry : fs::recursive_directory_iterator(root)) {
+    if (entry.is_regular_file() && entry.path().filename() == name) {
+      return entry.path();
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 int main() {
@@ -217,19 +230,34 @@ int main() {
 
   const auto snapshot = server.SessionSnapshot();
   Require(snapshot.has_value(), "publish committed session snapshot");
-  Require(snapshot->ordered_agents == std::vector<char>({'A', 'B'}),
+  Require(snapshot->ordered_agents ==
+              std::vector<open_lmm::AgentId>({Id("agent1"), Id("agent2")}),
           "retain two ordered agents");
   Require(snapshot->descriptor_count == 8,
           "replaceable descriptor store contains one entry per scan");
   Require(CountNamedFiles(output, "optimized_poses_", ".txt") == 2,
           "save one optimized pose file per agent");
+  Require(!FindNamedFile(output, "optimized_poses_agent1.txt").empty() &&
+              !FindNamedFile(output, "optimized_poses_agent2.txt").empty(),
+          "pose filenames preserve configured directory AgentIds");
   Require(CountNamedFiles(output, "global_map_", ".pcd") == 2,
           "save one fallback map per agent with Map Update disabled");
+  const fs::path manifest_path = FindNamedFile(output, "agent_manifest.json");
+  Require(!manifest_path.empty(), "write the agent symbol manifest");
+  std::ifstream manifest_input(manifest_path);
+  nlohmann::json manifest;
+  manifest_input >> manifest;
+  Require(manifest["agents"].size() == 2 &&
+              manifest["agents"][0]["id"] == "agent1" &&
+              manifest["agents"][0]["symbol_byte"] == 1 &&
+              manifest["agents"][1]["id"] == "agent2" &&
+              manifest["agents"][1]["symbol_byte"] == 2,
+          "manifest preserves config-order AgentId to byte mapping");
 
   const uint64_t full_revision = snapshot->revision;
-  auto replay_loop = server.RunNode(open_lmm::NodeId::kLoopDetect, 'B');
+  auto replay_loop = server.RunNode(open_lmm::NodeId::kLoopDetect, Id("agent2"));
   Require(replay_loop.IsOk(), "ordered LoopDetect replay for follower");
-  auto replay_optimize = server.RunNode(open_lmm::NodeId::kOptimize, 'B');
+  auto replay_optimize = server.RunNode(open_lmm::NodeId::kOptimize, Id("agent2"));
   Require(replay_optimize.IsOk(), "ordered Optimize replay for follower");
   const auto replayed = server.SessionSnapshot();
   Require(replayed && replayed->revision == full_revision + 2,

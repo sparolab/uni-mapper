@@ -13,6 +13,8 @@
 using namespace open_lmm;
 
 namespace {
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 void Check(bool condition, const char* message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -29,14 +31,28 @@ class FakeRunner final : public StageRunner {
       std::shared_ptr<AlignmentFeedbackBroker> value) override {
     alignment_feedback = std::move(value);
   }
-  Result<void> RunNode(NodeId, std::optional<char>) override {
+  Result<void> RunNode(NodeId, std::optional<AgentId>) override {
     node_entered.store(true);
+    if (non_cooperative_node) {
+      while (!release_non_cooperative.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      node_exited.store(true, std::memory_order_release);
+      return Result<void>::Ok();
+    }
     if (block_node_until_cancel) {
       while (!cancellation || !cancellation->IsCancellationRequested()) {
         std::this_thread::yield();
       }
       return Result<void>::Failure(Error::Cancelled("fake node safe point"));
     }    return Result<void>::Ok();
+  }
+  CancellationCapability CancellationMetadata() const override {
+    if (!non_cooperative_node) return {};
+    return {.cooperative = false,
+            .mode = CancellationMode::kNonCooperative,
+            .non_interruptible_operations = {"fake blocking plugin"},
+            .requires_process_isolation = true};
   }
   Result<void> RunStage(StageId stage) override {
     {
@@ -51,8 +67,8 @@ class FakeRunner final : public StageRunner {
         while (!allow_feedback_notification.load()) std::this_thread::yield();
       }
       AlignmentFeedbackSnapshot snapshot;
-      snapshot.proposal.target_agent = 'A';
-      snapshot.proposal.source_agent = 'B';
+      snapshot.proposal.target_agent = Id("A");
+      snapshot.proposal.source_agent = Id("B");
       snapshot.proposal.method = AlignmentMethod::kKissMatcher;
       auto response = alignment_feedback->Request(std::move(snapshot), cancellation);
       if (!response) return Result<void>::Failure(response.GetError());
@@ -65,20 +81,20 @@ class FakeRunner final : public StageRunner {
       input.feedback = alignment_feedback;
       input.cancellation = cancellation;
       input.feedback_timeout = alignment_timeout;
-      input.target_agent = 'A';
-      input.source_agent = 'B';
+      input.target_agent = Id("A");
+      input.source_agent = Id("B");
       input.kiss_proposer = [] {
         MapAlignmentProposal proposal;
-        proposal.target_agent = 'A';
-        proposal.source_agent = 'B';
+        proposal.target_agent = Id("A");
+        proposal.source_agent = Id("B");
         proposal.method = AlignmentMethod::kKissMatcher;
         proposal.target_T_source.translation().x() = 1;
         return std::optional(proposal);
       };
       input.descriptor_proposer = [] {
         MapAlignmentProposal proposal;
-        proposal.target_agent = 'A';
-        proposal.source_agent = 'B';
+        proposal.target_agent = Id("A");
+        proposal.source_agent = Id("B");
         proposal.method = AlignmentMethod::kDescriptor;
         proposal.target_T_source.translation().x() = 2;
         return std::optional(proposal);
@@ -94,7 +110,7 @@ class FakeRunner final : public StageRunner {
     }
     return Result<void>::Ok();
   }
-  Result<void> RunOptimizeThrough(char target) override {
+  Result<void> RunOptimizeThrough(const AgentId& target) override {
     replay_target = target;
     return replay_fails
         ? Result<void>::Failure(Error::OptimizationFailed("induced replay"))
@@ -107,7 +123,7 @@ class FakeRunner final : public StageRunner {
               Error::InvalidArgument("fake reconfigure failure"))
         : Result<void>::Ok();
   }
-  std::vector<char> AgentIds() const override {
+  std::vector<AgentId> AgentIds() const override {
     std::lock_guard lock(mutex);
     if (on_agent_ids) on_agent_ids();
     return agent_ids;
@@ -116,19 +132,22 @@ class FakeRunner final : public StageRunner {
   mutable std::mutex mutex;
   std::vector<StageId> calls;
   std::optional<StageId> fail_stage;
-  std::optional<char> replay_target;
+  std::optional<AgentId> replay_target;
   bool replay_fails = false;
   bool fail_reconfigure = false;
   std::optional<ConfigDomain> reconfigured_domain;
   bool block_node_until_cancel = false;
   std::atomic<bool> node_entered{false};
+  bool non_cooperative_node = false;
+  std::atomic<bool> release_non_cooperative{false};
+  std::atomic<bool> node_exited{false};
   std::shared_ptr<CancellationToken> cancellation;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
   bool request_alignment_feedback = false;
   bool coordinate_alignment = false;
   std::chrono::milliseconds alignment_timeout{};
   std::optional<MapAlignmentProposal> coordinated_alignment;
-  std::vector<char> agent_ids{'A', 'B'};
+  std::vector<AgentId> agent_ids{Id("A"), Id("B")};
   bool hold_mutex_during_feedback = false;
   std::atomic<bool> feedback_mutex_held{false};
   std::atomic<bool> allow_feedback_notification{false};
@@ -138,16 +157,16 @@ class FakeRunner final : public StageRunner {
 class ManagedSessionRunner final : public StageRunner {
  public:
   ManagedSessionRunner() {
-    repository_.Reset({'A'});
+    repository_.Reset({Id("A")});
     snapshot_.revision = 1;
     snapshot_.config_revision = 5;
-    snapshot_.ordered_agents = {'A'};
+    snapshot_.ordered_agents = {Id("A")};
     snapshot_.artifacts = repository_.Snapshot();
   }
 
   void SetCancellationToken(std::shared_ptr<CancellationToken>) override {}
   Result<void> RunStage(StageId) override { return Result<void>::Ok(); }
-  Result<void> RunNode(NodeId node, std::optional<char> agent) override {
+  Result<void> RunNode(NodeId node, std::optional<AgentId> agent) override {
     if (fail_next.exchange(false)) {
       return Result<void>::Failure(Error::InvalidArgument("induced failure"));
     }
@@ -159,8 +178,8 @@ class ManagedSessionRunner final : public StageRunner {
     snapshot_.artifacts = repository_.Snapshot();
     return Result<void>::Ok();
   }
-  Result<void> RunOptimizeThrough(char) override { return Result<void>::Ok(); }
-  std::vector<char> AgentIds() const override { return {'A'}; }
+  Result<void> RunOptimizeThrough(const AgentId&) override { return Result<void>::Ok(); }
+  std::vector<AgentId> AgentIds() const override { return {Id("A")}; }
   std::optional<CommittedSessionSnapshot> SessionSnapshot() const override {
     std::lock_guard lock(mutex_);
     return snapshot_;
@@ -175,7 +194,7 @@ class ManagedSessionRunner final : public StageRunner {
 };
 
 ArtifactState StateOf(const PipelineSnapshot& snapshot, ArtifactType type,
-                      std::optional<char> agent = std::nullopt) {
+                      std::optional<AgentId> agent = std::nullopt) {
   for (const auto& artifact : snapshot.artifacts) {
     if (artifact.key.type == type && artifact.key.agent == agent) {
       return artifact.state;
@@ -194,14 +213,14 @@ void TestRunAllAndArtifacts() {
   Check(snapshot.job && snapshot.job->state == JobState::kSucceeded,
         "successful job snapshot");
   Check(runner->calls.size() == 4, "all four stages called");
-  Check(StateOf(snapshot, ArtifactType::kRawData, 'A') == ArtifactState::kReady,
+  Check(StateOf(snapshot, ArtifactType::kRawData, Id("A")) == ArtifactState::kReady,
         "raw artifact ready");
   Check(StateOf(snapshot, ArtifactType::kOptimizerState) == ArtifactState::kReady,
         "optimizer artifact ready");
-  Check(StateOf(snapshot, ArtifactType::kMapAlignment, 'B') ==
+  Check(StateOf(snapshot, ArtifactType::kMapAlignment, Id("B")) ==
             ArtifactState::kReady,
         "map alignment artifact ready");
-  Check(StateOf(snapshot, ArtifactType::kPoseFile, 'B') == ArtifactState::kReady,
+  Check(StateOf(snapshot, ArtifactType::kPoseFile, Id("B")) == ArtifactState::kReady,
         "pose artifact ready");
 }
 
@@ -216,7 +235,7 @@ void TestConcurrentSubmissionsAreSerialized() {
   auto submit = [&](int index) {
     ++ready;
     while (!go.load()) std::this_thread::yield();
-    auto result = controller.SubmitNode(NodeId::kDataLoad, 'A');
+    auto result = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
     accepted[index] = result.IsOk();
     if (result) job_ids[index] = result.Value();
   };
@@ -244,12 +263,12 @@ void TestRerunInvalidatesDownstream() {
   auto load = controller.SubmitStage(StageId::kDataLoad);
   Check(load && controller.Wait(load.Value()), "DataLoad rerun");
   auto snapshot = controller.Snapshot();
-  Check(StateOf(snapshot, ArtifactType::kRawData, 'A') == ArtifactState::kReady,
+  Check(StateOf(snapshot, ArtifactType::kRawData, Id("A")) == ArtifactState::kReady,
         "rerun output ready");
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, 'A') ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
             ArtifactState::kStale,
         "alignment output stale after load rerun");
-  Check(StateOf(snapshot, ArtifactType::kPoseFile, 'A') == ArtifactState::kStale,
+  Check(StateOf(snapshot, ArtifactType::kPoseFile, Id("A")) == ArtifactState::kStale,
         "saved pose stale after load rerun");
 }
 
@@ -264,7 +283,7 @@ void TestFailureStopsPipeline() {
   auto snapshot = controller.Snapshot();
   Check(snapshot.job && snapshot.job->state == JobState::kFailed,
         "failed snapshot");
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, 'A') ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
             ArtifactState::kFailed,
         "failed artifact marked");
 }
@@ -294,14 +313,14 @@ void TestBoundaryCancellation() {
 void TestOptimizerReplay() {
   auto runner = std::make_shared<FakeRunner>();
   PipelineController controller(runner);
-  auto job = controller.SubmitOptimizeThrough('A');
+  auto job = controller.SubmitOptimizeThrough(Id("A"));
   Check(job && controller.Wait(job.Value()), "optimizer replay completion");
-  Check(runner->replay_target == 'A', "optimizer target forwarded");
+  Check(runner->replay_target == Id("A"), "optimizer target forwarded");
   auto snapshot = controller.Snapshot();
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, 'A') ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
             ArtifactState::kReady,
         "replayed agent pose ready");
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, 'B') ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("B")) ==
             ArtifactState::kStale,
         "later agent pose stale");
 }
@@ -312,7 +331,7 @@ void TestNodeCommandsAndMetadata() {
   const auto descriptors = controller.NodeDescriptors();
   Check(descriptors.size() == 5, "all node descriptors exposed");
   Check(descriptors[2].ordered, "optimizer metadata is ordered");
-  Check(!controller.SubmitNode(NodeId::kLoopDetect, 'A'),
+  Check(!controller.SubmitNode(NodeId::kLoopDetect, Id("A")),
         "missing RawData rejects node before job creation");
 
   std::vector<uint64_t> sequences;
@@ -320,18 +339,18 @@ void TestNodeCommandsAndMetadata() {
       controller.SubscribeEvents([&](const ExecutionEvent& event) {
         sequences.push_back(event.sequence);
       });
-  auto load = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto load = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(load && controller.Wait(load.Value()), "agent DataLoad node");
-  auto loop = controller.SubmitNode(NodeId::kLoopDetect, 'A');
+  auto loop = controller.SubmitNode(NodeId::kLoopDetect, Id("A"));
   Check(loop && controller.Wait(loop.Value()), "agent LoopDetect node");
-  auto optimize = controller.SubmitNode(NodeId::kOptimize, 'A');
+  auto optimize = controller.SubmitNode(NodeId::kOptimize, Id("A"));
   Check(optimize && controller.Wait(optimize.Value()), "agent Optimize node");
   for (std::size_t i = 1; i < sequences.size(); ++i) {
     Check(sequences[i] > sequences[i - 1], "event sequence monotonic");
   }
   const auto snapshot = controller.Snapshot();
   Check(!snapshot.recent_events.empty(), "event history available in snapshot");
-  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, 'A') ==
+  Check(StateOf(snapshot, ArtifactType::kOptimizedPoses, Id("A")) ==
             ArtifactState::kReady,
         "node output committed");
 }
@@ -339,7 +358,7 @@ void TestNodeCommandsAndMetadata() {
 void TestConfigApplyInvalidation() {
   auto runner = std::make_shared<FakeRunner>();
   PipelineController controller(runner);
-  auto load = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto load = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(load && controller.Wait(load.Value()), "load before config apply");
   Check(controller.ApplyConfig(ConfigDomain::kDataLoader, 2).IsOk(),
         "increasing config revision applied");
@@ -347,9 +366,9 @@ void TestConfigApplyInvalidation() {
         "config is applied to the active runner");
   const auto snapshot = controller.Snapshot();
   Check(snapshot.config_revision == 2, "snapshot config revision");
-  Check(StateOf(snapshot, ArtifactType::kRawData, 'A') == ArtifactState::kStale,
+  Check(StateOf(snapshot, ArtifactType::kRawData, Id("A")) == ArtifactState::kStale,
         "loader config invalidates raw data");
-  Check(!controller.SubmitNode(NodeId::kLoopDetect, 'A'),
+  Check(!controller.SubmitNode(NodeId::kLoopDetect, Id("A")),
         "stale artifact rejected as node input");
   Check(!controller.ApplyConfig(ConfigDomain::kOptimizer, 2),
         "non-increasing config revision rejected");
@@ -365,20 +384,20 @@ void TestConfigApplyInvalidation() {
 void TestNodeCancellationRollsBackArtifacts() {
   auto runner = std::make_shared<FakeRunner>();
   PipelineController controller(runner);
-  auto initial = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto initial = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(initial && controller.Wait(initial.Value()), "initial artifact commit");
   const auto before = controller.Snapshot();
   uint64_t raw_revision = 0;
   for (const auto& artifact : before.artifacts) {
     if (artifact.key.type == ArtifactType::kRawData &&
-        artifact.key.agent == std::optional<char>('A')) {
+        artifact.key.agent == std::optional<AgentId>(Id("A"))) {
       raw_revision = artifact.revision;
     }
   }
 
   runner->node_entered = false;
   runner->block_node_until_cancel = true;
-  auto rerun = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto rerun = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(rerun.IsOk(), "cancellable node submitted");
   while (!runner->node_entered.load()) std::this_thread::yield();
   Check(controller.Cancel(rerun.Value()).IsOk(), "in-node cancel accepted");
@@ -386,10 +405,15 @@ void TestNodeCancellationRollsBackArtifacts() {
   const auto after = controller.Snapshot();
   Check(after.job && after.job->state == JobState::kCancelled,
         "node job transitions through cancellation");
+  Check(after.job->cancellation.capability.cooperative &&
+            after.job->cancellation.cancel_requested_at_unix_ns &&
+            after.job->cancellation.cancel_observed_at_unix_ns &&
+            after.job->cancellation.cancel_completed_at_unix_ns,
+        "cooperative cancellation exposes all timestamps");
   bool preserved = false;
   for (const auto& artifact : after.artifacts) {
     if (artifact.key.type == ArtifactType::kRawData &&
-        artifact.key.agent == std::optional<char>('A')) {
+        artifact.key.agent == std::optional<AgentId>(Id("A"))) {
       preserved = artifact.state == ArtifactState::kReady &&
                   artifact.revision == raw_revision;
     }
@@ -407,34 +431,111 @@ void TestNodeCancellationRollsBackArtifacts() {
         "cancelled node emits no authoritative artifact event");
 }
 
+void TestCancellationTelemetryAndJoinOrdering() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->non_cooperative_node = true;
+  runner->release_non_cooperative = true;
+  PipelineController controller(runner);
+
+  auto initial = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+  Check(initial && controller.Wait(initial.Value()),
+        "initial non-cooperative fixture commit");
+  const auto committed = controller.Snapshot().artifacts;
+
+  runner->node_entered = false;
+  runner->node_exited = false;
+  runner->release_non_cooperative = false;
+  std::atomic<int> terminal_events{0};
+  std::atomic<bool> terminal_after_worker_exit{false};
+  auto subscription = controller.SubscribeEvents(
+      [&](const ExecutionEvent& event) {
+        if (event.type != EventType::kJobCancelled) return;
+        ++terminal_events;
+        terminal_after_worker_exit = runner->node_exited.load();
+        Check(event.cancellation &&
+                  event.cancellation->cancel_completed_at_unix_ns,
+              "terminal event carries completed cancellation telemetry");
+      });
+
+  auto job = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+  Check(job.IsOk(), "non-cooperative fixture submitted");
+  while (!runner->node_entered.load()) std::this_thread::yield();
+  const auto acknowledgement_start = std::chrono::steady_clock::now();
+  Check(controller.Cancel(job.Value()).IsOk(),
+        "non-cooperative cancellation request accepted");
+  const auto acknowledgement_latency = std::chrono::steady_clock::now() -
+                                       acknowledgement_start;
+  Check(acknowledgement_latency < std::chrono::milliseconds(100),
+        "cancel acknowledgement exceeds 100 ms");
+
+  const auto pending = controller.Snapshot();
+  Check(pending.job && pending.job->state == JobState::kCancelling &&
+            pending.job->cancellation.Pending() &&
+            pending.job->cancellation.cancel_requested_at_unix_ns &&
+            !pending.job->cancellation.cancel_observed_at_unix_ns &&
+            !pending.job->cancellation.capability.cooperative &&
+            pending.job->cancellation.capability.requires_process_isolation,
+        "non-cooperative pending context is observable");
+  Check(terminal_events.load() == 0,
+        "terminal event emitted while worker remains blocked");
+
+  runner->release_non_cooperative = true;
+  Check(!controller.Wait(job.Value()),
+        "post-operation safe point reports cancellation");
+  const auto completed = controller.Snapshot();
+  const auto& telemetry = completed.job->cancellation;
+  Check(telemetry.cancel_requested_at_unix_ns &&
+            telemetry.cancel_observed_at_unix_ns &&
+            telemetry.cancel_completed_at_unix_ns &&
+            *telemetry.cancel_requested_at_unix_ns <=
+                *telemetry.cancel_observed_at_unix_ns &&
+            *telemetry.cancel_observed_at_unix_ns <=
+                *telemetry.cancel_completed_at_unix_ns,
+        "cancellation timestamps are complete and ordered");
+  Check(terminal_events.load() == 1 && terminal_after_worker_exit.load(),
+        "terminal cancellation is emitted once after worker join");
+  bool artifacts_preserved = completed.artifacts.size() == committed.size();
+  for (std::size_t index = 0;
+       artifacts_preserved && index < committed.size(); ++index) {
+    const auto& before = committed[index];
+    const auto& after = completed.artifacts[index];
+    artifacts_preserved = before.key == after.key &&
+                          before.state == after.state &&
+                          before.revision == after.revision &&
+                          before.external_path == after.external_path;
+  }
+  Check(artifacts_preserved,
+        "cancelled non-cooperative job preserves committed artifacts");
+}
+
 void TestManagedSessionMetadataIsAuthoritative() {
   auto runner = std::make_shared<ManagedSessionRunner>();
   PipelineController controller(runner);
   Check(controller.Snapshot().config_revision == 5,
         "controller imports committed session config revision");
-  auto first = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto first = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(first && controller.Wait(first.Value()),
         "managed session commits node payload and metadata");
   const auto committed = controller.Snapshot();
   uint64_t raw_revision = 0;
   for (const auto& artifact : committed.artifacts) {
-    if (artifact.key == ArtifactKey{ArtifactType::kRawData, 'A'}) {
+    if (artifact.key == ArtifactKey{ArtifactType::kRawData, Id("A")}) {
       raw_revision = artifact.revision;
     }
   }
   Check(raw_revision != 0 &&
-            StateOf(committed, ArtifactType::kRawData, 'A') ==
+            StateOf(committed, ArtifactType::kRawData, Id("A")) ==
                 ArtifactState::kReady,
         "controller exposes runner committed artifact");
 
   runner->fail_next = true;
-  auto failed = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto failed = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(failed && !controller.Wait(failed.Value()),
         "managed session failure is propagated");
   const auto after = controller.Snapshot();
   bool unchanged = false;
   for (const auto& artifact : after.artifacts) {
-    if (artifact.key == ArtifactKey{ArtifactType::kRawData, 'A'}) {
+    if (artifact.key == ArtifactKey{ArtifactType::kRawData, Id("A")}) {
       unchanged = artifact.state == ArtifactState::kReady &&
                   artifact.revision == raw_revision;
     }
@@ -452,7 +553,7 @@ void TestManagedSessionMetadataIsAuthoritative() {
                 std::optional<uint64_t>(2) &&
             failed_event->error->context.stage == "data_load" &&
             failed_event->error->context.node == "data_load" &&
-            failed_event->error->context.agent == std::optional<char>('A'),
+            failed_event->error->context.agent == std::optional<AgentId>(Id("A")),
         "recoverable node error carries session/stage/node/agent context");
 }
 
@@ -460,16 +561,16 @@ void TestSessionRunnerReplacement() {
   auto first = std::make_shared<FakeRunner>();
   PipelineController controller(first);
   auto replacement = std::make_shared<FakeRunner>();
-  replacement->agent_ids = {'C'};
+  replacement->agent_ids = {Id("C")};
   const auto before_revision = controller.Snapshot().config_revision;
   Check(controller.ReplaceRunner(replacement).IsOk(),
         "idle controller accepts a new session runner");
   const auto snapshot = controller.Snapshot();
   Check(snapshot.config_revision == before_revision + 1,
         "new session advances config revision");
-  Check(snapshot.agents == std::vector<char>{'C'},
+  Check(snapshot.agents == std::vector<AgentId>{Id("C")},
         "new session resets registered agents");
-  Check(StateOf(snapshot, ArtifactType::kAgentInput, 'C') ==
+  Check(StateOf(snapshot, ArtifactType::kAgentInput, Id("C")) ==
             ArtifactState::kReady,
         "new session resets artifacts");
 }
@@ -522,7 +623,7 @@ void TestSnapshotDoesNotInvokeRunnerWhileControllerLocked() {
   Check(snapshot.wait_for(std::chrono::milliseconds(500)) ==
             std::future_status::ready,
         "Snapshot must not call StageRunner while holding controller state");
-  Check(snapshot.get().agents == std::vector<char>({'A', 'B'}),
+  Check(snapshot.get().agents == std::vector<AgentId>({Id("A"), Id("B")}),
         "Snapshot uses cached immutable agent IDs");
 }
 
@@ -581,7 +682,7 @@ void TestEventCallbackCanUnsubscribeReenterAndThrow() {
         subscription->Reset();
         throw std::runtime_error("observer failure");
       }));
-  auto job = controller.SubmitNode(NodeId::kDataLoad, 'A');
+  auto job = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(job && controller.Wait(job.Value()),
         "subscriber exception does not fail pipeline job");
   Check(callback_count.load() == 1,
@@ -662,6 +763,7 @@ int main() {
   TestNodeCommandsAndMetadata();
   TestConfigApplyInvalidation();
   TestNodeCancellationRollsBackArtifacts();
+  TestCancellationTelemetryAndJoinOrdering();
   TestManagedSessionMetadataIsAuthoritative();
   TestSessionRunnerReplacement();
   TestAlignmentFeedbackAcceptAndStaleResponse();

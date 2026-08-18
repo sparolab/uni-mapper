@@ -39,6 +39,10 @@ find_package(open_lmm CONFIG REQUIRED)
 ament_auto_add_library(open_lmm_ros SHARED
   ${ros_version}/open_lmm_ros/open_lmm_ros.cpp
 )
+set_target_properties(open_lmm_ros PROPERTIES
+  VERSION ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR}
+)
 target_link_libraries(open_lmm_ros
   open_lmm::utils
   open_lmm::runtime

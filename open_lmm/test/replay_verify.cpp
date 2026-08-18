@@ -17,6 +17,8 @@
 namespace open_lmm {
 namespace {
 
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 [[noreturn]] void Fail(const std::string& message) {
   std::cerr << "FAILED: " << message << '\n';
   std::exit(1);
@@ -33,17 +35,17 @@ CommittedSessionSnapshot RequireSessionSnapshot(const MapServer& server) {
 }
 
 VisualizationSnapshot RequireVisualizationSnapshot(const MapServer& server,
-                                                    char agent) {
+                                                    const AgentId& agent) {
   auto snapshot = server.CreateVisualizationSnapshot(agent);
   if (!snapshot) {
-    Fail("visualization snapshot for agent " + std::string(1, agent) +
+    Fail("visualization snapshot for agent " + agent.Value() +
          ": " + snapshot.GetError().Message());
   }
   return std::move(snapshot).Value();
 }
 
 ArtifactState StateOf(const CommittedSessionSnapshot& snapshot,
-                      ArtifactType type, std::optional<char> agent) {
+                      ArtifactType type, std::optional<AgentId> agent) {
   for (const auto& artifact : snapshot.artifacts) {
     if (artifact.key == ArtifactKey{type, agent}) return artifact.state;
   }
@@ -51,7 +53,7 @@ ArtifactState StateOf(const CommittedSessionSnapshot& snapshot,
 }
 
 using EdgeKey =
-    std::tuple<char, std::size_t, char, std::size_t, VisualizationEdgeType>;
+    std::tuple<AgentId, std::size_t, AgentId, std::size_t, VisualizationEdgeType>;
 
 std::vector<EdgeKey> EdgeKeys(const VisualizationSnapshot& snapshot) {
   std::vector<EdgeKey> result;
@@ -75,11 +77,11 @@ PoseDifference CompareAgent(const VisualizationSnapshot& expected,
                             double rotation_tolerance_rad) {
   if (expected.agent != actual.agent) Fail("agent identity changed");
   if (expected.poses.size() != actual.poses.size()) {
-    Fail("pose count changed for agent " + std::string(1, expected.agent));
+    Fail("pose count changed for agent " + expected.agent.Value());
   }
   if (EdgeKeys(expected) != EdgeKeys(actual)) {
     Fail("trajectory/loop edge set changed for agent " +
-         std::string(1, expected.agent));
+         expected.agent.Value());
   }
 
   PoseDifference difference;
@@ -88,7 +90,7 @@ PoseDifference CompareAgent(const VisualizationSnapshot& expected,
     const auto& rhs = actual.poses[index];
     if (lhs.index != rhs.index) {
       Fail("pose ordering changed for agent " +
-           std::string(1, expected.agent));
+           expected.agent.Value());
     }
     const Eigen::Isometry3d delta =
         lhs.transform.cast<double>().inverse() * rhs.transform.cast<double>();
@@ -101,7 +103,7 @@ PoseDifference CompareAgent(const VisualizationSnapshot& expected,
   if (difference.max_translation_m > translation_tolerance_m ||
       difference.max_rotation_rad > rotation_tolerance_rad) {
     Fail("ordered replay exceeded pose tolerance for agent " +
-         std::string(1, expected.agent));
+         expected.agent.Value());
   }
   return difference;
 }
@@ -130,55 +132,57 @@ int main(int argc, char** argv) {
   GlobalConfig::instance(argv[1]);
   MapServer server;
   Require(server.ValidateReady(), "validate configuration");
-  if (server.AgentIds() != std::vector<char>({'A', 'B'})) {
-    Fail("replay verification requires exactly test1/test2 (agents A/B)");
+  const AgentId test1 = Id("test1");
+  const AgentId test2 = Id("test2");
+  if (server.AgentIds() != std::vector<AgentId>({test1, test2})) {
+    Fail("replay verification requires exactly test1/test2");
   }
   Require(server.RunStage(StageId::kDataLoad), "DataLoad");
   Require(server.RunStage(StageId::kAlignment), "full Alignment");
 
   const auto full_state = RequireSessionSnapshot(server);
-  const auto full_a = RequireVisualizationSnapshot(server, 'A');
-  const auto full_b = RequireVisualizationSnapshot(server, 'B');
+  const auto full_a = RequireVisualizationSnapshot(server, test1);
+  const auto full_b = RequireVisualizationSnapshot(server, test2);
   if (full_a.revision != full_state.revision ||
       full_b.revision != full_state.revision) {
     Fail("visualization snapshot must use the committed session revision");
   }
 
-  Require(server.RunNode(NodeId::kLoopDetect, 'B'), "LoopDetect(B) replay 1");
+  Require(server.RunNode(NodeId::kLoopDetect, test2), "LoopDetect(test2) replay 1");
   const auto loop_once = RequireSessionSnapshot(server);
   VerifyDescriptorCounts(full_state, loop_once, "LoopDetect(B) replay 1");
   if (loop_once.revision <= full_state.revision ||
-      StateOf(loop_once, ArtifactType::kLoopCandidates, 'A') !=
+      StateOf(loop_once, ArtifactType::kLoopCandidates, test1) !=
           ArtifactState::kReady ||
-      StateOf(loop_once, ArtifactType::kLoopCandidates, 'B') !=
+      StateOf(loop_once, ArtifactType::kLoopCandidates, test2) !=
           ArtifactState::kReady ||
-      StateOf(loop_once, ArtifactType::kOptimizedPoses, 'A') !=
+      StateOf(loop_once, ArtifactType::kOptimizedPoses, test1) !=
           ArtifactState::kReady ||
-      StateOf(loop_once, ArtifactType::kOptimizedPoses, 'B') !=
+      StateOf(loop_once, ArtifactType::kOptimizedPoses, test2) !=
           ArtifactState::kStale) {
     Fail("LoopDetect(B) replay committed inconsistent artifact metadata");
   }
 
-  Require(server.RunNode(NodeId::kLoopDetect, 'B'), "LoopDetect(B) replay 2");
+  Require(server.RunNode(NodeId::kLoopDetect, test2), "LoopDetect(test2) replay 2");
   const auto loop_twice = RequireSessionSnapshot(server);
   VerifyDescriptorCounts(loop_once, loop_twice, "LoopDetect(B) replay 2");
   if (loop_twice.revision <= loop_once.revision) {
     Fail("repeated LoopDetect(B) did not advance the session revision");
   }
 
-  Require(server.RunNode(NodeId::kOptimize, 'B'), "Optimize(B) replay");
+  Require(server.RunNode(NodeId::kOptimize, test2), "Optimize(test2) replay");
   const auto replay_state = RequireSessionSnapshot(server);
   VerifyDescriptorCounts(full_state, replay_state, "Optimize(B) replay");
   if (replay_state.revision <= loop_twice.revision ||
-      StateOf(replay_state, ArtifactType::kOptimizedPoses, 'A') !=
+      StateOf(replay_state, ArtifactType::kOptimizedPoses, test1) !=
           ArtifactState::kReady ||
-      StateOf(replay_state, ArtifactType::kOptimizedPoses, 'B') !=
+      StateOf(replay_state, ArtifactType::kOptimizedPoses, test2) !=
           ArtifactState::kReady) {
     Fail("Optimize(B) replay committed inconsistent artifact metadata");
   }
 
-  const auto replay_a = RequireVisualizationSnapshot(server, 'A');
-  const auto replay_b = RequireVisualizationSnapshot(server, 'B');
+  const auto replay_a = RequireVisualizationSnapshot(server, test1);
+  const auto replay_b = RequireVisualizationSnapshot(server, test2);
   if (replay_a.revision != replay_state.revision ||
       replay_b.revision != replay_state.revision) {
     Fail("replay visualization must use the committed session revision");
@@ -196,8 +200,8 @@ int main(int argc, char** argv) {
             << " loop2=" << loop_twice.revision
             << " optimize=" << replay_state.revision << '\n'
             << "  descriptors: total=" << replay_state.descriptor_count
-            << " A=" << replay_state.per_agent_descriptor_count.at('A')
-            << " B=" << replay_state.per_agent_descriptor_count.at('B')
+            << " test1=" << replay_state.per_agent_descriptor_count.at(test1)
+            << " test2=" << replay_state.per_agent_descriptor_count.at(test2)
             << '\n'
             << "  A: poses=" << replay_a.poses.size()
             << " max_translation_m=" << difference_a.max_translation_m

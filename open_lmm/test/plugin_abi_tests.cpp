@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     {
       DatabaseKdtree index(
           DatabaseKdtreeParams{20, 5, 0.2, 50}, scan_context_owner);
-      index.insert('A', 0, descriptor);
+      index.insert(open_lmm::AgentId::Parse("A").Value(), 0, descriptor);
       scan_context_owner.reset();
       descriptor.reset();
       Check(index.getSize() == 1 && index.Clone()->getSize() == 1,

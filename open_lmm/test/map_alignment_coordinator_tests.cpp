@@ -12,6 +12,8 @@
 using namespace open_lmm;
 
 namespace {
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 void Check(bool condition, const char* message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -21,8 +23,8 @@ void Check(bool condition, const char* message) {
 
 MapAlignmentProposal Proposal(AlignmentMethod method, double x) {
   MapAlignmentProposal proposal;
-  proposal.target_agent = 'A';
-  proposal.source_agent = 'B';
+  proposal.target_agent = Id("A");
+  proposal.source_agent = Id("B");
   proposal.method = method;
   proposal.target_T_source.translation().x() = x;
   return proposal;
@@ -43,8 +45,8 @@ MapAlignmentCoordinatorInput Input(
   MapAlignmentCoordinatorInput input;
   input.feedback = broker;
   input.cancellation = std::make_shared<CancellationToken>();
-  input.target_agent = 'A';
-  input.source_agent = 'B';
+  input.target_agent = Id("A");
+  input.source_agent = Id("B");
   return input;
 }
 
@@ -267,25 +269,25 @@ void TestManualValidationRetries() {
 void TestDescriptorConsensusRejectsOutlier() {
   PoseVec odometry(4, Eigen::Isometry3d::Identity());
   AgentOptimizedData optimized_agent;
-  optimized_agent.agent_id = 'A';
+  optimized_agent.agent_id = Id("A");
   LoopPairVec loops;
   const double translations[] = {0.8, 1.0, 1.2, 100.0};
   for (int i = 0; i < 4; ++i) {
     optimized_agent.optimized_poses.emplace_back(
         i, Eigen::Isometry3d::Identity());
     LoopPair loop;
-    loop.to = {'A', static_cast<std::size_t>(i)};
-    loop.from = {'B', static_cast<std::size_t>(i)};
+    loop.to = {Id("A"), static_cast<std::size_t>(i)};
+    loop.from = {Id("B"), static_cast<std::size_t>(i)};
     loop.init_rel_pose = Eigen::Isometry3d::Identity();
     loop.init_rel_pose.translation().x() = translations[i];
     loops.push_back(loop);
   }
   AgentOptimizedDataMap optimized;
-  optimized['A'] =
+  optimized[Id("A")] =
       std::make_shared<const AgentOptimizedData>(std::move(optimized_agent));
   DescriptorAlignmentDiagnostics diagnostics;
   const auto proposal = DescriptorAlignmentProposer(10.0, 20.0 * M_PI / 180.0).Propose(
-      'A', 'B', odometry, optimized, loops, &diagnostics);
+      Id("A"), Id("B"), odometry, optimized, loops, &diagnostics);
   Check(proposal.has_value(), "Descriptor consensus proposal exists");
   Check(proposal->metrics.consensus_size == 3,
         "Descriptor outlier excluded from consensus");
@@ -301,7 +303,7 @@ void TestDescriptorConsensusRejectsOutlier() {
   exact_options.threads = 2;
   exact_options.max_candidates = 0;
   const auto exact_proposal = DescriptorAlignmentProposer(exact_options).Propose(
-      'A', 'B', odometry, optimized, loops);
+      Id("A"), Id("B"), odometry, optimized, loops);
   Check(exact_proposal.has_value(), "Exact Descriptor solver remains available");
   Check(exact_proposal->metrics.consensus_size == 3,
         "Exact Descriptor solver rejects the same outlier");

@@ -13,8 +13,18 @@ target_link_options(open_lmm_safety_regression_tests PRIVATE
 add_test(NAME open_lmm_safety_regression_tests
          COMMAND open_lmm_safety_regression_tests)
 
+add_executable(open_lmm_agent_id_tests agent_id_tests.cpp)
+target_link_libraries(open_lmm_agent_id_tests PRIVATE
+  open_lmm_common
+  open_lmm_utils
+  gtsam)
+openlmm_set_global_target_properties(open_lmm_agent_id_tests)
+add_test(NAME open_lmm_agent_id_tests COMMAND open_lmm_agent_id_tests)
+
 add_executable(open_lmm_artifact_compare artifact_compare.cpp)
-target_link_libraries(open_lmm_artifact_compare PRIVATE PCL::PCL)
+target_link_libraries(open_lmm_artifact_compare PRIVATE
+  PCL::PCL
+  nlohmann_json::nlohmann_json)
 openlmm_set_global_target_properties(open_lmm_artifact_compare)
 
 add_executable(open_lmm_pipeline_controller_tests
@@ -61,6 +71,8 @@ add_executable(open_lmm_controller_concurrency_tests
   ../server/stage_runner.cpp
 )
 target_link_libraries(open_lmm_controller_concurrency_tests PRIVATE
+  open_lmm_common
+  open_lmm_utils
   open_lmm_profiling
   Eigen3::Eigen
 )
@@ -97,6 +109,13 @@ add_executable(open_lmm_logging_tests logging_tests.cpp)
 target_link_libraries(open_lmm_logging_tests PRIVATE open_lmm_utils)
 openlmm_set_global_target_properties(open_lmm_logging_tests)
 add_test(NAME open_lmm_logging_tests COMMAND open_lmm_logging_tests)
+
+add_executable(open_lmm_config_schema_tests config_schema_tests.cpp)
+target_compile_definitions(open_lmm_config_schema_tests PRIVATE
+  OPEN_LMM_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(open_lmm_config_schema_tests PRIVATE open_lmm_utils)
+openlmm_set_global_target_properties(open_lmm_config_schema_tests)
+add_test(NAME open_lmm_config_schema_tests COMMAND open_lmm_config_schema_tests)
 
 foreach(fixture IN ITEMS valid wrong_abi null_factory missing_destroy no_entry)
   add_library(open_lmm_plugin_fixture_${fixture} MODULE plugin_fixture.cpp)
@@ -211,6 +230,7 @@ endif()
 string(JOIN "" _open_lmm_build_library_path ${_open_lmm_build_library_path})
 set_tests_properties(
   open_lmm_safety_regression_tests
+  open_lmm_agent_id_tests
   open_lmm_pipeline_controller_tests
   open_lmm_session_transaction_tests
   open_lmm_execution_spec_tests
@@ -219,6 +239,7 @@ set_tests_properties(
   open_lmm_gui_plugin_tests
   open_lmm_profiling_macro_tests
   open_lmm_logging_tests
+  open_lmm_config_schema_tests
   open_lmm_plugin_abi_tests
   open_lmm_plugin_selection_tests
   PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${_open_lmm_build_library_path}")
@@ -232,6 +253,13 @@ add_test(
   COMMAND ${CMAKE_COMMAND}
           -DOPEN_LMM_SOURCE_DIR=${PROJECT_SOURCE_DIR}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/architecture_boundary_tests.cmake
+)
+
+add_test(
+  NAME open_lmm_release_policy_tests
+  COMMAND ${CMAKE_COMMAND}
+          -DOPEN_LMM_REPOSITORY_ROOT=${PROJECT_SOURCE_DIR}/..
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/release_policy_tests.cmake
 )
 
 # Package installation mutates the selected prefix and is intentionally kept

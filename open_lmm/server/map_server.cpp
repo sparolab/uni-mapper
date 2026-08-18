@@ -14,6 +14,10 @@ void MapServer::SetCancellationToken(
   executor_->SetCancellationToken(std::move(token));
 }
 
+CancellationCapability MapServer::CancellationMetadata() const {
+  return executor_->CancellationMetadata();
+}
+
 void MapServer::SetAlignmentFeedbackBroker(
     std::shared_ptr<AlignmentFeedbackBroker> broker) {
   executor_->SetAlignmentFeedbackBroker(std::move(broker));
@@ -23,11 +27,11 @@ Result<void> MapServer::RunStage(StageId stage) {
   return executor_->RunStage(stage);
 }
 
-Result<void> MapServer::RunNode(NodeId node, std::optional<char> agent) {
+Result<void> MapServer::RunNode(NodeId node, std::optional<AgentId> agent) {
   return executor_->RunNode(node, agent);
 }
 
-Result<void> MapServer::RunOptimizeThrough(char target_agent) {
+Result<void> MapServer::RunOptimizeThrough(const AgentId& target_agent) {
   return executor_->RunOptimizeThrough(target_agent);
 }
 
@@ -35,7 +39,7 @@ Result<void> MapServer::Reconfigure(ConfigDomain domain, uint64_t revision) {
   return executor_->Reconfigure(domain, revision);
 }
 
-std::vector<char> MapServer::AgentIds() const {
+std::vector<AgentId> MapServer::AgentIds() const {
   return executor_->AgentIds();
 }
 
@@ -44,7 +48,7 @@ std::optional<CommittedSessionSnapshot> MapServer::SessionSnapshot() const {
 }
 
 Result<VisualizationSnapshot> MapServer::CreateVisualizationSnapshot(
-    char agent) const {
+    const AgentId& agent) const {
   return executor_->CreateVisualizationSnapshot(agent);
 }
 

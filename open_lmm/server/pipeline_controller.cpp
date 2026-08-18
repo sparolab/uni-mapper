@@ -23,7 +23,7 @@ std::string StageName(StageId stage) {
 Error AddExecutionContext(
     Error error, const std::shared_ptr<StageRunner>& runner, StageId stage,
     std::optional<NodeId> node = std::nullopt,
-    std::optional<char> agent = std::nullopt) {
+    std::optional<AgentId> agent = std::nullopt) {
   std::string node_name;
   if (node) node_name = std::string(DescribeNode(*node).name);
   error.WithExecution(StageName(stage), std::move(node_name), agent);
@@ -41,7 +41,7 @@ Error AddExecutionContext(
 ExecutionEvent FailureEvent(uint64_t job_id, EventType type, StageId stage,
                             const Error& error,
                             std::optional<NodeId> node = std::nullopt,
-                            std::optional<char> agent = std::nullopt) {
+                            std::optional<AgentId> agent = std::nullopt) {
   ExecutionEvent event{job_id, type, stage, error.Message(), 0, node, agent};
   event.error = error;
   return event;
@@ -110,6 +110,7 @@ PipelineController::PipelineController(std::shared_ptr<StageRunner> runner)
               NodeId::kLoopDetect, snapshot.proposal.source_agent});
       });
   if (runner_) {
+    cancellation_capability_ = runner_->CancellationMetadata();
     runner_->SetAlignmentFeedbackBroker(alignment_feedback_);
     agents_ = runner_->AgentIds();
     artifacts_.RegisterAgents(agents_);
@@ -147,7 +148,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
   std::thread finished_worker;
   std::shared_ptr<StageRunner> runner;
   uint64_t id;
-  auto cancellation = std::make_shared<CancellationToken>();
+  std::shared_ptr<CancellationToken> cancellation;
   {
     std::lock_guard command_lock(command_mutex_);
     std::lock_guard state_lock(mutex_);
@@ -169,7 +170,11 @@ Result<uint64_t> PipelineController::submit(Work work) {
     if (worker_.joinable()) finished_worker = std::move(worker_);
     runner = runner_;
     id = next_job_id_++;
-    job_ = JobSnapshot{id, JobState::kQueued, std::nullopt, {}};
+    cancellation =
+        std::make_shared<CancellationToken>(cancellation_capability_);
+    job_ = JobSnapshot{id, JobState::kQueued, std::nullopt, {},
+                       CancellationTelemetry{cancellation_capability_}};
+    terminal_event_completed_job_id_ = 0;
     cancel_requested_ = false;
     cancellation_ = cancellation;
   }
@@ -179,7 +184,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
   // external calls are in flight.
   if (finished_worker.joinable()) finished_worker.join();
   try {
-    runner->SetCancellationToken(std::move(cancellation));
+    runner->SetCancellationToken(cancellation);
     runner->SetAlignmentFeedbackBroker(alignment_feedback_);
   } catch (const std::exception& error) {
     std::lock_guard lock(mutex_);
@@ -197,7 +202,10 @@ Result<uint64_t> PipelineController::submit(Work work) {
   }
   emit({id, EventType::kJobQueued, std::nullopt, {}});
   auto start_worker = std::make_shared<std::atomic<bool>>(false);
-  std::thread worker([this, id, work = std::move(work), start_worker]() mutable {
+  auto work_result = std::make_shared<std::optional<Result<void>>>();
+  std::thread execution_worker(
+      [this, id, work = std::move(work), start_worker, cancellation,
+       work_result]() mutable {
     while (!start_worker->load(std::memory_order_acquire)) {
       std::this_thread::yield();
     }
@@ -220,11 +228,28 @@ Result<uint64_t> PipelineController::submit(Work work) {
       result = Result<void>::Failure(
           Error::InvalidArgument("unknown pipeline exception"));
     }
-    finish(id, result);
+    if (result && cancellation->IsCancellationRequested()) {
+      result = Result<void>::Failure(
+          Error::Cancelled("observed after runner operation returned"));
+    }
+    work_result->emplace(std::move(result));
   });
+  std::thread lifecycle_worker(
+      [this, id, cancellation, work_result,
+       execution_worker = std::move(execution_worker)]() mutable {
+        execution_worker.join();
+        cancellation->Complete();
+        {
+          std::lock_guard lock(mutex_);
+          if (job_ && job_->id == id) {
+            job_->cancellation = cancellation->Telemetry();
+          }
+        }
+        finish(id, **work_result);
+      });
   {
     std::lock_guard command_lock(command_mutex_);
-    worker_ = std::move(worker);
+    worker_ = std::move(lifecycle_worker);
   }
   start_worker->store(true, std::memory_order_release);
   return Result<uint64_t>::Ok(id);
@@ -253,7 +278,7 @@ Result<uint64_t> PipelineController::SubmitStage(StageId stage) {
   });
 }
 
-Result<uint64_t> PipelineController::SubmitNode(NodeId node, char agent) {
+Result<uint64_t> PipelineController::SubmitNode(NodeId node, AgentId agent) {
   auto valid = artifacts_.ValidateNode(node, agent);
   if (!valid) return Result<uint64_t>::Failure(valid.GetError());
   return submit([this, node, agent](uint64_t id) {
@@ -266,6 +291,10 @@ Result<uint64_t> PipelineController::SubmitNode(NodeId node, char agent) {
     if (!managed) artifacts_.BeginNode(node, agent);
     emit({id, EventType::kNodeStarted, descriptor.stage, {}, 0, node, agent});
     auto result = runner_->RunNode(node, agent);
+    if (result && cancellationRequested()) {
+      result = Result<void>::Failure(
+          Error::Cancelled("after node runner returned"));
+    }
     if (!result) {
       const Error error = AddExecutionContext(
           result.GetError(), runner_, descriptor.stage, node, agent);
@@ -370,10 +399,12 @@ Result<void> PipelineController::ReplaceRunner(
     if (worker_.joinable()) finished_worker = std::move(worker_);
   }
   if (finished_worker.joinable()) finished_worker.join();
-  std::vector<char> agents;
+  std::vector<AgentId> agents;
   std::optional<CommittedSessionSnapshot> session;
+  CancellationCapability cancellation_capability;
   try {
     agents = runner->AgentIds();
+    cancellation_capability = runner->CancellationMetadata();
     runner->SetAlignmentFeedbackBroker(alignment_feedback_);
     session = runner->SessionSnapshot();
   } catch (const std::exception& error) {
@@ -390,7 +421,9 @@ Result<void> PipelineController::ReplaceRunner(
     std::lock_guard lock(mutex_);
     runner_ = std::move(runner);
     agents_ = agents;
+    cancellation_capability_ = std::move(cancellation_capability);
     job_.reset();
+    terminal_event_completed_job_id_ = 0;
     cancellation_.reset();
     cancel_requested_ = false;
     ++config_revision_;
@@ -422,7 +455,7 @@ std::vector<NodeDescriptor> PipelineController::NodeDescriptors() const {
   return result;
 }
 
-Result<uint64_t> PipelineController::SubmitOptimizeThrough(char target_agent) {
+Result<uint64_t> PipelineController::SubmitOptimizeThrough(AgentId target_agent) {
   return submit([this, target_agent](uint64_t id) {
     const bool managed = runner_manages_artifacts_.load();
     const auto artifact_checkpoint = artifacts_.Snapshot();
@@ -433,6 +466,10 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(char target_agent) {
     emit({id, EventType::kStageStarted, StageId::kAlignment,
           "optimizer replay"});
     auto result = runner_->RunOptimizeThrough(target_agent);
+    if (result && cancellationRequested()) {
+      result = Result<void>::Failure(
+          Error::Cancelled("after optimizer replay returned"));
+    }
     if (!result) {
       const Error error = AddExecutionContext(
           result.GetError(), runner_, StageId::kAlignment,
@@ -449,7 +486,7 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(char target_agent) {
                         result.GetError(), NodeId::kOptimize, target_agent));
       return result;
     }
-    std::vector<char> agents;
+    std::vector<AgentId> agents;
     {
       std::lock_guard lock(mutex_);
       agents = agents_;
@@ -478,6 +515,10 @@ Result<void> PipelineController::runOneStage(uint64_t job_id, StageId stage) {
   }
   emit({job_id, EventType::kStageStarted, stage, {}});
   auto result = runner_->RunStage(stage);
+  if (result && cancellationRequested()) {
+    result = Result<void>::Failure(
+        Error::Cancelled("after stage runner returned"));
+  }
   if (!result) {
     const Error error = AddExecutionContext(result.GetError(), runner_, stage);
     result = Result<void>::Failure(error);
@@ -519,16 +560,28 @@ Result<void> PipelineController::Cancel(uint64_t job_id) {
     job_->state = JobState::kCancelling;
     cancellation = cancellation_;
     alignment_feedback = alignment_feedback_;
+    if (cancellation) {
+      cancellation->Request();
+      job_->cancellation = cancellation->Telemetry();
+    }
   }
-  if (cancellation) cancellation->Request();
   if (alignment_feedback) alignment_feedback->Cancel();
-  emit({job_id, EventType::kCancellationRequested, std::nullopt,
-        "cancellation requested; waiting for the next safe point"});
+  ExecutionEvent requested{
+      job_id, EventType::kCancellationRequested, std::nullopt,
+      "cancellation requested; waiting for the next safe point"};
+  if (cancellation) requested.cancellation = cancellation->Telemetry();
+  emit(std::move(requested));
   return Result<void>::Ok();
 }
 
 bool PipelineController::cancellationRequested() const {
-  return cancel_requested_.load();
+  if (!cancel_requested_.load(std::memory_order_acquire)) return false;
+  std::shared_ptr<CancellationToken> cancellation;
+  {
+    std::lock_guard lock(mutex_);
+    cancellation = cancellation_;
+  }
+  return !cancellation || cancellation->IsCancellationRequested();
 }
 
 void PipelineController::finish(uint64_t job_id, const Result<void>& result) {
@@ -544,13 +597,26 @@ void PipelineController::finish(uint64_t job_id, const Result<void>& result) {
     job_->state = state;
     job_->active_stage.reset();
     job_->message = message;
+    if (cancellation_) job_->cancellation = cancellation_->Telemetry();
   }
   ExecutionEvent terminal{
       job_id, state == JobState::kCancelled ? EventType::kJobCancelled
                                              : EventType::kJobCompleted,
       std::nullopt, message};
   if (!result) terminal.error = result.GetError();
+  {
+    std::lock_guard lock(mutex_);
+    if (job_ && job_->id == job_id) {
+      terminal.cancellation = job_->cancellation;
+    }
+  }
   emit(std::move(terminal));
+  {
+    std::lock_guard lock(mutex_);
+    if (job_ && job_->id == job_id) {
+      terminal_event_completed_job_id_ = job_id;
+    }
+  }
   completed_.notify_all();
 }
 
@@ -561,9 +627,10 @@ Result<void> PipelineController::Wait(uint64_t job_id) {
   }
   completed_.wait(lock, [this, job_id] {
     return !job_ || job_->id != job_id ||
-           job_->state == JobState::kSucceeded ||
-           job_->state == JobState::kFailed ||
-           job_->state == JobState::kCancelled;
+           ((job_->state == JobState::kSucceeded ||
+             job_->state == JobState::kFailed ||
+             job_->state == JobState::kCancelled) &&
+            terminal_event_completed_job_id_ == job_id);
   });
   if (!job_ || job_->id != job_id) {
     return Result<void>::Failure(Error::InvalidArgument("job was replaced"));
@@ -577,19 +644,24 @@ Result<void> PipelineController::Wait(uint64_t job_id) {
 
 PipelineSnapshot PipelineController::Snapshot() const {
   PipelineSnapshot snapshot;
+  std::shared_ptr<CancellationToken> cancellation;
   {
     std::lock_guard lock(mutex_);
     snapshot.job = job_;
+    cancellation = cancellation_;
     snapshot.config_revision = config_revision_;
     snapshot.agents = agents_;
     snapshot.recent_events = recent_events_;
+  }
+  if (snapshot.job && cancellation) {
+    snapshot.job->cancellation = cancellation->Telemetry();
   }
   snapshot.artifacts = artifacts_.Snapshot();
   return snapshot;
 }
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
-    char agent) const {
+    const AgentId& agent) const {
   std::shared_ptr<StageRunner> runner;
   {
     std::lock_guard lock(mutex_);

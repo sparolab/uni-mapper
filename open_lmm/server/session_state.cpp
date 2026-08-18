@@ -5,7 +5,7 @@
 namespace open_lmm {
 namespace {
 
-const AgentPipelineCtx* FindContext(const SessionState& state, char agent) {
+const AgentPipelineCtx* FindContext(const SessionState& state, const AgentId& agent) {
   if (!state.payload) return nullptr;
   const auto found = std::find_if(
       state.payload->contexts.begin(), state.payload->contexts.end(),
@@ -49,7 +49,7 @@ Result<void> SessionTransaction::Validate() const {
   const auto& database = *working_->payload->database;
   for (const auto& artifact : working_->artifacts) {
     if (artifact.state != ArtifactState::kReady) continue;
-    const char agent = artifact.key.agent.value_or(0);
+    const AgentId agent = artifact.key.agent.value_or(AgentId{});
     const AgentPipelineCtx* context =
         artifact.key.agent ? FindContext(*working_, agent) : nullptr;
     switch (artifact.key.type) {
@@ -105,7 +105,7 @@ Result<std::shared_ptr<const SessionState>> SessionTransaction::Finalize(
   }
   working_->revision = base_->revision + 1;
   working_->optimizer.processed_agents.clear();
-  for (char agent : working_->ordered_agents) {
+  for (const AgentId& agent : working_->ordered_agents) {
     if (working_->payload && working_->payload->optimizer &&
         working_->payload->optimizer->HasProcessedAgent(agent)) {
       working_->optimizer.processed_agents.push_back(agent);

@@ -21,6 +21,8 @@ void Check(bool condition, const char* message) {
   }
 }
 
+AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
+
 class ConcurrencyRunner final : public StageRunner {
  public:
   void SetCancellationToken(
@@ -43,8 +45,8 @@ class ConcurrencyRunner final : public StageRunner {
       std::this_thread::yield();
     }
     AlignmentFeedbackSnapshot snapshot;
-    snapshot.proposal.target_agent = 'A';
-    snapshot.proposal.source_agent = 'B';
+    snapshot.proposal.target_agent = Id("A");
+    snapshot.proposal.source_agent = Id("B");
     snapshot.proposal.method = AlignmentMethod::kKissMatcher;
     auto response = feedback->Request(std::move(snapshot), cancellation);
     if (!response || response.Value().decision == AlignmentDecision::kCancel) {
@@ -53,18 +55,18 @@ class ConcurrencyRunner final : public StageRunner {
     return Result<void>::Ok();
   }
 
-  Result<void> RunNode(NodeId, std::optional<char>) override {
+  Result<void> RunNode(NodeId, std::optional<AgentId>) override {
     return Result<void>::Ok();
   }
 
-  Result<void> RunOptimizeThrough(char) override {
+  Result<void> RunOptimizeThrough(const AgentId&) override {
     return Result<void>::Ok();
   }
 
-  std::vector<char> AgentIds() const override {
+  std::vector<AgentId> AgentIds() const override {
     std::lock_guard lock(runner_mutex);
     if (agent_ids_hook) agent_ids_hook();
-    return {'A', 'B'};
+    return {Id("A"), Id("B")};
   }
 
   mutable std::mutex runner_mutex;
@@ -86,7 +88,7 @@ void SnapshotUsesImmutableRunnerState() {
   Check(future.wait_for(std::chrono::milliseconds(500)) ==
             std::future_status::ready,
         "Snapshot called StageRunner under the controller lock");
-  Check(future.get().agents == std::vector<char>({'A', 'B'}),
+  Check(future.get().agents == std::vector<AgentId>({Id("A"), Id("B")}),
         "cached agent snapshot mismatch");
 }
 
