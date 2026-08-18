@@ -9,7 +9,7 @@
 #include <open_lmm/server/bootstrap/bootstrap_config.hpp>
 #include <open_lmm/server/query/visualization_projector.hpp>
 #include <open_lmm/server/resource_governor.hpp>
-#include <open_lmm/server/session_manager.hpp>
+#include <open_lmm/server/runtime_state_store.hpp>
 #include <open_lmm/server/stage_ports.hpp>
 
 namespace open_lmm {
@@ -30,7 +30,9 @@ class StageExecutor {
   Result<ConfigApplyReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context);
-  [[nodiscard]] CommittedSessionSnapshot Snapshot() const;
+  Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
+                                          uint64_t config_revision);
+  [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const;
   Result<void> ValidateReady();
@@ -39,11 +41,11 @@ class StageExecutor {
   Result<void> EnsureReady();
   void PublishVisualization(bool include_maps);
   void PublishEmptyVisualization();
-  [[nodiscard]] std::shared_ptr<const SessionState> CommittedState() const;
+  [[nodiscard]] std::shared_ptr<const RuntimeState> CommittedState() const;
 
   std::shared_ptr<ResourceGovernor> resource_governor_;
   std::optional<Error> initialization_error_;
-  SessionManager session_manager_;
+  RuntimeStateStore runtime_state_store_;
   OutputRepository output_repository_;
   std::unique_ptr<StageCoordinator> coordinator_;
   VisualizationProjector visualization_projector_;

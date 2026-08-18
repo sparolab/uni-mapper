@@ -36,8 +36,8 @@ std::string HexFingerprint(uint64_t hash) {
   return output.str();
 }
 
-const SessionConfigDocument* ConfigDocumentFor(
-    const SessionConfigDocuments& documents, ConfigDomain domain) {
+const RuntimeConfigDocument* ConfigDocumentFor(
+    const RuntimeConfigDocuments& documents, ConfigDomain domain) {
   switch (domain) {
     case ConfigDomain::kLoopDetector: return &documents.loop_detector;
     case ConfigDomain::kOptimizer: return &documents.optimizer;
@@ -49,7 +49,7 @@ const SessionConfigDocument* ConfigDocumentFor(
   return nullptr;
 }
 
-Result<void> ValidateInvocation(const std::shared_ptr<const SessionState>& base,
+Result<void> ValidateInvocation(const std::shared_ptr<const RuntimeState>& base,
                                 const ExecutionContext& context) {
   if (!base || !base->config || !base->payload || !base->payload->database) {
     return Result<void>::Failure(
@@ -61,12 +61,12 @@ Result<void> ValidateInvocation(const std::shared_ptr<const SessionState>& base,
   }
   if (context.base_revision != base->revision) {
     return Result<void>::Failure(Error::InvalidArgument(
-        "stage command base revision does not match session snapshot"));
+        "stage command base revision does not match runtime snapshot"));
   }
   return Result<void>::Ok();
 }
 
-Error OptimizerFactoryError(const Error& source, const SessionState& state,
+Error OptimizerFactoryError(const Error& source, const RuntimeState& state,
                             const ExecutionContext& command) {
   if (state.config && state.config->documents && state.config->optimizer) {
     auto context = MakeAlgorithmExecutionContext(
@@ -76,7 +76,7 @@ Error OptimizerFactoryError(const Error& source, const SessionState& state,
     return WithAlgorithmContext(source, context);
   }
   Error error = source;
-  error.WithSessionRevision(state.revision)
+  error.WithRuntimeRevision(state.revision)
       .WithExecution("algorithm", "optimizer_factory");
   return error;
 }
@@ -84,10 +84,10 @@ Error OptimizerFactoryError(const Error& source, const SessionState& state,
 }  // namespace
 
 StageCoordinator::StageCoordinator(
-    SessionManager& sessions, OutputRepository& outputs,
+    RuntimeStateStore& runtime_states, OutputRepository& outputs,
     std::shared_ptr<ResourceGovernor> governor,
     std::shared_ptr<const AlgorithmFactory> algorithms)
-    : sessions_(sessions),
+    : runtime_state_store_(runtime_states),
       outputs_(outputs),
       governor_(std::move(governor)),
       algorithms_(algorithms ? std::move(algorithms)
@@ -97,7 +97,7 @@ StageCoordinator::StageCoordinator(
       reconfigurer_(algorithms_) {}
 
 std::unique_ptr<ArtifactRepository> StageCoordinator::ArtifactEditor(
-    const SessionState& state) const {
+    const RuntimeState& state) const {
   auto artifacts = std::make_unique<ArtifactRepository>();
   artifacts->Reset(state.ordered_agents);
   artifacts->Restore(state.artifacts);
@@ -105,7 +105,7 @@ std::unique_ptr<ArtifactRepository> StageCoordinator::ArtifactEditor(
 }
 
 Result<void> StageCoordinator::CommitCandidate(
-    std::shared_ptr<const SessionState> base, ExecutionCandidate candidate,
+    std::shared_ptr<const RuntimeState> base, ExecutionCandidate candidate,
     const ExecutionContext& context, PendingOutputSet* pending,
     ArtifactMutation mutation) {
   if (!base || candidate.base_revision != base->revision ||
@@ -113,7 +113,7 @@ Result<void> StageCoordinator::CommitCandidate(
     return Result<void>::Failure(
         Error::InvalidArgument("executor returned a stale or empty candidate"));
   }
-  SessionTransaction transaction(base);
+  RuntimeTransaction transaction(base);
   transaction.SetPayload(std::move(candidate.payload));
   auto artifacts = ArtifactEditor(*base);
   auto mutated = mutation(transaction.Working(), *artifacts, pending);
@@ -121,14 +121,14 @@ Result<void> StageCoordinator::CommitCandidate(
   transaction.Working().artifacts = artifacts->Snapshot();
   auto finalized = std::move(transaction).Finalize(context.cancellation);
   if (!finalized) return Result<void>::Failure(finalized.GetError());
-  return sessions_.CommitWithBarrier(
+  return runtime_state_store_.CommitWithBarrier(
       base, std::move(finalized).Value(), [pending] {
         return pending ? pending->Commit() : Result<void>::Ok();
       });
 }
 
 Result<void> StageCoordinator::RecordMapOutputs(
-    const SessionState& state, const std::vector<AgentId>& agents,
+    const RuntimeState& state, const std::vector<AgentId>& agents,
     ArtifactRepository& artifacts) const {
   for (const AgentId& agent : agents) {
     const auto final_path = state.config->root.output_directory /
@@ -151,7 +151,7 @@ Result<void> StageCoordinator::RecordMapOutputs(
 }
 
 Result<void> StageCoordinator::ExecuteStage(
-    std::shared_ptr<const SessionState> base, StageId stage,
+    std::shared_ptr<const RuntimeState> base, StageId stage,
     const ExecutionContext& context) {
   auto valid = ValidateInvocation(base, context);
   if (!valid) return valid;
@@ -180,7 +180,7 @@ Result<void> StageCoordinator::ExecuteStage(
     if (!candidate) return Result<void>::Failure(candidate.GetError());
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, nullptr,
-        [](SessionState&, ArtifactRepository& artifacts, PendingOutputSet*) {
+        [](RuntimeState&, ArtifactRepository& artifacts, PendingOutputSet*) {
           artifacts.BeginStage(StageId::kDataLoad);
           artifacts.CompleteStage(StageId::kDataLoad);
           return Result<void>::Ok();
@@ -193,7 +193,7 @@ Result<void> StageCoordinator::ExecuteStage(
     auto pending = outputs_.Begin();
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, &pending,
-        [](SessionState& working, ArtifactRepository& artifacts,
+        [](RuntimeState& working, ArtifactRepository& artifacts,
            PendingOutputSet* files) {
           artifacts.BeginStage(StageId::kAlignment);
           artifacts.CompleteStage(StageId::kAlignment);
@@ -212,7 +212,7 @@ Result<void> StageCoordinator::ExecuteStage(
                                  std::nullopt};
       return CommitCandidate(
           std::move(base), std::move(skipped), context, nullptr,
-          [](SessionState&, ArtifactRepository&, PendingOutputSet*) {
+          [](RuntimeState&, ArtifactRepository&, PendingOutputSet*) {
             return Result<void>::Ok();
           });
     }
@@ -227,7 +227,7 @@ Result<void> StageCoordinator::ExecuteStage(
     const auto agents = candidate.Value().execution_agents;
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, &pending,
-        [this, agents](SessionState& working, ArtifactRepository& artifacts,
+        [this, agents](RuntimeState& working, ArtifactRepository& artifacts,
                        PendingOutputSet*) {
           artifacts.BeginStage(StageId::kMapUpdate);
           artifacts.CompleteStage(StageId::kMapUpdate);
@@ -239,7 +239,7 @@ Result<void> StageCoordinator::ExecuteStage(
 }
 
 Result<void> StageCoordinator::ExecuteNode(
-    std::shared_ptr<const SessionState> base, NodeId node,
+    std::shared_ptr<const RuntimeState> base, NodeId node,
     std::optional<AgentId> agent, const ExecutionContext& context) {
   auto valid = ValidateInvocation(base, context);
   if (!valid) return valid;
@@ -267,7 +267,7 @@ Result<void> StageCoordinator::ExecuteNode(
     if (!candidate) return Result<void>::Failure(candidate.GetError());
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, nullptr,
-        [agent](SessionState&, ArtifactRepository& artifacts,
+        [agent](RuntimeState&, ArtifactRepository& artifacts,
                 PendingOutputSet*) {
           artifacts.BeginNode(NodeId::kDataLoad, agent);
           artifacts.CompleteNode(NodeId::kDataLoad, agent);
@@ -279,7 +279,7 @@ Result<void> StageCoordinator::ExecuteNode(
     if (!candidate) return Result<void>::Failure(candidate.GetError());
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, nullptr,
-        [target = *agent](SessionState& working,
+        [target = *agent](RuntimeState& working,
                           ArtifactRepository& artifacts, PendingOutputSet*) {
           artifacts.CompleteLoopDetectThrough(target,
                                               working.ordered_agents);
@@ -301,7 +301,7 @@ Result<void> StageCoordinator::ExecuteNode(
     const AgentId target = *agent;
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, &pending,
-        [this, target](SessionState& working, ArtifactRepository& artifacts,
+        [this, target](RuntimeState& working, ArtifactRepository& artifacts,
                        PendingOutputSet*) {
           artifacts.BeginNode(NodeId::kMapUpdate, target);
           artifacts.CompleteNode(NodeId::kMapUpdate, target);
@@ -316,7 +316,7 @@ Result<void> StageCoordinator::ExecuteNode(
 }
 
 Result<void> StageCoordinator::ExecuteOptimizeThrough(
-    std::shared_ptr<const SessionState> base, const AgentId& target,
+    std::shared_ptr<const RuntimeState> base, const AgentId& target,
     const ExecutionContext& context) {
   auto valid = ValidateInvocation(base, context);
   if (!valid) return valid;
@@ -324,7 +324,7 @@ Result<void> StageCoordinator::ExecuteOptimizeThrough(
   if (!candidate) return Result<void>::Failure(candidate.GetError());
   return CommitCandidate(
       std::move(base), std::move(candidate).Value(), context, nullptr,
-      [target](SessionState& working, ArtifactRepository& artifacts,
+      [target](RuntimeState& working, ArtifactRepository& artifacts,
                PendingOutputSet*) {
         artifacts.CompleteOptimizeThrough(target, working.ordered_agents);
         return Result<void>::Ok();
@@ -332,7 +332,7 @@ Result<void> StageCoordinator::ExecuteOptimizeThrough(
 }
 
 Result<void> StageCoordinator::ExecuteReconfigure(
-    std::shared_ptr<const SessionState> base, ConfigDomain domain,
+    std::shared_ptr<const RuntimeState> base, ConfigDomain domain,
     uint64_t revision, const ExecutionContext& context) {
   auto valid = ValidateInvocation(base, context);
   if (!valid) return valid;
@@ -346,7 +346,7 @@ Result<void> StageCoordinator::ExecuteReconfigure(
   const auto next_config = prepared.Value().config;
   return CommitCandidate(
       std::move(base), std::move(candidate), context, nullptr,
-      [domain, next_config](SessionState& working,
+      [domain, next_config](RuntimeState& working,
                             ArtifactRepository& artifacts,
                             PendingOutputSet*) {
         working.config = next_config;
@@ -356,12 +356,12 @@ Result<void> StageCoordinator::ExecuteReconfigure(
 }
 
 Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
-    std::shared_ptr<const SessionState> base,
+    std::shared_ptr<const RuntimeState> base,
     const ConfigCandidate& candidate, const ExpectedRevision& expected,
     const ExecutionContext& context) {
   auto valid = ValidateInvocation(base, context);
   if (!valid) return Result<ConfigApplyReceipt>::Failure(valid.GetError());
-  if (expected.session_revision != base->revision ||
+  if (expected.runtime_revision != base->revision ||
       expected.config_revision != base->config->revision) {
     return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
         "config transaction expected revision does not match committed state"));
@@ -374,7 +374,7 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
   if (candidate.domain == ConfigDomain::kGlobal ||
       candidate.domain == ConfigDomain::kDataLoader) {
     return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
-        "data/global config requires a new pipeline session"));
+        "data/global config requires a new runtime replacement"));
   }
 
   const uint64_t next_config_revision = base->config->revision + 1;
@@ -409,10 +409,10 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
       return Result<ConfigApplyReceipt>::Failure(staged.GetError());
   }
 
-  const CommittedSessionSnapshot before{
+  const CommittedRuntimeSnapshot before{
       base->revision, base->config->revision, base->ordered_agents,
       base->artifacts};
-  SessionTransaction transaction(base);
+  RuntimeTransaction transaction(base);
   transaction.SetPayload(prepared.Value().payload);
   auto artifacts = ArtifactEditor(*base);
   transaction.Working().config = next_config;
@@ -422,10 +422,10 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
   if (!finalized)
     return Result<ConfigApplyReceipt>::Failure(finalized.GetError());
   const auto committed_state = finalized.Value();
-  const CommittedSessionSnapshot after{
+  const CommittedRuntimeSnapshot after{
       committed_state->revision, committed_state->config->revision,
       committed_state->ordered_agents, committed_state->artifacts};
-  auto committed = sessions_.CommitWithBarrier(
+  auto committed = runtime_state_store_.CommitWithBarrier(
       base, committed_state, [&pending] { return pending.Commit(); });
   if (!committed)
     return Result<ConfigApplyReceipt>::Failure(committed.GetError());
@@ -435,7 +435,7 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
 }
 
 Result<void> StageCoordinator::CommitSave(
-    std::shared_ptr<const SessionState> base, SaveExecutionMode mode,
+    std::shared_ptr<const RuntimeState> base, SaveExecutionMode mode,
     const ExecutionContext& context) {
   auto artifacts = ArtifactEditor(*base);
   auto pending = outputs_.Begin();
@@ -445,11 +445,11 @@ Result<void> StageCoordinator::CommitSave(
       pending, *artifacts);
   if (!prepared) return Result<void>::Failure(prepared.GetError());
 
-  SessionTransaction transaction(base);
+  RuntimeTransaction transaction(base);
   transaction.Working().artifacts = artifacts->Snapshot();
   auto finalized = std::move(transaction).Finalize(context.cancellation);
   if (!finalized) return Result<void>::Failure(finalized.GetError());
-  return sessions_.CommitWithBarrier(
+  return runtime_state_store_.CommitWithBarrier(
       base, std::move(finalized).Value(), [&pending] {
         return pending.Commit();
       });

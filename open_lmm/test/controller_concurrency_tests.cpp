@@ -67,7 +67,7 @@ class ConcurrencyRunner final : public test::RuntimePortFixture {
     return Result<void>::Ok();
   }
 
-  CommittedSessionSnapshot Snapshot() const override {
+  CommittedRuntimeSnapshot Snapshot() const override {
     std::lock_guard lock(runner_mutex);
     if (agent_ids_hook) agent_ids_hook();
     return RuntimePortFixture::Snapshot();

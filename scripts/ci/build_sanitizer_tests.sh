@@ -15,37 +15,29 @@ compiler_cxx=$4
 case "$sanitizer" in
   ASAN_UBSAN)
     sanitizer_option=OPEN_LMM_ENABLE_ASAN_UBSAN
-    test_pattern='open_lmm_(safety_regression|pipeline_controller|session_transaction|execution_spec|controller_concurrency|plugin_abi_v2|plugin_selection|self_contained_e2e)_tests'
+    test_pattern='open_lmm_(safety_regression|pipeline_controller|runtime_transaction|execution_spec|controller_concurrency|plugin_abi|plugin_selection|self_contained_e2e)_tests'
     targets=(
       open_lmm_safety_regression_tests
       open_lmm_pipeline_controller_tests
-      open_lmm_session_transaction_tests
+      open_lmm_runtime_transaction_tests
       open_lmm_execution_spec_tests
       open_lmm_controller_concurrency_tests
-      open_lmm_plugin_abi_v2_tests
+      open_lmm_plugin_abi_tests
       open_lmm_plugin_selection_tests
       open_lmm_self_contained_e2e_tests
       create_scan_context
       create_free_dom
-      open_lmm_plugin_fixture_v2_valid
-      open_lmm_plugin_fixture_v2_wrong_major
-      open_lmm_plugin_fixture_v2_short_descriptor
-      open_lmm_plugin_fixture_v2_partial_open
-      open_lmm_plugin_fixture_v2_malformed_result
-      open_lmm_plugin_fixture_v2_newer_minor
-      open_lmm_plugin_fixture_v2_missing_close
-      open_lmm_plugin_fixture_v2_null_handle
-      open_lmm_plugin_fixture_v2_unsupported_minor
     )
     ;;
   TSAN)
     sanitizer_option=OPEN_LMM_ENABLE_TSAN
-    test_pattern='open_lmm_(bounded_executor|controller_concurrency|runtime_service|session_transaction)_tests'
+    test_pattern='open_lmm_(bounded_executor|controller_concurrency|runtime_service|runtime_transaction|gui_plugin)_tests'
     targets=(
       open_lmm_bounded_executor_tests
       open_lmm_controller_concurrency_tests
       open_lmm_runtime_service_tests
-      open_lmm_session_transaction_tests
+      open_lmm_runtime_transaction_tests
+      open_lmm_gui_plugin_tests
     )
     ;;
   *)
@@ -90,7 +82,7 @@ cmake -S "$repository_root/open_lmm" -B "$build_root" \
   -D"$sanitizer_option"=ON
 
 build_attempt=1
-until cmake --build "$build_root" --parallel 1 --target "${targets[@]}"; do
+until cmake --build "$build_root" --parallel "${OPEN_LMM_BUILD_JOBS:-16}" --target "${targets[@]}"; do
   if [[ $build_attempt -ge 3 ]]; then
     echo "sanitizer build failed after $build_attempt attempts" >&2
     exit 1

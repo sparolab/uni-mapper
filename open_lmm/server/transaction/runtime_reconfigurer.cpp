@@ -1,10 +1,10 @@
-#include "session_reconfigurer.hpp"
+#include "runtime_reconfigurer.hpp"
 
 #include <iomanip>
 #include <sstream>
 #include <utility>
 
-#include <open_lmm/server/session_payload_builder.hpp>
+#include <open_lmm/server/runtime_payload_builder.hpp>
 #include <open_lmm/utils/config.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
@@ -15,11 +15,11 @@ constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
 constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 struct LoadedDocument {
-  SessionConfigDocument document;
+  RuntimeConfigDocument document;
   ValidatedConfigDocument validated;
 };
 
-Result<Config> LoadCandidateSnapshot(const SessionConfigDocument& source) {
+Result<Config> LoadCandidateSnapshot(const RuntimeConfigDocument& source) {
   return LoadConfigFileBounded(source.path,
                                SchemaLimits{}.maximum_document_bytes);
 }
@@ -36,7 +36,7 @@ const char* SelectorFor(ConfigDomain domain) {
   return nullptr;
 }
 
-SessionConfigDocument* DocumentFor(SessionConfigDocuments& documents,
+RuntimeConfigDocument* DocumentFor(RuntimeConfigDocuments& documents,
                                    ConfigDomain domain) {
   switch (domain) {
     case ConfigDomain::kLoopDetector: return &documents.loop_detector;
@@ -50,7 +50,7 @@ SessionConfigDocument* DocumentFor(SessionConfigDocuments& documents,
 }
 
 Result<Config> CandidateSnapshot(const ConfigCandidate* candidate,
-                                 const SessionConfigDocument& source) {
+                                 const RuntimeConfigDocument& source) {
   if (!candidate) return LoadCandidateSnapshot(source);
   if (candidate->document_json.empty() ||
       candidate->document_json.size() >
@@ -70,13 +70,13 @@ Result<Config> CandidateSnapshot(const ConfigCandidate* candidate,
 }
 
 Result<void> SelectCandidateDocument(
-    SessionConfigDocuments& documents, const ConfigCandidate& candidate,
+    RuntimeConfigDocuments& documents, const ConfigCandidate& candidate,
     const SchemaRegistry& registry) {
   auto* document = DocumentFor(documents, candidate.domain);
   const char* selector = SelectorFor(candidate.domain);
   if (!document || !selector) {
     return Result<void>::Failure(Error::InvalidArgument(
-        "data/global config requires a new pipeline session"));
+        "data/global config requires a new runtime replacement"));
   }
   if (!candidate.selected_document) return Result<void>::Ok();
   if (candidate.selected_document->empty()) {
@@ -99,7 +99,7 @@ Result<void> SelectCandidateDocument(
     return Result<void>::Failure(Error::InvalidArgument(
         "domain config document must not replace the root config"));
   }
-  for (const SessionConfigDocument* other :
+  for (const RuntimeConfigDocument* other :
        {&documents.map_server, &documents.data_loader,
         &documents.loop_detector, &documents.optimizer,
         &documents.dynamic_remover}) {
@@ -128,9 +128,9 @@ Result<void> SelectCandidateDocument(
   return Result<void>::Ok();
 }
 
-Result<void> ValidateCandidateDocuments(const SessionConfigDocuments& documents,
+Result<void> ValidateCandidateDocuments(const RuntimeConfigDocuments& documents,
                                         const SchemaRegistry& registry) {
-  const std::pair<ConfigDocumentKind, const SessionConfigDocument*> inputs[] = {
+  const std::pair<ConfigDocumentKind, const RuntimeConfigDocument*> inputs[] = {
       {ConfigDocumentKind::kRoot, &documents.root},
       {ConfigDocumentKind::kMapServer, &documents.map_server},
       {ConfigDocumentKind::kDataLoader, &documents.data_loader},
@@ -149,13 +149,13 @@ Result<void> ValidateCandidateDocuments(const SessionConfigDocuments& documents,
     else if (kind == ConfigDocumentKind::kMapServer)
       map = std::move(validated).Value();
   }
-  auto session = ValidateSessionConfigDocuments(*root, *map);
-  if (!session) return Result<void>::Failure(session.GetError());
+  auto runtime = ValidateRuntimeConfigDocuments(*root, *map);
+  if (!runtime) return Result<void>::Failure(runtime.GetError());
   return Result<void>::Ok();
 }
 
 Result<LoadedDocument> LoadCandidate(ConfigDocumentKind kind,
-                                     const SessionConfigDocument& source,
+                                     const RuntimeConfigDocument& source,
                                      const Config& snapshot,
                                      const SchemaRegistry& registry) {
   auto validated = registry.ParseAndValidate(
@@ -182,7 +182,7 @@ std::string Hex(uint64_t hash) {
   return output.str();
 }
 
-void RefreshAlignmentIdentity(SessionConfig& config) {
+void RefreshAlignmentIdentity(RuntimeConfig& config) {
   uint64_t config_hash = kFnvOffset;
   HashText(config_hash, config.documents->data_loader.canonical_json);
   HashText(config_hash, config.documents->loop_detector.canonical_json);
@@ -192,18 +192,18 @@ void RefreshAlignmentIdentity(SessionConfig& config) {
 
   auto alignment =
       std::make_shared<AlignmentArtifactMetadata>(*config.alignment_artifacts);
-  uint64_t session_hash = kFnvOffset;
-  HashText(session_hash, config.fingerprint);
+  uint64_t runtime_hash = kFnvOffset;
+  HashText(runtime_hash, config.fingerprint);
   for (const auto& [agent, fingerprint] : alignment->input_fingerprints) {
-    HashText(session_hash, agent.Value());
-    HashText(session_hash, fingerprint);
+    HashText(runtime_hash, agent.Value());
+    HashText(runtime_hash, fingerprint);
   }
-  alignment->session_fingerprint = Hex(session_hash);
+  alignment->runtime_fingerprint = Hex(runtime_hash);
   config.alignment_artifacts = std::move(alignment);
 }
 
-Result<std::shared_ptr<const SessionPayload>> ResetAlignmentPayload(
-    const std::shared_ptr<const SessionState>& base,
+Result<std::shared_ptr<const RuntimePayload>> ResetAlignmentPayload(
+    const std::shared_ptr<const RuntimeState>& base,
     std::shared_ptr<BackendOptimizerBase> optimizer,
   bool reset_loops) {
   auto contexts = base->payload->contexts;
@@ -218,7 +218,7 @@ Result<std::shared_ptr<const SessionPayload>> ResetAlignmentPayload(
   if (reset_loops) {
     for (auto& context : contexts) context.loop_output.reset();
   }
-  SessionPayloadBuilder builder(base->payload);
+  RuntimePayloadBuilder builder(base->payload);
   return builder.SetContexts(std::move(contexts))
       .SetDatabase(std::move(database))
       .SetOptimizer(std::move(optimizer))
@@ -227,41 +227,41 @@ Result<std::shared_ptr<const SessionPayload>> ResetAlignmentPayload(
 
 }  // namespace
 
-SessionReconfigurer::SessionReconfigurer(
+RuntimeReconfigurer::RuntimeReconfigurer(
     std::shared_ptr<const AlgorithmFactory> algorithms)
     : algorithms_(algorithms ? std::move(algorithms)
                              : std::make_shared<AlgorithmFactory>()) {}
 
-Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
-    const std::shared_ptr<const SessionState>& base, ConfigDomain domain,
+Result<RuntimeReconfigureCandidate> RuntimeReconfigurer::Prepare(
+    const std::shared_ptr<const RuntimeState>& base, ConfigDomain domain,
     uint64_t revision) const {
   return PrepareImpl(base, domain, revision, nullptr);
 }
 
-Result<SessionReconfigureCandidate> SessionReconfigurer::Prepare(
-    const std::shared_ptr<const SessionState>& base,
+Result<RuntimeReconfigureCandidate> RuntimeReconfigurer::Prepare(
+    const std::shared_ptr<const RuntimeState>& base,
     const ConfigCandidate& candidate, uint64_t revision) const {
   return PrepareImpl(base, candidate.domain, revision, &candidate);
 }
 
-Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
-    const std::shared_ptr<const SessionState>& base, ConfigDomain domain,
+Result<RuntimeReconfigureCandidate> RuntimeReconfigurer::PrepareImpl(
+    const std::shared_ptr<const RuntimeState>& base, ConfigDomain domain,
     uint64_t revision, const ConfigCandidate* candidate) const {
   if (!base || !base->config || !base->config->documents ||
       !base->config->alignment_artifacts || !base->payload) {
-    return Result<SessionReconfigureCandidate>::Failure(
+    return Result<RuntimeReconfigureCandidate>::Failure(
         Error::InvalidArgument("reconfigure requires a complete config snapshot"));
   }
   if (revision <= base->config->revision) {
-    return Result<SessionReconfigureCandidate>::Failure(
+    return Result<RuntimeReconfigureCandidate>::Failure(
         Error::InvalidArgument("config revision must increase"));
   }
-  auto next = std::make_shared<SessionConfig>(*base->config);
+  auto next = std::make_shared<RuntimeConfig>(*base->config);
   auto documents =
-      std::make_shared<SessionConfigDocuments>(*base->config->documents);
+      std::make_shared<RuntimeConfigDocuments>(*base->config->documents);
   next->documents = documents;
   next->revision = revision;
-  std::shared_ptr<const SessionPayload> payload = base->payload;
+  std::shared_ptr<const RuntimePayload> payload = base->payload;
   const SchemaRegistry& registry = base->config->schema_registry
       ? *base->config->schema_registry
       : BuiltinConfigSchemaRegistry();
@@ -269,33 +269,33 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
     auto selected =
         SelectCandidateDocument(*documents, *candidate, registry);
     if (!selected)
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           selected.GetError());
   }
 
   if (domain == ConfigDomain::kLoopDetector) {
     auto raw = CandidateSnapshot(candidate, documents->loop_detector);
     if (!raw)
-      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(raw.GetError());
     auto loaded = LoadCandidate(ConfigDocumentKind::kLoopDetector,
                                 documents->loop_detector,
                                 raw.Value(),
                                 registry);
     if (!loaded) {
-      return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(loaded.GetError());
     }
     auto typed = DecodeLoopDetectorConfig(loaded.Value().validated);
     if (!typed) {
-      return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(typed.GetError());
     }
     auto preflight = algorithms_->PreflightDescriptor(typed.Value());
     if (!preflight) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           preflight.GetError());
     }
     auto optimizer = algorithms_->CreateOptimizer(*base->config->optimizer);
     if (!optimizer) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           optimizer.GetError());
     }
     next->loop_detector = std::make_shared<const LoopDetectorConfig>(
@@ -304,7 +304,7 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
     auto rebuilt = ResetAlignmentPayload(base, std::move(optimizer).Value(),
                                          true);
     if (!rebuilt) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           rebuilt.GetError());
     }
     payload = std::move(rebuilt).Value();
@@ -312,19 +312,19 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
   } else if (domain == ConfigDomain::kOptimizer) {
     auto raw = CandidateSnapshot(candidate, documents->optimizer);
     if (!raw)
-      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(raw.GetError());
     auto loaded = LoadCandidate(ConfigDocumentKind::kBackendOptimizer,
                                 documents->optimizer, raw.Value(), registry);
     if (!loaded) {
-      return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(loaded.GetError());
     }
     auto typed = DecodeOptimizerConfig(loaded.Value().validated);
     if (!typed) {
-      return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(typed.GetError());
     }
     auto optimizer = algorithms_->CreateOptimizer(typed.Value());
     if (!optimizer) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           optimizer.GetError());
     }
     next->optimizer = std::make_shared<const OptimizerConfig>(
@@ -333,7 +333,7 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
     auto rebuilt = ResetAlignmentPayload(base, std::move(optimizer).Value(),
                                          false);
     if (!rebuilt) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           rebuilt.GetError());
     }
     payload = std::move(rebuilt).Value();
@@ -341,21 +341,21 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
   } else if (domain == ConfigDomain::kDynamicRemover) {
     auto raw = CandidateSnapshot(candidate, documents->dynamic_remover);
     if (!raw)
-      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(raw.GetError());
     auto loaded = LoadCandidate(ConfigDocumentKind::kDynamicRemover,
                                 documents->dynamic_remover,
                                 raw.Value(),
                                 registry);
     if (!loaded) {
-      return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(loaded.GetError());
     }
     auto typed = DecodeDynamicRemoverConfig(loaded.Value().validated);
     if (!typed) {
-      return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(typed.GetError());
     }
     auto preflight = algorithms_->PreflightRemover(typed.Value());
     if (!preflight) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           preflight.GetError());
     }
     next->dynamic_remover = std::make_shared<const DynamicRemoverConfig>(
@@ -364,11 +364,11 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
   } else if (domain == ConfigDomain::kMapSave) {
     auto raw = CandidateSnapshot(candidate, documents->map_server);
     if (!raw)
-      return Result<SessionReconfigureCandidate>::Failure(raw.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(raw.GetError());
     auto loaded = LoadCandidate(ConfigDocumentKind::kMapServer,
                                 documents->map_server, raw.Value(), registry);
     if (!loaded) {
-      return Result<SessionReconfigureCandidate>::Failure(loaded.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(loaded.GetError());
     }
     auto root_schema = registry.ParseAndValidate(
         ConfigDocumentKind::kRoot, documents->root.canonical_json,
@@ -378,31 +378,31 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
         loaded.Value().document.canonical_json,
         loaded.Value().document.path.string());
     if (!root_schema) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           root_schema.GetError());
     }
     if (!map_schema) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           map_schema.GetError());
     }
-    auto session_schema = ValidateSessionConfigDocuments(root_schema.Value(),
+    auto runtime_schema = ValidateRuntimeConfigDocuments(root_schema.Value(),
                                                           map_schema.Value());
-    if (!session_schema) {
-      return Result<SessionReconfigureCandidate>::Failure(
-          session_schema.GetError());
+    if (!runtime_schema) {
+      return Result<RuntimeReconfigureCandidate>::Failure(
+          runtime_schema.GetError());
     }
     auto typed = DecodeMapSaveConfig(loaded.Value().validated);
     if (!typed) {
-      return Result<SessionReconfigureCandidate>::Failure(typed.GetError());
+      return Result<RuntimeReconfigureCandidate>::Failure(typed.GetError());
     }
     const int anchor = loaded.Value().validated.Document()
                            .at("map_server")
                            .at("anchor_agent_index")
                            .get<int>();
     if (anchor != base->config->root.anchor_agent_index) {
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           Error::InvalidArgument(
-              "map_server/anchor_agent_index requires a new pipeline session"));
+              "map_server/anchor_agent_index requires a new runtime replacement"));
     }
     next->map_save = std::make_shared<const MapSaveConfig>(typed.Value());
     next->root.enable_map_updater = typed.Value().enable_map_updater;
@@ -412,9 +412,9 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
     next->root.max_parallel_agents = typed.Value().max_parallel_agents;
     documents->map_server = std::move(loaded).Value().document;
   } else {
-    return Result<SessionReconfigureCandidate>::Failure(
+    return Result<RuntimeReconfigureCandidate>::Failure(
         Error::InvalidArgument(
-            "data/global config requires a new pipeline session"));
+            "data/global config requires a new runtime replacement"));
   }
 
   if (domain == ConfigDomain::kLoopDetector ||
@@ -422,11 +422,11 @@ Result<SessionReconfigureCandidate> SessionReconfigurer::PrepareImpl(
     auto all_valid = ValidateCandidateDocuments(*documents,
                                                 *next->schema_registry);
     if (!all_valid)
-      return Result<SessionReconfigureCandidate>::Failure(
+      return Result<RuntimeReconfigureCandidate>::Failure(
           all_valid.GetError());
   }
 
-  return Result<SessionReconfigureCandidate>::Ok(
+  return Result<RuntimeReconfigureCandidate>::Ok(
       {std::move(next), std::move(payload)});
 }
 

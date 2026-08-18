@@ -8,7 +8,7 @@
 #include <utility>
 
 #include <open_lmm/common/algorithm_execution_context.hpp>
-#include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/runtime_state.hpp>
 #include <open_lmm/server/stage_ports.hpp>
 
 namespace open_lmm {
@@ -24,11 +24,11 @@ inline std::string AlgorithmDocumentFingerprint(std::string_view canonical) {
   return output.str();
 }
 
-// Converts one immutable session snapshot plus one command context into the
+// Converts one immutable runtime snapshot plus one command context into the
 // only authority visible at a core algorithm boundary.
 inline AlgorithmExecutionContext MakeAlgorithmExecutionContext(
-    const SessionState& state, const ExecutionContext& command,
-    AgentContext agent, const SessionConfigDocument& document,
+    const RuntimeState& state, const ExecutionContext& command,
+    AgentContext agent, const RuntimeConfigDocument& document,
     std::string schema_id, std::string operation, std::string plugin_id) {
   auto config = std::make_shared<const AlgorithmConfigSnapshot>(
       AlgorithmConfigSnapshot{std::move(schema_id), 1,

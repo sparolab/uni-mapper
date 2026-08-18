@@ -110,7 +110,7 @@ void TestProposerBoundary() {
                  AlignmentMethod::kManual));
   });
   auto rejected = policy_leak.Propose(context, {target, source});
-  Check(!rejected && rejected.GetError().context.session_revision == 9,
+  Check(!rejected && rejected.GetError().context.runtime_revision == 9,
         "proposer must reject policy-owned methods with context");
 
   context.cancellation->Request();

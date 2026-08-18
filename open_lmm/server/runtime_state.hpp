@@ -18,7 +18,7 @@ namespace open_lmm {
 
 class SchemaRegistry;
 
-struct SessionRootConfig {
+struct RuntimeRootConfig {
   std::vector<std::filesystem::path> data_directories;
   std::filesystem::path output_directory;
   int anchor_agent_index = 0;
@@ -29,7 +29,7 @@ struct SessionRootConfig {
   std::size_t max_parallel_agents = 1;
 };
 
-struct SessionConfigDocument {
+struct RuntimeConfigDocument {
   std::filesystem::path path;
   std::string canonical_json;
 };
@@ -37,32 +37,32 @@ struct SessionConfigDocument {
 // Canonical source documents and paths are revisioned with the typed config.
 // Reconfiguration must derive its candidate from this snapshot, never from a
 // mutable coordinator-side mirror.
-struct SessionConfigDocuments {
-  SessionConfigDocument root;
-  SessionConfigDocument map_server;
-  SessionConfigDocument data_loader;
-  SessionConfigDocument loop_detector;
-  SessionConfigDocument optimizer;
-  SessionConfigDocument dynamic_remover;
+struct RuntimeConfigDocuments {
+  RuntimeConfigDocument root;
+  RuntimeConfigDocument map_server;
+  RuntimeConfigDocument data_loader;
+  RuntimeConfigDocument loop_detector;
+  RuntimeConfigDocument optimizer;
+  RuntimeConfigDocument dynamic_remover;
 };
 
 struct AlignmentArtifactMetadata {
   std::filesystem::path cache_path;
   std::map<AgentId, std::string> input_fingerprints;
-  std::string session_fingerprint;
+  std::string runtime_fingerprint;
 };
 
-// Immutable, validated configuration snapshot owned by one runtime session.
-struct SessionConfig {
+// Immutable, validated configuration snapshot owned by one active runtime.
+struct RuntimeConfig {
   uint64_t revision = 1;
-  SessionRootConfig root;
+  RuntimeRootConfig root;
   std::shared_ptr<const DataLoaderConfig> data_loader;
   std::shared_ptr<const LoopDetectorConfig> loop_detector;
   std::shared_ptr<const OptimizerConfig> optimizer;
   std::shared_ptr<const DynamicRemoverConfig> dynamic_remover;
   std::shared_ptr<const MapSaveConfig> map_save;
   std::string fingerprint;
-  std::shared_ptr<const SessionConfigDocuments> documents;
+  std::shared_ptr<const RuntimeConfigDocuments> documents;
   std::shared_ptr<const AlignmentArtifactMetadata> alignment_artifacts;
   std::shared_ptr<const SchemaRegistry> schema_registry;
 };
@@ -71,7 +71,7 @@ struct OptimizerStateMetadata {
   std::vector<AgentId> processed_agents;
 };
 
-struct SessionPayload {
+struct RuntimePayload {
   std::vector<AgentPipelineCtx> contexts;
   std::shared_ptr<const SharedDatabase> database;
   std::shared_ptr<BackendOptimizerBase> optimizer;
@@ -79,33 +79,33 @@ struct SessionPayload {
       resident_memory_reservations;
 };
 
-struct SessionState {
+struct RuntimeState {
   uint64_t revision = 0;
-  std::shared_ptr<const SessionConfig> config;
+  std::shared_ptr<const RuntimeConfig> config;
   std::vector<AgentId> ordered_agents;
   AgentSymbolCatalogHandle agent_catalog;
-  std::shared_ptr<const SessionPayload> payload;
+  std::shared_ptr<const RuntimePayload> payload;
   OptimizerStateMetadata optimizer;
   std::vector<ArtifactMetadata> artifacts;
 };
 
-class SessionTransaction {
+class RuntimeTransaction {
  public:
-  explicit SessionTransaction(std::shared_ptr<const SessionState> base);
+  explicit RuntimeTransaction(std::shared_ptr<const RuntimeState> base);
 
   [[nodiscard]] uint64_t BaseRevision() const;
-  [[nodiscard]] const std::shared_ptr<const SessionState>& Base() const;
-  SessionState& Working();
-  void SetPayload(std::shared_ptr<const SessionPayload> payload);
+  [[nodiscard]] const std::shared_ptr<const RuntimeState>& Base() const;
+  RuntimeState& Working();
+  void SetPayload(std::shared_ptr<const RuntimePayload> payload);
 
-  Result<std::shared_ptr<const SessionState>> Finalize(
+  Result<std::shared_ptr<const RuntimeState>> Finalize(
       const std::shared_ptr<CancellationToken>& cancellation) &&;
 
  private:
   Result<void> Validate() const;
 
-  std::shared_ptr<const SessionState> base_;
-  std::unique_ptr<SessionState> working_;
+  std::shared_ptr<const RuntimeState> base_;
+  std::unique_ptr<RuntimeState> working_;
 };
 
 }  // namespace open_lmm

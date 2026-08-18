@@ -91,17 +91,24 @@ class StageCommandPort {
   }
 };
 
-class SessionQueryPort {
+class RuntimeQueryPort {
  public:
-  virtual ~SessionQueryPort() = default;
-  [[nodiscard]] virtual CommittedSessionSnapshot Snapshot() const = 0;
+  virtual ~RuntimeQueryPort() = default;
+  [[nodiscard]] virtual CommittedRuntimeSnapshot Snapshot() const = 0;
   [[nodiscard]] virtual Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const = 0;
 };
 
-class StageRuntimePort : public StageCommandPort, public SessionQueryPort {
+class StageRuntimePort : public StageCommandPort, public RuntimeQueryPort {
  public:
   ~StageRuntimePort() override = default;
+  // Bootstrap creates revision 1 by default. A private root replacement may
+  // rebase its candidate before publication so the public runtime revision is
+  // monotonic across epochs. Test ports that own no mutable state can retain
+  // this no-op implementation.
+  virtual Result<void> InitializeRuntimeRevisions(uint64_t, uint64_t) {
+    return Result<void>::Ok();
+  }
 };
 
 }  // namespace open_lmm

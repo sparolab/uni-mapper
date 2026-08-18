@@ -433,7 +433,7 @@ int main() {
   const fs::path parallel_output = fixture.path() / "parallel-output";
   WriteConfiguration(parallel_config, data, parallel_output, true);
   auto governor = std::make_shared<open_lmm::ResourceGovernor>(
-      open_lmm::ResourceBudget{1, 2, 2, 64ULL * 1024ULL * 1024ULL});
+      open_lmm::ResourceBudget{2, 2, 64ULL * 1024ULL * 1024ULL});
   uint64_t calibrated_resident_bytes = 0;
   {
     open_lmm::MapServer parallel_server(
@@ -469,7 +469,7 @@ int main() {
   const fs::path pressure_config = fixture.path() / "pressure-config";
   WriteConfiguration(pressure_config, data, fixture.path() / "pressure-output");
   auto pressure_governor = std::make_shared<open_lmm::ResourceGovernor>(
-      open_lmm::ResourceBudget{2, 2, 2, pressure_budget});
+      open_lmm::ResourceBudget{2, 2, pressure_budget});
   {
     open_lmm::MapServer first_session(
         Bootstrap(pressure_config), std::nullopt, pressure_governor);

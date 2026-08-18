@@ -230,7 +230,7 @@ int main() {
       R"({"map_server":{"anchor_agent_index":1}})");
   Expect(root && map, "session fixtures must validate individually");
   if (root && map) {
-    Expect(!open_lmm::ValidateSessionConfigDocuments(root.Value(), map.Value()),
+    Expect(!open_lmm::ValidateRuntimeConfigDocuments(root.Value(), map.Value()),
            "anchor index must be checked against the configured agent count");
   }
 

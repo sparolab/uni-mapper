@@ -27,13 +27,13 @@ void TestExecutorsRequireExplicitInvocationState() {
 
 void TestResidentReservationMovesWithCandidatePayload() {
   auto governor = std::make_shared<open_lmm::ResourceGovernor>(
-      open_lmm::ResourceBudget{1, 1, 1, 4096});
+      open_lmm::ResourceBudget{1, 1, 4096});
   auto admitted = governor->ReserveMemory(
       512, open_lmm::MemoryClass::kResidentPayload);
   Check(admitted.IsOk(), "fixture resident reservation admitted");
   auto reservation = std::make_shared<open_lmm::MemoryReservation>(
       std::move(admitted).Value());
-  auto payload = std::make_shared<open_lmm::SessionPayload>();
+  auto payload = std::make_shared<open_lmm::RuntimePayload>();
   payload->resident_memory_reservations.emplace(Id("A"), reservation);
   open_lmm::ExecutionCandidate candidate{
       7, payload, {Id("A")},
@@ -51,11 +51,11 @@ void TestResidentReservationMovesWithCandidatePayload() {
 
 void TestMapUpdateCandidateSharesExistingReservation() {
   auto governor = std::make_shared<open_lmm::ResourceGovernor>(
-      open_lmm::ResourceBudget{1, 1, 1, 4096});
+      open_lmm::ResourceBudget{1, 1, 4096});
   auto admitted = governor->ReserveMemory(
       768, open_lmm::MemoryClass::kResidentPayload);
   Check(admitted.IsOk(), "base resident reservation admitted");
-  auto base_payload = std::make_shared<open_lmm::SessionPayload>();
+  auto base_payload = std::make_shared<open_lmm::RuntimePayload>();
   base_payload->resident_memory_reservations.emplace(
       Id("A"), std::make_shared<open_lmm::MemoryReservation>(
                    std::move(admitted).Value()));
@@ -76,7 +76,7 @@ void TestMapUpdateCandidateSharesExistingReservation() {
 
 void TestResidentReplacementUsesOnlyRetiringOwnershipAsCredit() {
   auto governor = std::make_shared<open_lmm::ResourceGovernor>(
-      open_lmm::ResourceBudget{1, 1, 1, 1024});
+      open_lmm::ResourceBudget{1, 1, 1024});
   auto old = governor->ReserveMemory(
       1024, open_lmm::MemoryClass::kResidentPayload);
   Check(old.IsOk(), "fill the resident budget with committed ownership");

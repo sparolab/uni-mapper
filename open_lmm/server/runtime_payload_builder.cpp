@@ -1,4 +1,4 @@
-#include "session_payload_builder.hpp"
+#include "runtime_payload_builder.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -6,10 +6,10 @@
 namespace open_lmm {
 
 Result<void> ValidateResidentMemoryOwnership(
-    const SessionPayload& payload, const SessionPayload* base_payload) {
+    const RuntimePayload& payload, const RuntimePayload* base_payload) {
   if (!payload.database) {
     return Result<void>::Failure(
-        Error::InvalidArgument("session payload database is unavailable"));
+        Error::InvalidArgument("runtime payload database is unavailable"));
   }
 
   for (const auto& [agent, raw] : payload.database->raw_data) {
@@ -72,8 +72,8 @@ Result<void> ValidateResidentMemoryOwnership(
   return Result<void>::Ok();
 }
 
-SessionPayloadBuilder::SessionPayloadBuilder(
-    std::shared_ptr<const SessionPayload> base_payload)
+RuntimePayloadBuilder::RuntimePayloadBuilder(
+    std::shared_ptr<const RuntimePayload> base_payload)
     : base_(std::move(base_payload)) {
   if (!base_) return;
   contexts_ = base_->contexts;
@@ -82,53 +82,53 @@ SessionPayloadBuilder::SessionPayloadBuilder(
   reservations_ = base_->resident_memory_reservations;
 }
 
-SessionPayloadBuilder& SessionPayloadBuilder::SetContexts(
+RuntimePayloadBuilder& RuntimePayloadBuilder::SetContexts(
     std::vector<AgentPipelineCtx> contexts) {
   contexts_ = std::move(contexts);
   return *this;
 }
 
-SessionPayloadBuilder& SessionPayloadBuilder::SetDatabase(
+RuntimePayloadBuilder& RuntimePayloadBuilder::SetDatabase(
     std::shared_ptr<const SharedDatabase> database) {
   database_ = std::move(database);
   return *this;
 }
 
-SessionPayloadBuilder& SessionPayloadBuilder::SetOptimizer(
+RuntimePayloadBuilder& RuntimePayloadBuilder::SetOptimizer(
     std::shared_ptr<BackendOptimizerBase> optimizer) {
   optimizer_ = std::move(optimizer);
   return *this;
 }
 
-SessionPayloadBuilder& SessionPayloadBuilder::ReplaceResidentReservations(
+RuntimePayloadBuilder& RuntimePayloadBuilder::ReplaceResidentReservations(
     std::map<AgentId, std::shared_ptr<MemoryReservation>> reservations) {
   reservations_ = std::move(reservations);
   return *this;
 }
 
-SessionPayloadBuilder& SessionPayloadBuilder::SetResidentReservation(
+RuntimePayloadBuilder& RuntimePayloadBuilder::SetResidentReservation(
     const AgentId& agent, std::shared_ptr<MemoryReservation> reservation) {
   reservations_[agent] = std::move(reservation);
   return *this;
 }
 
-Result<std::shared_ptr<const SessionPayload>> SessionPayloadBuilder::Build() {
+Result<std::shared_ptr<const RuntimePayload>> RuntimePayloadBuilder::Build() {
   if (!database_ || !optimizer_) {
-    return Result<std::shared_ptr<const SessionPayload>>::Failure(
-        Error::InvalidArgument("session payload candidate is incomplete"));
+    return Result<std::shared_ptr<const RuntimePayload>>::Failure(
+        Error::InvalidArgument("runtime payload candidate is incomplete"));
   }
-  auto candidate = std::make_shared<SessionPayload>();
+  auto candidate = std::make_shared<RuntimePayload>();
   candidate->contexts = std::move(contexts_);
   candidate->database = std::move(database_);
   candidate->optimizer = std::move(optimizer_);
   candidate->resident_memory_reservations = std::move(reservations_);
   auto valid = ValidateResidentMemoryOwnership(*candidate, base_.get());
   if (!valid) {
-    return Result<std::shared_ptr<const SessionPayload>>::Failure(
+    return Result<std::shared_ptr<const RuntimePayload>>::Failure(
         valid.GetError());
   }
-  return Result<std::shared_ptr<const SessionPayload>>::Ok(
-      std::shared_ptr<const SessionPayload>(std::move(candidate)));
+  return Result<std::shared_ptr<const RuntimePayload>>::Ok(
+      std::shared_ptr<const RuntimePayload>(std::move(candidate)));
 }
 
 }  // namespace open_lmm

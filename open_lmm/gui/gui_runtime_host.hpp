@@ -7,7 +7,7 @@
 
 namespace open_lmm {
 
-class RuntimeSessionClient;
+class RuntimeClient;
 
 // Stable, package-facing GUI host. Dynamic plugin loading and the internal GUI
 // service bridge remain hidden behind the PImpl boundary.
@@ -15,7 +15,7 @@ class GuiRuntimeHost {
  public:
   static Result<std::unique_ptr<GuiRuntimeHost>> LoadAndStart(
       const std::string& plugin_path,
-      std::shared_ptr<RuntimeSessionClient> session,
+      std::shared_ptr<RuntimeClient> runtime,
       std::string config_file_path);
   ~GuiRuntimeHost();
 

@@ -16,11 +16,13 @@ struct GuiServices {
   std::function<Result<uint64_t>(NodeId, std::optional<AgentId>)> submit_node;
   std::function<Result<uint64_t>(AgentId)> submit_optimize_through;
   std::function<Result<void>(uint64_t)> cancel_job;
-  std::function<Result<ConfigApplyReceipt>(SessionId, ConfigCandidate,
+  std::function<Result<ConfigApplyReceipt>(ConfigCandidate,
                                            ExpectedRevision)> apply_config;
-  std::function<Result<void>(ConfigCandidate)> replace_session;
+  std::function<Result<RuntimeReplaceReceipt>(ConfigCandidate,
+                                               ExpectedRevision)>
+      replace_root_config;
   std::function<std::vector<NodeDescriptor>()> node_descriptors;
-  std::function<Result<RuntimeSessionSnapshot>()> runtime_snapshot;
+  std::function<Result<RuntimeSnapshot>()> runtime_snapshot;
   std::function<PipelineSnapshot()> snapshot;
   std::function<Result<VisualizationSnapshot>(const AgentId&)> visualization_snapshot;
   std::function<std::optional<AlignmentFeedbackSnapshot>()>

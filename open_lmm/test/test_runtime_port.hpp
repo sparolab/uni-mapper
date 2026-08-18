@@ -24,7 +24,7 @@ class RuntimePortFixture : public StageRuntimePort {
   Result<ExecutionReceipt> Execute(
       const ExecutionCommand& command,
       const ExecutionContext& context) final {
-    CommittedSessionSnapshot before;
+    CommittedRuntimeSnapshot before;
     {
       std::lock_guard lock(mutex_);
       before = snapshot_;
@@ -77,7 +77,7 @@ class RuntimePortFixture : public StageRuntimePort {
       const ExecutionContext& context) override {
     std::lock_guard lock(mutex_);
     if (context.base_revision != snapshot_.revision ||
-        expected.session_revision != snapshot_.revision ||
+        expected.runtime_revision != snapshot_.revision ||
         expected.config_revision != snapshot_.config_revision) {
       return Result<ConfigApplyReceipt>::Failure(
           Error::InvalidArgument("fixture config revision mismatch"));
@@ -94,7 +94,7 @@ class RuntimePortFixture : public StageRuntimePort {
          snapshot_.revision, agents_});
   }
 
-  [[nodiscard]] CommittedSessionSnapshot Snapshot() const override {
+  [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const override {
     std::lock_guard lock(mutex_);
     return snapshot_;
   }
@@ -102,6 +102,18 @@ class RuntimePortFixture : public StageRuntimePort {
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const override {
     return CreateVisualization(agent);
+  }
+
+  Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
+                                          uint64_t config_revision) override {
+    if (runtime_revision == 0 || config_revision == 0) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("fixture runtime revisions must be non-zero"));
+    }
+    std::lock_guard lock(mutex_);
+    snapshot_.revision = runtime_revision;
+    snapshot_.config_revision = config_revision;
+    return Result<void>::Ok();
   }
 
  protected:
@@ -119,7 +131,7 @@ class RuntimePortFixture : public StageRuntimePort {
  private:
   Result<std::vector<AgentId>> AffectedAgents(
       const ExecutionCommand& command,
-      const CommittedSessionSnapshot& before) {
+      const CommittedRuntimeSnapshot& before) {
     artifacts_.Restore(before.artifacts);
     switch (command.kind) {
       case ExecutionCommandKind::kStage:
@@ -145,7 +157,7 @@ class RuntimePortFixture : public StageRuntimePort {
   std::vector<AgentId> agents_;
   mutable std::mutex mutex_;
   ArtifactRepository artifacts_;
-  CommittedSessionSnapshot snapshot_;
+  CommittedRuntimeSnapshot snapshot_;
 };
 
 }  // namespace open_lmm::test

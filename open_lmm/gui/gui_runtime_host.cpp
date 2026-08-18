@@ -8,7 +8,7 @@
 namespace open_lmm {
 
 struct GuiRuntimeHost::Impl {
-  std::shared_ptr<RuntimeSessionClient> session;
+  std::shared_ptr<RuntimeClient> runtime;
   std::unique_ptr<GuiPluginHost> plugin;
 };
 
@@ -20,21 +20,21 @@ GuiRuntimeHost& GuiRuntimeHost::operator=(GuiRuntimeHost&&) noexcept = default;
 
 Result<std::unique_ptr<GuiRuntimeHost>> GuiRuntimeHost::LoadAndStart(
     const std::string& plugin_path,
-    std::shared_ptr<RuntimeSessionClient> session,
+    std::shared_ptr<RuntimeClient> runtime,
     std::string config_file_path) {
-  if (!session) {
+  if (!runtime) {
     return Result<std::unique_ptr<GuiRuntimeHost>>::Failure(
-        Error::InvalidArgument("GUI runtime session must not be null"));
+        Error::InvalidArgument("GUI runtime client must not be null"));
   }
   auto loaded = GuiPluginHost::Load(plugin_path);
   if (!loaded) {
     return Result<std::unique_ptr<GuiRuntimeHost>>::Failure(loaded.GetError());
   }
   auto impl = std::make_unique<Impl>();
-  impl->session = std::move(session);
+  impl->runtime = std::move(runtime);
   impl->plugin = std::move(loaded).Value();
   auto started = impl->plugin->Start(
-      MakeGuiServices(impl->session, std::move(config_file_path)));
+      MakeGuiServices(impl->runtime, std::move(config_file_path)));
   if (!started) {
     return Result<std::unique_ptr<GuiRuntimeHost>>::Failure(
         started.GetError());

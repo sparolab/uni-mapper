@@ -93,10 +93,10 @@ void TestExecutionSpecIsSingleOrderedSource() {
   Check(ProgressTotal(NodeId::kLoopDetect, {Id("A"), Id("B"), Id("C")}, Id("B")) == 2,
         "ordered progress total uses replay prefix");
   const auto& pose_save = ExecutionSpecFor(NodeId::kPoseSave);
-  Check(pose_save.scope == ExecutionScope::kSession,
+  Check(pose_save.scope == ExecutionScope::kRuntime,
         "PoseSave is a session-scoped file-set operation");
   const auto& fallback_map = ExecutionSpecFor(NodeId::kFallbackMapSave);
-  Check(fallback_map.scope == ExecutionScope::kSession &&
+  Check(fallback_map.scope == ExecutionScope::kRuntime &&
             fallback_map.required_artifacts ==
                 std::vector<ArtifactType>({ArtifactType::kRawData,
                                            ArtifactType::kOptimizedPoses}) &&
@@ -106,7 +106,7 @@ void TestExecutionSpecIsSingleOrderedSource() {
         "fallback map file-set has an explicit session execution spec");
   Check(ArtifactExecutionSpecs().size() == 12 &&
             ArtifactOwnership(ArtifactType::kDescriptorState) ==
-                ExecutionScope::kSession &&
+                ExecutionScope::kRuntime &&
             ArtifactOwnership(ArtifactType::kPoseFile) ==
                 ExecutionScope::kPerAgent,
         "artifact ownership is declared by the registry");
@@ -116,7 +116,7 @@ void TestArtifactRevisionDiffDefinesAffectedAgents() {
   ArtifactRepository artifacts;
   const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
   artifacts.Reset(agents);
-  CommittedSessionSnapshot before;
+  CommittedRuntimeSnapshot before;
   before.ordered_agents = agents;
   before.artifacts = artifacts.Snapshot();
 
@@ -156,10 +156,10 @@ void TestUnorderedPerAgentNodeInvalidatesOnlyItsTarget() {
   artifacts.BeginNode(NodeId::kMapUpdate, Id("B"));
   artifacts.CompleteNode(NodeId::kMapUpdate, Id("B"));
   const auto after = artifacts.Snapshot();
-  CommittedSessionSnapshot before_session;
+  CommittedRuntimeSnapshot before_session;
   before_session.ordered_agents = agents;
   before_session.artifacts = before;
-  CommittedSessionSnapshot after_session;
+  CommittedRuntimeSnapshot after_session;
   after_session.ordered_agents = agents;
   after_session.artifacts = after;
   Check(ArtifactRevisionAffectedAgents(before_session, after_session) ==

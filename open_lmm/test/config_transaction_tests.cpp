@@ -28,7 +28,7 @@ std::string Read(const fs::path& path) {
   return {std::istreambuf_iterator<char>(input), {}};
 }
 
-std::shared_ptr<const SessionState> MakeBase(const fs::path& root) {
+std::shared_ptr<const RuntimeState> MakeBase(const fs::path& root) {
   fs::create_directories(root / "server");
   const std::string root_json = R"({
     "global": {
@@ -68,7 +68,7 @@ std::shared_ptr<const SessionState> MakeBase(const fs::path& root) {
   optimizer_config.type = "incremental";
   auto optimizer = AlgorithmFactory().CreateOptimizer(optimizer_config);
   Check(map_config && optimizer, "base typed config must be constructible");
-  auto documents = std::make_shared<SessionConfigDocuments>();
+  auto documents = std::make_shared<RuntimeConfigDocuments>();
   documents->root = {root / "config.json",
                      root_document.Value().CanonicalJson()};
   documents->map_server = {root / "server/map.json",
@@ -78,7 +78,7 @@ std::shared_ptr<const SessionState> MakeBase(const fs::path& root) {
   documents->optimizer.path = root / "optimizer.json";
   documents->dynamic_remover.path = root / "remover.json";
 
-  auto config = std::make_shared<SessionConfig>();
+  auto config = std::make_shared<RuntimeConfig>();
   config->revision = 1;
   config->root.output_directory = root / "output";
   config->map_save = std::make_shared<const MapSaveConfig>(map_config.Value());
@@ -88,13 +88,13 @@ std::shared_ptr<const SessionState> MakeBase(const fs::path& root) {
   config->schema_registry = std::shared_ptr<const SchemaRegistry>(
       &registry, [](const SchemaRegistry*) {});
 
-  auto payload = std::make_shared<SessionPayload>();
+  auto payload = std::make_shared<RuntimePayload>();
   payload->database = std::make_shared<SharedDatabase>();
   payload->optimizer = std::move(optimizer).Value();
   const AgentId agent = AgentId::Parse("A").Value();
   ArtifactRepository artifacts;
   artifacts.Reset({agent});
-  auto state = std::make_shared<SessionState>();
+  auto state = std::make_shared<RuntimeState>();
   state->revision = 1;
   state->config = std::move(config);
   state->ordered_agents = {agent};
@@ -150,7 +150,7 @@ int main() {
   std::string oversized(SchemaLimits{}.maximum_document_bytes + 1, 'x');
   Check(!LoadBootstrapConfigCandidate(root, oversized),
         "in-memory root bootstrap must enforce the document byte cap");
-  SessionManager sessions(initial);
+  RuntimeStateStore sessions(initial);
   OutputRepository outputs;
   auto governor = std::make_shared<ResourceGovernor>(ResourceBudget{});
   StageCoordinator coordinator(sessions, outputs, governor);
@@ -176,7 +176,7 @@ int main() {
         "exactly one concurrent expected-revision transaction must commit");
   const auto& winner = first_result ? first_result.Value()
                                     : second_result.Value();
-  Check(winner.base_session_revision == 1 && winner.session_revision == 2 &&
+  Check(winner.base_runtime_revision == 1 && winner.runtime_revision == 2 &&
             winner.previous_config_revision == 1 &&
             winner.config_revision == 2,
         "successful receipt must describe its committed candidate, not a later query");
@@ -239,8 +239,8 @@ int main() {
                       cleanup_root / "first.final");
   cleanup_pending.Add(cleanup_root / "second.tmp",
                       cleanup_root / "second.final");
-  SessionManager cleanup_sessions(initial);
-  auto cleanup_candidate = std::make_shared<SessionState>(*initial);
+  RuntimeStateStore cleanup_sessions(initial);
+  auto cleanup_candidate = std::make_shared<RuntimeState>(*initial);
   cleanup_candidate->revision = 2;
   auto cleanup_commit = cleanup_sessions.CommitWithBarrier(
       initial, cleanup_candidate,

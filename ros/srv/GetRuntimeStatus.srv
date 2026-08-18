@@ -1,8 +1,7 @@
 ---
 bool success
 string error
-string session_id
-uint8 session_state
+uint8 runtime_state
 string output_directory
 uint64 config_revision
 bool has_job

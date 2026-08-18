@@ -190,7 +190,7 @@ void TestMixedStorageAndFailureBoundaries() {
   } catch (const std::invalid_argument&) {
   }
   auto wrong_query = legacy.queryArtifact(Context(), Artifact(kMetadata, 1.0));
-  Check(!wrong_query && wrong_query.GetError().context.session_revision == 17,
+  Check(!wrong_query && wrong_query.GetError().context.runtime_revision == 17,
         "artifact query of legacy database is a contextual Result failure");
 
   auto cancelled_context = Context();

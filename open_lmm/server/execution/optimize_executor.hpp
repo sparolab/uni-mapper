@@ -24,7 +24,7 @@ class OptimizeExecutor {
                    OptimizeStep optimize_step);
 
   [[nodiscard]] Result<ExecutionCandidate> ReplayThrough(
-      std::shared_ptr<const SessionState> committed,
+      std::shared_ptr<const RuntimeState> committed,
       const AgentId& target_agent, const ExecutionContext& context) const;
 
  private:

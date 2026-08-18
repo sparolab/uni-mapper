@@ -14,7 +14,7 @@ namespace open_lmm {
 class BootstrapConfigSnapshotFactory;
 
 // Immutable, fully validated root configuration used to construct one runtime
-// session. It has no process-global identity and never reloads itself.
+// runtime. It has no process-global identity and never reloads itself.
 class BootstrapConfigSnapshot {
  public:
   [[nodiscard]] const std::filesystem::path& ConfigDirectory() const {
@@ -90,10 +90,10 @@ class BootstrapConfigSnapshot {
 [[nodiscard]] Result<BootstrapConfigSnapshot> LoadBootstrapConfig(
     const std::filesystem::path& config_directory);
 
-// Builds a session bootstrap snapshot from a bounded in-memory root candidate.
+// Builds a runtime bootstrap snapshot from a bounded in-memory root candidate.
 // Module documents referenced by the root remain immutable file snapshots
-// loaded by SessionBootstrapper. This API lets GUI/API callers replace a
-// session without writing config.json before validation succeeds.
+// loaded by RuntimeBootstrapper. This API lets GUI/API callers replace a
+// runtime without writing config.json before validation succeeds.
 [[nodiscard]] Result<BootstrapConfigSnapshot> LoadBootstrapConfigCandidate(
     const std::filesystem::path& config_directory,
     std::string_view root_document_json);

@@ -9,29 +9,29 @@
 
 namespace open_lmm {
 
-void VisualizationProjector::Clear(uint64_t session_revision) {
+void VisualizationProjector::Clear(uint64_t runtime_revision) {
   auto state = std::make_shared<State>();
-  state->revision = session_revision;
+  state->revision = runtime_revision;
   std::lock_guard lock(mutex_);
   state_ = std::move(state);
 }
 
 void VisualizationProjector::Publish(
-    std::shared_ptr<const SessionState> session, bool include_maps) {
-  if (!session || !session->config || !session->payload ||
-      !session->payload->database) {
-    Clear(session ? session->revision : 0);
+    std::shared_ptr<const RuntimeState> runtime, bool include_maps) {
+  if (!runtime || !runtime->config || !runtime->payload ||
+      !runtime->payload->database) {
+    Clear(runtime ? runtime->revision : 0);
     return;
   }
 
   auto state = std::make_shared<State>();
-  state->revision = session->revision;
-  const auto& database = *session->payload->database;
+  state->revision = runtime->revision;
+  const auto& database = *runtime->payload->database;
   for (const auto& [agent, optimized] : database.optimized_data) {
     if (!optimized) continue;
     auto& snapshot = state->agents[agent];
     snapshot.agent = agent;
-    snapshot.revision = session->revision;
+    snapshot.revision = runtime->revision;
     snapshot.poses.reserve(optimized->optimized_poses.size());
     for (const auto& [index, pose] : optimized->optimized_poses) {
       snapshot.poses.push_back({index, pose.cast<float>()});
@@ -44,11 +44,11 @@ void VisualizationProjector::Publish(
     }
 
     const auto context = std::find_if(
-        session->payload->contexts.begin(), session->payload->contexts.end(),
+        runtime->payload->contexts.begin(), runtime->payload->contexts.end(),
         [&agent](const AgentPipelineCtx& item) {
           return item.agent.id == agent;
         });
-    if (context != session->payload->contexts.end() && context->loop_output) {
+    if (context != runtime->payload->contexts.end() && context->loop_output) {
       const auto append_loops = [&snapshot](const LoopPairVec& loops,
                                             VisualizationEdgeType type) {
         for (const auto& loop : loops) {
@@ -63,7 +63,7 @@ void VisualizationProjector::Publish(
     }
 
     if (include_maps) {
-      const auto path = session->config->root.output_directory /
+      const auto path = runtime->config->root.output_directory /
                         ("global_map_" + agent.Value() + ".pcd");
       std::error_code error;
       if (std::filesystem::is_regular_file(path, error) && !error) {

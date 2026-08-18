@@ -54,7 +54,7 @@ struct AlgorithmExecutionContext {
 
 inline Error WithAlgorithmContext(Error error,
                                   const AlgorithmExecutionContext& context) {
-  error.context.session_revision = context.base_revision;
+  error.context.runtime_revision = context.base_revision;
   if (error.context.stage.empty()) error.context.stage = "algorithm";
   if (error.context.node.empty()) {
     error.context.node =

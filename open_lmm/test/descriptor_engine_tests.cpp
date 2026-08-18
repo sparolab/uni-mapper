@@ -107,7 +107,7 @@ DescriptorPointView Points(float x) {
 }
 
 void CheckContext(const Error& error, const char* operation) {
-  Check(error.context.session_revision == 42,
+  Check(error.context.runtime_revision == 42,
         "descriptor error preserves revision");
   Check(error.context.node == operation,
         "descriptor error preserves operation");

@@ -26,19 +26,19 @@ class AlignmentExecutor {
                     OptimizeStep optimize_step);
 
   [[nodiscard]] Result<ExecutionCandidate> ExecuteStage(
-      std::shared_ptr<const SessionState> committed,
+      std::shared_ptr<const RuntimeState> committed,
       const ExecutionContext& context) const;
   [[nodiscard]] Result<ExecutionCandidate> ReplayLoopDetectThrough(
-      std::shared_ptr<const SessionState> committed,
+      std::shared_ptr<const RuntimeState> committed,
       const AgentId& target_agent, const ExecutionContext& context) const;
 
  private:
   Result<std::shared_ptr<BackendOptimizerBase>> CreateOptimizer(
-      const SessionState& committed) const;
-  static Result<void> ValidateBase(const SessionState& committed,
+      const RuntimeState& committed) const;
+  static Result<void> ValidateBase(const RuntimeState& committed,
                                    const ExecutionContext& context);
-  static Result<std::shared_ptr<const SessionPayload>> BuildPayload(
-      const SessionState& committed, std::vector<AgentPipelineCtx> contexts,
+  static Result<std::shared_ptr<const RuntimePayload>> BuildPayload(
+      const RuntimeState& committed, std::vector<AgentPipelineCtx> contexts,
       std::shared_ptr<SharedDatabase> database,
       std::shared_ptr<BackendOptimizerBase> optimizer);
 

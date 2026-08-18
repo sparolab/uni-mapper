@@ -194,7 +194,6 @@ void IridescenceGui::SynchronizeModel() {
   if (services_.runtime_snapshot) {
     auto snapshot = services_.runtime_snapshot();
     if (!snapshot) return;
-    synchronized_session_ = snapshot.Value().id;
     model_.Synchronize(std::move(snapshot).Value().pipeline);
     config_revision_draft_ = model_.ConfigRevision() + 1;
     for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
@@ -430,11 +429,11 @@ void IridescenceGui::DrawPipelineUi() {
     ImGui::Text("Picked: %.3f %.3f %.3f", (*picked_point_).x(),
                 (*picked_point_).y(), (*picked_point_).z());
   }
-  ImGui::Text("Session nodes");
+  ImGui::Text("Runtime nodes");
   for (const auto& descriptor : node_descriptors_) {
-    if (descriptor.scope != ExecutionScope::kSession) continue;
+    if (descriptor.scope != ExecutionScope::kRuntime) continue;
     if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
-    const std::string label = std::string(descriptor.name) + "##session_node";
+    const std::string label = std::string(descriptor.name) + "##runtime_node";
     if (ImGui::SmallButton(label.c_str()) && services_.submit_node) {
       auto result = services_.submit_node(descriptor.id, std::nullopt);
       command_error_ = result ? std::string{} : result.GetError().Message();
@@ -939,23 +938,18 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
   // authoritative runtime snapshot instead of sending a stale revision.
   const auto current_expected_revision = [&]() -> Result<ExpectedRevision> {
     if (!services_.runtime_snapshot) {
-      if (!synchronized_session_) {
-        return Result<ExpectedRevision>::Failure(Error::InvalidArgument(
-            "configuration session is unavailable"));
-      }
       return Result<ExpectedRevision>::Ok(
-          {model_.SessionRevision(), model_.ConfigRevision()});
+          {model_.RuntimeRevision(), model_.ConfigRevision()});
     }
     auto snapshot = services_.runtime_snapshot();
     if (!snapshot) return Result<ExpectedRevision>::Failure(snapshot.GetError());
-    synchronized_session_ = snapshot.Value().id;
-    if (snapshot.Value().pipeline.session_revision != model_.SessionRevision() ||
+    if (snapshot.Value().pipeline.runtime_revision != model_.RuntimeRevision() ||
         snapshot.Value().pipeline.config_revision != model_.ConfigRevision()) {
       model_.Synchronize(snapshot.Value().pipeline);
       config_revision_draft_ = model_.ConfigRevision() + 1;
     }
     return Result<ExpectedRevision>::Ok(
-        {snapshot.Value().pipeline.session_revision,
+        {snapshot.Value().pipeline.runtime_revision,
          snapshot.Value().pipeline.config_revision});
   };
   if (*config_stage_ == StageId::kDataLoad) {
@@ -963,11 +957,15 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
     auto json = document.CanonicalJson();
     if (!json) return Result<void>::Failure(json.GetError());
     candidate.document_json = std::move(json).Value();
-    if (!services_.replace_session) {
+    if (!services_.replace_root_config) {
       return Result<void>::Failure(
-          Error::InvalidArgument("session replacement is unavailable"));
+          Error::InvalidArgument("root runtime replacement is unavailable"));
     }
-    result = services_.replace_session(std::move(candidate));
+    auto expected = current_expected_revision();
+    if (!expected) return Result<void>::Failure(expected.GetError());
+    auto replaced = services_.replace_root_config(std::move(candidate), expected.Value());
+    result = replaced ? Result<void>::Ok()
+                      : Result<void>::Failure(replaced.GetError());
     if (result) {
       event_queue_->ResetEpoch();
       SynchronizeModel();
@@ -986,14 +984,9 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
       return Result<void>::Failure(
           Error::InvalidArgument("stage reconfiguration is unavailable"));
     }
-    if (!synchronized_session_) {
-      return Result<void>::Failure(
-          Error::InvalidArgument("configuration session is unavailable"));
-    }
     auto expected = current_expected_revision();
     if (!expected) return Result<void>::Failure(expected.GetError());
-    auto applied = services_.apply_config(
-        *synchronized_session_, std::move(candidate), expected.Value());
+    auto applied = services_.apply_config(std::move(candidate), expected.Value());
     result = applied ? Result<void>::Ok()
                      : Result<void>::Failure(applied.GetError());
   } else {
@@ -1007,14 +1000,9 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
       return Result<void>::Failure(
           Error::InvalidArgument("stage reconfiguration is unavailable"));
     }
-    if (!synchronized_session_) {
-      return Result<void>::Failure(
-          Error::InvalidArgument("configuration session is unavailable"));
-    }
     auto expected = current_expected_revision();
     if (!expected) return Result<void>::Failure(expected.GetError());
-    auto applied = services_.apply_config(
-        *synchronized_session_, std::move(candidate), expected.Value());
+    auto applied = services_.apply_config(std::move(candidate), expected.Value());
     result = applied ? Result<void>::Ok()
                      : Result<void>::Failure(applied.GetError());
   }
@@ -1151,7 +1139,7 @@ void IridescenceGui::DrawStageConfigModal() {
     auto result = SaveAndApplyConfig();
     if (result) {
       config_editor_status_ = *config_stage_ == StageId::kDataLoad
-          ? "DataLoad configuration applied to a new session."
+          ? "DataLoad configuration applied to a new runtime."
           : "Stage configuration applied; upstream results were preserved.";
       ImGui::CloseCurrentPopup();
       config_stage_.reset();

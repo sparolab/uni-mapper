@@ -1,4 +1,3 @@
-string session_id
 uint64 job_id
 uint64 sequence
 uint8 event_type

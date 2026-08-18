@@ -22,10 +22,10 @@ struct Error {
     kCancelled,
   };
 
-  enum class Severity : uint8_t { kRecoverable, kFatalSession };
+  enum class Severity : uint8_t { kRecoverable, kFatalRuntime };
 
   struct Context {
-    std::optional<uint64_t> session_revision;
+    std::optional<uint64_t> runtime_revision;
     std::string stage;
     std::string node;
     std::optional<AgentId> agent;
@@ -44,20 +44,20 @@ struct Error {
 
   [[nodiscard]] const std::string& Message() const { return message; }
 
-  Error& MarkFatalSession() & {
-    severity = Severity::kFatalSession;
+  Error& MarkFatalRuntime() & {
+    severity = Severity::kFatalRuntime;
     return *this;
   }
-  Error&& MarkFatalSession() && {
-    severity = Severity::kFatalSession;
+  Error&& MarkFatalRuntime() && {
+    severity = Severity::kFatalRuntime;
     return std::move(*this);
   }
-  Error& WithSessionRevision(uint64_t revision) & {
-    context.session_revision = revision;
+  Error& WithRuntimeRevision(uint64_t revision) & {
+    context.runtime_revision = revision;
     return *this;
   }
-  Error&& WithSessionRevision(uint64_t revision) && {
-    context.session_revision = revision;
+  Error&& WithRuntimeRevision(uint64_t revision) && {
+    context.runtime_revision = revision;
     return std::move(*this);
   }
   Error& WithExecution(std::string stage_name, std::string node_name = {},

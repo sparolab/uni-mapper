@@ -1,13 +1,13 @@
-#include "session_state.hpp"
+#include "runtime_state.hpp"
 
-#include "session_payload_builder.hpp"
+#include "runtime_payload_builder.hpp"
 
 #include <algorithm>
 
 namespace open_lmm {
 namespace {
 
-const AgentPipelineCtx* FindContext(const SessionState& state, const AgentId& agent) {
+const AgentPipelineCtx* FindContext(const RuntimeState& state, const AgentId& agent) {
   if (!state.payload) return nullptr;
   const auto found = std::find_if(
       state.payload->contexts.begin(), state.payload->contexts.end(),
@@ -25,28 +25,28 @@ Result<void> MissingPayload(const ArtifactMetadata& artifact) {
 
 }  // namespace
 
-SessionTransaction::SessionTransaction(
-    std::shared_ptr<const SessionState> base)
-    : base_(std::move(base)), working_(std::make_unique<SessionState>(*base_)) {}
+RuntimeTransaction::RuntimeTransaction(
+    std::shared_ptr<const RuntimeState> base)
+    : base_(std::move(base)), working_(std::make_unique<RuntimeState>(*base_)) {}
 
-uint64_t SessionTransaction::BaseRevision() const { return base_->revision; }
+uint64_t RuntimeTransaction::BaseRevision() const { return base_->revision; }
 
-const std::shared_ptr<const SessionState>& SessionTransaction::Base() const {
+const std::shared_ptr<const RuntimeState>& RuntimeTransaction::Base() const {
   return base_;
 }
 
-SessionState& SessionTransaction::Working() { return *working_; }
+RuntimeState& RuntimeTransaction::Working() { return *working_; }
 
-void SessionTransaction::SetPayload(
-    std::shared_ptr<const SessionPayload> payload) {
+void RuntimeTransaction::SetPayload(
+    std::shared_ptr<const RuntimePayload> payload) {
   working_->payload = std::move(payload);
 }
 
-Result<void> SessionTransaction::Validate() const {
+Result<void> RuntimeTransaction::Validate() const {
   if (!working_->config || !working_->payload ||
       !working_->payload->database || !working_->payload->optimizer) {
     return Result<void>::Failure(
-        Error::InvalidArgument("session transaction has incomplete ownership"));
+        Error::InvalidArgument("runtime transaction has incomplete ownership"));
   }
   auto resident_memory = ValidateResidentMemoryOwnership(
       *working_->payload, base_ ? base_->payload.get() : nullptr);
@@ -102,11 +102,11 @@ Result<void> SessionTransaction::Validate() const {
   return Result<void>::Ok();
 }
 
-Result<std::shared_ptr<const SessionState>> SessionTransaction::Finalize(
+Result<std::shared_ptr<const RuntimeState>> RuntimeTransaction::Finalize(
     const std::shared_ptr<CancellationToken>& cancellation) && {
   if (cancellation && cancellation->IsCancellationRequested()) {
-    return Result<std::shared_ptr<const SessionState>>::Failure(
-        Error::Cancelled("before session commit"));
+    return Result<std::shared_ptr<const RuntimeState>>::Failure(
+        Error::Cancelled("before runtime commit"));
   }
   working_->revision = base_->revision + 1;
   working_->optimizer.processed_agents.clear();
@@ -118,11 +118,11 @@ Result<std::shared_ptr<const SessionState>> SessionTransaction::Finalize(
   }
   auto valid = Validate();
   if (!valid) {
-    return Result<std::shared_ptr<const SessionState>>::Failure(
+    return Result<std::shared_ptr<const RuntimeState>>::Failure(
         valid.GetError());
   }
-  return Result<std::shared_ptr<const SessionState>>::Ok(
-      std::shared_ptr<const SessionState>(std::move(working_)));
+  return Result<std::shared_ptr<const RuntimeState>>::Ok(
+      std::shared_ptr<const RuntimeState>(std::move(working_)));
 }
 
 }  // namespace open_lmm

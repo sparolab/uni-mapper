@@ -5,7 +5,7 @@
 #include <open_lmm/server/nodes/optimize_node.hpp>
 #include <open_lmm/server/bootstrap/algorithm_factory.hpp>
 #include <open_lmm/server/execution/algorithm_context.hpp>
-#include <open_lmm/server/session_payload_builder.hpp>
+#include <open_lmm/server/runtime_payload_builder.hpp>
 
 namespace open_lmm {
 OptimizeExecutor::OptimizeExecutor()
@@ -27,7 +27,7 @@ OptimizeExecutor::OptimizeExecutor(OptimizerFactory optimizer_factory,
       algorithms_(std::make_shared<AlgorithmFactory>()) {}
 
 Result<ExecutionCandidate> OptimizeExecutor::ReplayThrough(
-    std::shared_ptr<const SessionState> committed,
+    std::shared_ptr<const RuntimeState> committed,
     const AgentId& target_agent, const ExecutionContext& runtime) const {
   if (!committed || !committed->config || !committed->config->optimizer ||
       !committed->payload || !committed->payload->database) {
@@ -56,7 +56,7 @@ Result<ExecutionCandidate> OptimizeExecutor::ReplayThrough(
           WithAlgorithmContext(optimizer.GetError(), context));
     }
     Error error = optimizer.GetError();
-    error.WithSessionRevision(committed->revision)
+    error.WithRuntimeRevision(committed->revision)
         .WithExecution("algorithm", "optimize_factory");
     return Result<ExecutionCandidate>::Failure(std::move(error));
   }
@@ -134,7 +134,7 @@ Result<ExecutionCandidate> OptimizeExecutor::ReplayThrough(
     if (item != contexts.end()) item->loop_output.reset();
   }
 
-  SessionPayloadBuilder builder(committed->payload);
+  RuntimePayloadBuilder builder(committed->payload);
   auto payload = builder.SetContexts(std::move(contexts))
                      .SetDatabase(std::move(database))
                      .SetOptimizer(optimizer.Value())

@@ -21,9 +21,9 @@ void Check(bool condition, const char* message) {
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 
-std::shared_ptr<const SessionState> State(const std::vector<AgentId>& agents) {
+std::shared_ptr<const RuntimeState> State(const std::vector<AgentId>& agents) {
   auto database = std::make_shared<SharedDatabase>();
-  auto payload = std::make_shared<SessionPayload>();
+  auto payload = std::make_shared<RuntimePayload>();
   payload->database = database;
   for (const AgentId& agent : agents) {
     auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
@@ -44,7 +44,7 @@ std::shared_ptr<const SessionState> State(const std::vector<AgentId>& agents) {
     optimized->optimized_poses.emplace_back(0, pose);
     database->optimized_data.emplace(agent, optimized);
   }
-  auto state = std::make_shared<SessionState>();
+  auto state = std::make_shared<RuntimeState>();
   state->revision = 5;
   state->ordered_agents = agents;
   state->payload = payload;
@@ -284,7 +284,7 @@ void TestRecoveryRequiredPropagatesFromFileSet() {
 
 int main() {
   Check(ExecutionSpecFor(NodeId::kPoseSave).scope ==
-            ExecutionScope::kSession,
+            ExecutionScope::kRuntime,
         "PoseSave execution scope must remain session-wide");
   TestStagePreparesPoseAndSkipsFallback();
   TestPoseNodeOnly();

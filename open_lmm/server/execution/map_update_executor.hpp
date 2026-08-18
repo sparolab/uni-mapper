@@ -13,9 +13,9 @@ namespace open_lmm {
 class AlgorithmFactory;
 
 // Stateless MapUpdate invocation. Output paths and scheduling policy are
-// explicit command inputs rather than executor-owned session mirrors.
+// explicit command inputs rather than executor-owned runtime mirrors.
 struct MapUpdateExecutionContext {
-  std::shared_ptr<const SessionState> committed;
+  std::shared_ptr<const RuntimeState> committed;
   std::shared_ptr<ResourceGovernor> governor;
   std::shared_ptr<CancellationToken> cancellation;
   std::shared_ptr<const AlgorithmFactory> algorithms;

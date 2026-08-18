@@ -3,7 +3,6 @@
 #include "goal_admission.hpp"
 #include <open_lmm/gui/gui_runtime_host.hpp>
 #include <open_lmm/server/runtime_client.hpp>
-#include <open_lmm/server/runtime_session_client.hpp>
 #include <open_lmm_ros/action/execute_pipeline.hpp>
 #include <open_lmm_ros/msg/execution_event.hpp>
 #include <open_lmm_ros/srv/get_runtime_status.hpp>
@@ -41,10 +40,9 @@ class OpenLMMROS : public rclcpp::Node {
       const std::shared_ptr<GoalHandleExecutePipeline>& goal_handle);
   void HandleStatus(const std::shared_ptr<GetRuntimeStatus::Request>& request,
                     std::shared_ptr<GetRuntimeStatus::Response> response) const;
-  void PublishEvent(const SessionExecutionEvent& event);
+  void PublishEvent(const ExecutionEvent& event);
 
   std::shared_ptr<RuntimeClient> runtime_;
-  std::shared_ptr<RuntimeSessionClient> session_;
   std::unique_ptr<GuiRuntimeHost> gui_host_;
   ExecutionEventSubscription event_subscription_;
   rclcpp::Publisher<open_lmm_ros::msg::ExecutionEvent>::SharedPtr
@@ -54,8 +52,7 @@ class OpenLMMROS : public rclcpp::Node {
   mutable std::mutex action_mutex_;
   std::weak_ptr<GoalHandleExecutePipeline> active_goal_;
   GoalAdmissionGate goal_admission_;
-  std::optional<JobId> active_job_id_;
-  std::optional<SessionId> active_session_id_;
+  std::optional<JobHandle> active_job_;
   std::jthread action_worker_;
 };
 

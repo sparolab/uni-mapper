@@ -28,7 +28,7 @@ Result<void> MapServer::process() {
         receipt.committed_revision <= base_revision ||
         query_revision != receipt.committed_revision) {
       return Result<void>::Failure(Error::InvalidArgument(
-          "batch execution receipt does not match committed session: base=" +
+          "batch execution receipt does not match committed runtime: base=" +
           std::to_string(base_revision) + " receipt_base=" +
           std::to_string(receipt.base_revision) + " receipt_committed=" +
           std::to_string(receipt.committed_revision) + " query=" +
@@ -53,13 +53,18 @@ Result<ConfigApplyReceipt> MapServer::ApplyConfig(
   return executor_->ApplyConfig(candidate, expected, context);
 }
 
-CommittedSessionSnapshot MapServer::Snapshot() const {
+CommittedRuntimeSnapshot MapServer::Snapshot() const {
   return executor_->Snapshot();
 }
 
 Result<VisualizationSnapshot> MapServer::Visualization(
     const AgentId& agent) const {
   return executor_->Visualization(agent);
+}
+
+Result<void> MapServer::InitializeRuntimeRevisions(
+    uint64_t runtime_revision, uint64_t config_revision) {
+  return executor_->InitializeRuntimeRevisions(runtime_revision, config_revision);
 }
 
 Result<void> MapServer::ValidateReady() { return executor_->ValidateReady(); }

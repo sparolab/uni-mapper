@@ -1,8 +1,8 @@
 #include <open_lmm/server/output_repository.hpp>
-#include <open_lmm/server/session_manager.hpp>
-#include <open_lmm/server/session_payload_builder.hpp>
-#include <open_lmm/server/session_state.hpp>
-#include <open_lmm/server/transaction/session_reconfigurer.hpp>
+#include <open_lmm/server/runtime_state_store.hpp>
+#include <open_lmm/server/runtime_payload_builder.hpp>
+#include <open_lmm/server/runtime_state.hpp>
+#include <open_lmm/server/transaction/runtime_reconfigurer.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -45,8 +45,8 @@ class FakeOptimizer final : public BackendOptimizerBase {
   std::set<AgentId> processed_;
 };
 
-std::shared_ptr<const SessionConfig> TestConfig() {
-  auto config = std::make_shared<SessionConfig>();
+std::shared_ptr<const RuntimeConfig> TestConfig() {
+  auto config = std::make_shared<RuntimeConfig>();
   config->data_loader = std::make_shared<const DataLoaderConfig>();
   config->loop_detector = std::make_shared<const LoopDetectorConfig>();
   config->optimizer = std::make_shared<const OptimizerConfig>();
@@ -55,7 +55,7 @@ std::shared_ptr<const SessionConfig> TestConfig() {
   return config;
 }
 
-std::shared_ptr<const SessionState> DataLoadedState() {
+std::shared_ptr<const RuntimeState> DataLoadedState() {
   auto raw = std::make_shared<AgentRawData>();
   raw->agent_id = Id("A");
   raw->odom_poses.push_back(Eigen::Isometry3d::Identity());
@@ -64,13 +64,13 @@ std::shared_ptr<const SessionState> DataLoadedState() {
   AgentPipelineCtx context;
   context.agent = {.id = Id("A"), .role = AgentRole::kAnchor, .order = 0};
   context.raw_data = raw;
-  auto payload = std::make_shared<SessionPayload>();
+  auto payload = std::make_shared<RuntimePayload>();
   payload->contexts.push_back(std::move(context));
   payload->database = std::move(database);
   payload->optimizer = std::make_shared<FakeOptimizer>();
   payload->resident_memory_reservations[Id("A")] =
       std::make_shared<MemoryReservation>();
-  auto state = std::make_shared<SessionState>();
+  auto state = std::make_shared<RuntimeState>();
   state->revision = 7;
   state->config = TestConfig();
   state->ordered_agents = {Id("A")};
@@ -81,7 +81,7 @@ std::shared_ptr<const SessionState> DataLoadedState() {
   return state;
 }
 
-std::shared_ptr<const SessionState> AlignedState() {
+std::shared_ptr<const RuntimeState> AlignedState() {
   auto base = DataLoadedState();
   auto database = std::make_shared<SharedDatabase>();
   database->raw_data = base->payload->database->raw_data;
@@ -96,13 +96,13 @@ std::shared_ptr<const SessionState> AlignedState() {
   loop->accepted_alignment_method = AlignmentMethod::kKissMatcher;
   loop->accepted_alignment_approval = AlignmentApproval::kAutomatic;
   context.loop_output = loop;
-  auto payload = std::make_shared<SessionPayload>();
+  auto payload = std::make_shared<RuntimePayload>();
   payload->contexts.push_back(std::move(context));
   payload->database = std::move(database);
   payload->optimizer = std::make_shared<FakeOptimizer>(std::set<AgentId>{Id("A")});
   payload->resident_memory_reservations =
       base->payload->resident_memory_reservations;
-  auto state = std::make_shared<SessionState>();
+  auto state = std::make_shared<RuntimeState>();
   state->revision = 12;
   state->config = base->config;
   state->ordered_agents = {Id("A")};
@@ -129,13 +129,13 @@ void TestCancelledDataLoadPreservesCommittedRawPayload() {
   const auto* committed_raw =
       base->payload->database->raw_data.at(Id("A")).get();
   const auto committed_artifacts = base->artifacts;
-  SessionTransaction transaction(base);
+  RuntimeTransaction transaction(base);
   auto replacement = std::make_shared<AgentRawData>();
   replacement->agent_id = Id("A");
   replacement->odom_poses.resize(2, Eigen::Isometry3d::Identity());
   auto database = std::make_shared<SharedDatabase>();
   database->raw_data[Id("A")] = replacement;
-  auto payload = std::make_shared<SessionPayload>(*base->payload);
+  auto payload = std::make_shared<RuntimePayload>(*base->payload);
   payload->contexts.front().raw_data = replacement;
   payload->database = std::move(database);
   transaction.SetPayload(std::move(payload));
@@ -157,8 +157,8 @@ void TestCancelledAlignmentPreservesDescriptorPoseAndOptimizer() {
   const auto* committed_pose =
       base->payload->database->optimized_data.at(Id("A")).get();
   const auto* committed_optimizer = base->payload->optimizer.get();
-  SessionTransaction transaction(base);
-  auto payload = std::make_shared<SessionPayload>(*base->payload);
+  RuntimeTransaction transaction(base);
+  auto payload = std::make_shared<RuntimePayload>(*base->payload);
   payload->contexts.front().loop_output =
       std::make_shared<LoopDetectorOutput>();
   auto database = std::make_shared<SharedDatabase>();
@@ -188,8 +188,8 @@ void TestInvalidWorkingStateCannotReplaceCommittedAlignment() {
   auto base = AlignedState();
   const auto* committed_pose =
       base->payload->database->optimized_data.at(Id("A")).get();
-  SessionTransaction transaction(base);
-  auto payload = std::make_shared<SessionPayload>(*base->payload);
+  RuntimeTransaction transaction(base);
+  auto payload = std::make_shared<RuntimePayload>(*base->payload);
   auto invalid_database = std::make_shared<SharedDatabase>();
   invalid_database->raw_data = base->payload->database->raw_data;
   payload->database = std::move(invalid_database);
@@ -245,17 +245,17 @@ void TestOutputRepositoryRollbackAndCommit() {
   fs::remove_all(directory, ignored);
 }
 
-void TestSessionManagerRejectsStaleBaseRevision() {
+void TestRuntimeStateStoreRejectsStaleBaseRevision() {
   auto base = DataLoadedState();
-  SessionManager manager(base);
+  RuntimeStateStore manager(base);
 
-  SessionTransaction first(base);
+  RuntimeTransaction first(base);
   auto first_candidate = std::move(first).Finalize(nullptr);
   Check(first_candidate.IsOk(), "first session candidate finalizes");
   Check(manager.Commit(base, std::move(first_candidate).Value()).IsOk(),
         "first session candidate commits");
 
-  SessionTransaction stale(base);
+  RuntimeTransaction stale(base);
   auto stale_candidate = std::move(stale).Finalize(nullptr);
   Check(stale_candidate.IsOk(), "stale candidate can finish local validation");
   auto conflict = manager.Commit(base, std::move(stale_candidate).Value());
@@ -266,8 +266,8 @@ void TestSessionManagerRejectsStaleBaseRevision() {
 
 void TestPostFinalizeCancellationDoesNotRollbackCommit() {
   auto base = DataLoadedState();
-  SessionManager manager(base);
-  SessionTransaction transaction(base);
+  RuntimeStateStore manager(base);
+  RuntimeTransaction transaction(base);
   auto candidate = std::move(transaction).Finalize(nullptr);
   Check(candidate.IsOk(), "candidate finalizes before late cancellation");
   auto cancellation = std::make_shared<CancellationToken>();
@@ -280,8 +280,8 @@ void TestPostFinalizeCancellationDoesNotRollbackCommit() {
 
 void TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow() {
   auto base = DataLoadedState();
-  SessionManager manager(base);
-  SessionTransaction rejected(base);
+  RuntimeStateStore manager(base);
+  RuntimeTransaction rejected(base);
   auto rejected_candidate = std::move(rejected).Finalize(nullptr);
   bool installed = false;
   auto file_failure = manager.CommitWithBarrier(
@@ -292,12 +292,12 @@ void TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow() {
   Check(!file_failure && installed && manager.Snapshot().get() == base.get(),
         "file barrier failure preserves the committed session state");
 
-  SessionTransaction accepted(base);
+  RuntimeTransaction accepted(base);
   auto accepted_candidate = std::move(accepted).Finalize(nullptr);
   Check(manager.Commit(base, std::move(accepted_candidate).Value()).IsOk(),
         "advance session before stale barrier attempt");
   installed = false;
-  SessionTransaction stale(base);
+  RuntimeTransaction stale(base);
   auto stale_candidate = std::move(stale).Finalize(nullptr);
   auto conflict = manager.CommitWithBarrier(
       base, std::move(stale_candidate).Value(), [&] {
@@ -310,7 +310,7 @@ void TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow() {
 
 void TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled() {
   auto base = DataLoadedState();
-  auto reused = SessionPayloadBuilder(base->payload).Build();
+  auto reused = RuntimePayloadBuilder(base->payload).Build();
   Check(reused.IsOk(), "payload builder accepts shared raw ownership");
   Check(reused.Value()->resident_memory_reservations.at(Id("A")).get() ==
             base->payload->resident_memory_reservations.at(Id("A")).get(),
@@ -323,7 +323,7 @@ void TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled() {
   database->raw_data[Id("A")] = replacement;
   auto contexts = base->payload->contexts;
   contexts.front().raw_data = replacement;
-  auto mismatched = SessionPayloadBuilder(base->payload)
+  auto mismatched = RuntimePayloadBuilder(base->payload)
                         .SetContexts(std::move(contexts))
                         .SetDatabase(std::move(database))
                         .Build();
@@ -335,7 +335,7 @@ void TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled() {
   auto replacement_contexts = base->payload->contexts;
   replacement_contexts.front().raw_data = replacement;
   auto replaced =
-      SessionPayloadBuilder(base->payload)
+      RuntimePayloadBuilder(base->payload)
           .SetContexts(std::move(replacement_contexts))
           .SetDatabase(std::move(replacement_database))
           .SetResidentReservation(Id("A"),
@@ -355,7 +355,7 @@ void TestRejectedReconfigurePreservesCommittedResidentOwnership() {
 
   // The fixture intentionally has no canonical config documents, so prepare
   // must fail before a candidate can be published or committed.
-  const auto rejected = SessionReconfigurer().Prepare(
+  const auto rejected = RuntimeReconfigurer().Prepare(
       base, ConfigDomain::kOptimizer, base->config->revision + 1);
   Check(!rejected, "invalid reconfigure snapshot is rejected");
   Check(base->revision == revision && base->artifacts.size() == artifacts.size() &&
@@ -379,7 +379,7 @@ int main() {
   open_lmm::TestCancelledAlignmentPreservesDescriptorPoseAndOptimizer();
   open_lmm::TestInvalidWorkingStateCannotReplaceCommittedAlignment();
   open_lmm::TestOutputRepositoryRollbackAndCommit();
-  open_lmm::TestSessionManagerRejectsStaleBaseRevision();
+  open_lmm::TestRuntimeStateStoreRejectsStaleBaseRevision();
   open_lmm::TestPostFinalizeCancellationDoesNotRollbackCommit();
   open_lmm::TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow();
   open_lmm::TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled();

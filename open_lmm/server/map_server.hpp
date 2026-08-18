@@ -12,7 +12,7 @@ namespace open_lmm {
 class StageExecutor;
 class ResourceGovernor;
 
-// Public runtime façade. Session ownership, transaction commits, algorithm
+// Public runtime façade. Runtime ownership, transaction commits, algorithm
 // assembly, output persistence and visualization snapshots live in the
 // internal StageExecutor component.
 class MapServer final : public StageRuntimePort {
@@ -34,9 +34,11 @@ class MapServer final : public StageRuntimePort {
   Result<ConfigApplyReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context) override;
-  [[nodiscard]] CommittedSessionSnapshot Snapshot() const override;
+  [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const override;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const override;
+  Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
+                                          uint64_t config_revision) override;
   Result<void> ValidateReady();
 
  private:

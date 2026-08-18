@@ -142,18 +142,13 @@ void TestBackpressuredSubmissionCancellation() {
 void TestResourceBudget() {
   bool rejected_zero = false;
   try {
-    ResourceGovernor invalid(ResourceBudget{1, 0, 1, 1});
+    ResourceGovernor invalid(ResourceBudget{0, 1, 1});
   } catch (const std::invalid_argument&) {
     rejected_zero = true;
   }
   Check(rejected_zero, "zero resource budget is rejected");
 
-  ResourceGovernor governor(ResourceBudget{2, 3, 2, 100});
-  Check(governor.TryAcquireSession() && governor.TryAcquireSession() &&
-            !governor.TryAcquireSession(),
-        "session admission respects budget");
-  governor.ReleaseSession();
-  governor.ReleaseSession();
+  ResourceGovernor governor(ResourceBudget{3, 2, 100});
   Check(governor.TryReserveMemory(60) &&
             !governor.TryReserveMemory(50) &&
             governor.ReservedMemoryBytes() == 60 &&
@@ -162,7 +157,7 @@ void TestResourceBudget() {
   governor.ReleaseMemory(60);
   Check(governor.ReservedMemoryBytes() == 0 &&
             governor.AgentExecutor().Snapshot().worker_count == 2,
-        "CPU thread budget caps agent executor workers");
+        "CPU thread budget caps one-runtime agent executor workers");
 
   {
     auto reservation = governor.ReserveMemory(

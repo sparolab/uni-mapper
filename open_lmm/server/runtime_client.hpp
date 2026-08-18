@@ -7,62 +7,45 @@
 #include <open_lmm/common/visualization_snapshot.hpp>
 
 #include <cstddef>
-#include <filesystem>
+#include <functional>
 #include <memory>
-#include <string>
+#include <optional>
 #include <vector>
 
 namespace open_lmm {
 
-struct ClientSessionSnapshot {
-  SessionId id;
-  std::string label;
-  RuntimeSessionState state = RuntimeSessionState::kCreating;
-  std::filesystem::path output_directory;
-};
-
+// Stable PImpl façade for the one active runtime in this process.
 class RuntimeClient {
  public:
-  explicit RuntimeClient(std::size_t maximum_sessions = 8);
+  explicit RuntimeClient(std::size_t max_agent_tasks = 2);
   ~RuntimeClient();
   RuntimeClient(RuntimeClient&&) noexcept;
   RuntimeClient& operator=(RuntimeClient&&) noexcept;
   RuntimeClient(const RuntimeClient&) = delete;
   RuntimeClient& operator=(const RuntimeClient&) = delete;
 
-  Result<SessionId> CreateSession(const BootstrapRequest& request);
-  Result<SessionId> CreateSession(const BootstrapRequest& request,
-                                  const ConfigCandidate& root_candidate);
-  Result<RuntimeSessionReplacement> ReplaceSession(
-      const SessionId& previous_session, const BootstrapRequest& request,
-      const ConfigCandidate& root_candidate,
-      std::function<void(const SessionExecutionEvent&)> callback);
-  Result<JobId> Submit(const SessionId& session_id,
-                       const ExecutionRequest& request);
-  Result<JobId> SubmitRunAll(const SessionId& session_id);
-  Result<void> Cancel(const SessionId& session_id, JobId job_id);
-  Result<void> Wait(const SessionId& session_id, JobId job_id);
-  Result<ClientSessionSnapshot> Snapshot(const SessionId& session_id) const;
-  Result<RuntimeSessionSnapshot> RuntimeSnapshot(
-      const SessionId& session_id) const;
-  Result<std::vector<NodeDescriptor>> NodeDescriptors(
-      const SessionId& session_id) const;
-  Result<open_lmm::VisualizationSnapshot> VisualizationSnapshot(
-      const SessionId& session_id, const AgentId& agent) const;
-  Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>
-  AlignmentFeedbackSnapshot(const SessionId& session_id) const;
-  Result<void> RespondToAlignment(const SessionId& session_id, JobId job_id,
-                                  AlignmentResponse response);
-  Result<void> SetAlignmentFeedbackEnabled(const SessionId& session_id,
-                                           bool enabled);
-  Result<ConfigApplyReceipt> ApplyConfig(
-      const SessionId& session_id, const ConfigCandidate& candidate,
+  Result<void> Open(const BootstrapRequest& request);
+  Result<void> Open(const BootstrapRequest& request,
+                    const ConfigCandidate& root_candidate);
+  Result<RuntimeReplaceReceipt> ReplaceRootConfig(
+      const BootstrapRequest& request, const ConfigCandidate& root_candidate,
       const ExpectedRevision& expected);
+  Result<JobHandle> Submit(const ExecutionRequest& request);
+  Result<JobHandle> SubmitRunAll();
+  Result<void> Cancel(JobHandle job);
+  Result<void> Wait(JobHandle job);
+  Result<RuntimeSnapshot> Snapshot() const;
+  Result<std::vector<NodeDescriptor>> NodeDescriptors() const;
+  Result<VisualizationSnapshot> Visualization(const AgentId& agent) const;
+  Result<std::optional<AlignmentFeedbackSnapshot>> AlignmentFeedback() const;
+  Result<void> RespondToAlignment(JobHandle job, AlignmentResponse response);
+  Result<void> SetAlignmentFeedbackEnabled(bool enabled);
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected);
   Result<ExecutionEventSubscription> SubscribeEvents(
-      const SessionId& session_id,
-      std::function<void(const SessionExecutionEvent&)> callback);
-  Result<void> CloseSession(const SessionId& session_id, CloseMode mode);
-  [[nodiscard]] std::vector<SessionId> SessionIds() const;
+      std::function<void(const ExecutionEvent&)> callback);
+  Result<void> Close(CloseMode mode = CloseMode::kCancelAndWait);
+  [[nodiscard]] bool IsOpen() const;
 
  private:
   struct Impl;

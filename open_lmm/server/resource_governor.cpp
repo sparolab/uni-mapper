@@ -32,11 +32,10 @@ void Subtract(const std::shared_ptr<std::atomic<uint64_t>>& counter,
   }
 }
 
-ResourceBudget SessionOnlyBudget(std::size_t maximum_sessions) {
+ResourceBudget TaskOnlyBudget(std::size_t max_agent_tasks) {
   ResourceBudget budget;
-  budget.max_active_sessions = maximum_sessions;
-  budget.max_agent_tasks = 1;
-  budget.max_cpu_threads = 1;
+  budget.max_agent_tasks = max_agent_tasks;
+  budget.max_cpu_threads = max_agent_tasks;
   return budget;
 }
 
@@ -118,35 +117,16 @@ void MemoryReservation::Reset() noexcept {
   failure_counter_.reset();
 }
 
-ResourceGovernor::ResourceGovernor(std::size_t maximum_sessions)
-    : ResourceGovernor(SessionOnlyBudget(maximum_sessions)) {}
+ResourceGovernor::ResourceGovernor(std::size_t max_agent_tasks)
+    : ResourceGovernor(TaskOnlyBudget(max_agent_tasks)) {}
 
 ResourceGovernor::ResourceGovernor(ResourceBudget budget)
     : budget_(budget),
       agent_executor_(EffectiveWorkers(budget),
                       EffectiveWorkers(budget)) {
-  if (budget.max_active_sessions == 0 || budget.max_agent_tasks == 0 ||
-      budget.max_cpu_threads == 0 || budget.soft_memory_bytes == 0) {
+  if (budget.max_agent_tasks == 0 || budget.max_cpu_threads == 0 ||
+      budget.soft_memory_bytes == 0) {
     throw std::invalid_argument("resource budget values must be positive");
-  }
-}
-
-bool ResourceGovernor::TryAcquireSession() noexcept {
-  std::size_t current = active_sessions_.load(std::memory_order_acquire);
-  while (current < budget_.max_active_sessions) {
-    if (active_sessions_.compare_exchange_weak(
-            current, current + 1, std::memory_order_acq_rel)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void ResourceGovernor::ReleaseSession() noexcept {
-  std::size_t current = active_sessions_.load(std::memory_order_acquire);
-  while (current != 0 &&
-         !active_sessions_.compare_exchange_weak(
-             current, current - 1, std::memory_order_acq_rel)) {
   }
 }
 

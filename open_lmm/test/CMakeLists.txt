@@ -119,15 +119,15 @@ target_link_libraries(open_lmm_runtime_service_verify PRIVATE
   open_lmm_map_server)
 openlmm_set_global_target_properties(open_lmm_runtime_service_verify)
 
-add_executable(open_lmm_session_transaction_tests
-  session_transaction_tests.cpp
+add_executable(open_lmm_runtime_transaction_tests
+  runtime_transaction_tests.cpp
 )
-target_link_libraries(open_lmm_session_transaction_tests PRIVATE
+target_link_libraries(open_lmm_runtime_transaction_tests PRIVATE
   open_lmm_map_server
 )
-openlmm_set_global_target_properties(open_lmm_session_transaction_tests)
-add_test(NAME open_lmm_session_transaction_tests
-         COMMAND open_lmm_session_transaction_tests)
+openlmm_set_global_target_properties(open_lmm_runtime_transaction_tests)
+add_test(NAME open_lmm_runtime_transaction_tests
+         COMMAND open_lmm_runtime_transaction_tests)
 
 add_executable(open_lmm_config_transaction_tests
   config_transaction_tests.cpp
@@ -167,15 +167,15 @@ target_link_libraries(open_lmm_save_executor_tests PRIVATE
 openlmm_set_global_target_properties(open_lmm_save_executor_tests)
 add_test(NAME open_lmm_save_executor_tests COMMAND open_lmm_save_executor_tests)
 
-add_executable(open_lmm_session_bootstrapper_tests
-  session_bootstrapper_tests.cpp
+add_executable(open_lmm_runtime_bootstrapper_tests
+  runtime_bootstrapper_tests.cpp
 )
-target_link_libraries(open_lmm_session_bootstrapper_tests PRIVATE
+target_link_libraries(open_lmm_runtime_bootstrapper_tests PRIVATE
   open_lmm_map_server
 )
-openlmm_set_global_target_properties(open_lmm_session_bootstrapper_tests)
-add_test(NAME open_lmm_session_bootstrapper_tests
-         COMMAND open_lmm_session_bootstrapper_tests)
+openlmm_set_global_target_properties(open_lmm_runtime_bootstrapper_tests)
+add_test(NAME open_lmm_runtime_bootstrapper_tests
+         COMMAND open_lmm_runtime_bootstrapper_tests)
 add_executable(open_lmm_execution_spec_tests
   execution_spec_tests.cpp
 )
@@ -370,9 +370,9 @@ set_tests_properties(
   open_lmm_pipeline_controller_tests
   open_lmm_runtime_service_tests
   open_lmm_bounded_executor_tests
-  open_lmm_session_transaction_tests
+  open_lmm_runtime_transaction_tests
   open_lmm_config_transaction_tests
-  open_lmm_session_bootstrapper_tests
+  open_lmm_runtime_bootstrapper_tests
   open_lmm_execution_spec_tests
   open_lmm_controller_concurrency_tests
   open_lmm_map_alignment_coordinator_tests

@@ -20,7 +20,7 @@ enum class ConfigDomain : uint8_t {
 };
 
 struct ExpectedRevision {
-  uint64_t session_revision = 0;
+  uint64_t runtime_revision = 0;
   uint64_t config_revision = 0;
 };
 
@@ -37,9 +37,16 @@ struct ConfigCandidate {
 struct ConfigApplyReceipt {
   uint64_t previous_config_revision = 0;
   uint64_t config_revision = 0;
-  uint64_t base_session_revision = 0;
-  uint64_t session_revision = 0;
+  uint64_t base_runtime_revision = 0;
+  uint64_t runtime_revision = 0;
   std::vector<AgentId> affected_agents;
+};
+
+struct RuntimeReplaceReceipt {
+  uint64_t previous_runtime_revision = 0;
+  uint64_t previous_config_revision = 0;
+  uint64_t runtime_revision = 0;
+  uint64_t config_revision = 0;
 };
 
 }  // namespace open_lmm

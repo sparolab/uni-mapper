@@ -1,7 +1,7 @@
 #include <open_lmm/server/bootstrap/algorithm_factory.hpp>
-#include <open_lmm/server/bootstrap/session_bootstrapper.hpp>
+#include <open_lmm/server/bootstrap/runtime_bootstrapper.hpp>
 #include <open_lmm/server/execution/algorithm_context.hpp>
-#include <open_lmm/server/transaction/session_reconfigurer.hpp>
+#include <open_lmm/server/transaction/runtime_reconfigurer.hpp>
 
 #include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
 #include <open_lmm/core/data_loader/data_loader_base.hpp>
@@ -43,7 +43,7 @@ fs::path TemporaryDirectory() {
   return path;
 }
 
-SessionBootstrapRequest Request(
+RuntimeBootstrapRequest Request(
     const fs::path& config, std::optional<fs::path> output,
     std::shared_ptr<CancellationToken> cancellation) {
   auto snapshot = LoadBootstrapConfig(config);
@@ -177,13 +177,13 @@ void TestAlgorithmFactoryNormalizesFaults() {
 }
 
 void TestAlgorithmContextUsesDocumentFingerprint() {
-  auto documents = std::make_shared<SessionConfigDocuments>();
+  auto documents = std::make_shared<RuntimeConfigDocuments>();
   documents->data_loader.canonical_json = R"({"domain":"loader"})";
   documents->dynamic_remover.canonical_json = R"({"domain":"remover"})";
-  auto config = std::make_shared<SessionConfig>();
+  auto config = std::make_shared<RuntimeConfig>();
   config->documents = documents;
   config->fingerprint = "alignment-wide";
-  SessionState state;
+  RuntimeState state;
   state.revision = 9;
   state.config = config;
   ExecutionContext command{std::make_shared<CancellationToken>(), {}, 9};
@@ -202,8 +202,8 @@ void TestBootstrapSnapshotAndCache() {
   WriteFixture(root);
   const fs::path output = root / "chosen_output";
   auto factory = std::make_shared<TrackingFactory>();
-  SessionBootstrapper bootstrapper(factory);
-  const SessionBootstrapRequest request = Request(
+  RuntimeBootstrapper bootstrapper(factory);
+  const RuntimeBootstrapRequest request = Request(
       root / "config", output, std::make_shared<CancellationToken>());
   auto first = bootstrapper.Bootstrap(request);
   if (!first) std::cerr << first.GetError().Message() << '\n';
@@ -253,10 +253,10 @@ void TestBootstrapSnapshotAndCache() {
   }
 
   const std::string fingerprint =
-      state.config->alignment_artifacts->session_fingerprint;
+      state.config->alignment_artifacts->runtime_fingerprint;
   WriteJson(output / "map_alignment_cache.json",
             {{"version", 3},
-             {"session_fingerprint", fingerprint},
+             {"runtime_fingerprint", fingerprint},
              {"alignments",
               {{{"approval", "user"},
                 {"source_agent", "follower"},
@@ -281,7 +281,7 @@ void TestCancellationBeforeSideEffects() {
   WriteFixture(root);
   auto cancellation = std::make_shared<CancellationToken>();
   cancellation->Request();
-  SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+  RuntimeBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
   auto result = bootstrapper.Bootstrap(
       Request(root / "config", root / "cancelled_output", cancellation));
   Check(!result && result.GetError().code == Error::Code::kCancelled &&
@@ -303,7 +303,7 @@ void TestEveryModuleReadIsBounded() {
       std::ofstream output(root / module, std::ios::binary | std::ios::trunc);
       output << std::string(SchemaLimits{}.maximum_document_bytes + 1U, ' ');
     }
-    SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+    RuntimeBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
     auto result = bootstrapper.Bootstrap(Request(
         root / "config", root / "bounded_output",
         std::make_shared<CancellationToken>()));
@@ -326,7 +326,7 @@ void TestInvalidInputsDoNotPublishManifest() {
   std::ofstream(manifest) << "existing manifest\n";
   fs::remove(root / "data/follower/Scans/000000.pcd");
 
-  SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+  RuntimeBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
   auto existing = bootstrapper.Bootstrap(Request(
       root / "config", existing_output,
       std::make_shared<CancellationToken>()));
@@ -356,7 +356,7 @@ void TestManifestPreflightFailureCleansTemporaryFile() {
   std::ofstream(output / "agent_manifest.json.open_lmm_backup")
       << "stale backup\n";
 
-  SessionBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+  RuntimeBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
   auto result = bootstrapper.Bootstrap(Request(
       root / "config", output, std::make_shared<CancellationToken>()));
   Check(!result && !fs::exists(output / "agent_manifest.json.tmp"),
@@ -381,6 +381,6 @@ int main() {
   TestEveryModuleReadIsBounded();
   TestInvalidInputsDoNotPublishManifest();
   TestManifestPreflightFailureCleansTemporaryFile();
-  std::cout << "SessionBootstrapper tests passed\n";
+  std::cout << "RuntimeBootstrapper tests passed\n";
   return EXIT_SUCCESS;
 }

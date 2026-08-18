@@ -48,7 +48,6 @@ class MemoryReservation {
 };
 
 struct ResourceBudget {
-  std::size_t max_active_sessions = 8;
   std::size_t max_agent_tasks = 2;
   std::size_t max_cpu_threads = 2;
   uint64_t soft_memory_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
@@ -56,11 +55,9 @@ struct ResourceBudget {
 
 class ResourceGovernor {
  public:
-  explicit ResourceGovernor(std::size_t maximum_sessions);
+  explicit ResourceGovernor(std::size_t max_agent_tasks);
   explicit ResourceGovernor(ResourceBudget budget);
 
-  [[nodiscard]] bool TryAcquireSession() noexcept;
-  void ReleaseSession() noexcept;
   [[nodiscard]] bool TryReserveMemory(uint64_t bytes) noexcept;
   void ReleaseMemory(uint64_t bytes) noexcept;
   Result<MemoryReservation> ReserveMemory(
@@ -76,12 +73,6 @@ class ResourceGovernor {
       const std::shared_ptr<CancellationToken>& cancellation);
   void ReleaseHeavyMemoryPhase() noexcept;
 
-  [[nodiscard]] std::size_t ActiveSessions() const noexcept {
-    return active_sessions_.load(std::memory_order_acquire);
-  }
-  [[nodiscard]] std::size_t MaximumSessions() const noexcept {
-    return budget_.max_active_sessions;
-  }
   [[nodiscard]] uint64_t ReservedMemoryBytes() const noexcept {
     return reserved_memory_bytes_->load(std::memory_order_acquire);
   }
@@ -102,7 +93,6 @@ class ResourceGovernor {
 
  private:
   ResourceBudget budget_;
-  std::atomic<std::size_t> active_sessions_{0};
   std::shared_ptr<std::atomic<uint64_t>> reserved_memory_bytes_ =
       std::make_shared<std::atomic<uint64_t>>(0);
   std::array<std::shared_ptr<std::atomic<uint64_t>>, 3>

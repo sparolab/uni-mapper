@@ -7,7 +7,7 @@
 #include <open_lmm/server/bootstrap/algorithm_factory.hpp>
 #include <open_lmm/server/execution/algorithm_context.hpp>
 #include <open_lmm/server/stage_runner.hpp>
-#include <open_lmm/server/session_payload_builder.hpp>
+#include <open_lmm/server/runtime_payload_builder.hpp>
 
 namespace open_lmm {
 namespace {
@@ -212,7 +212,7 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
     }
     reservations.emplace(context.agent.id, reserved[index]);
   }
-  SessionPayloadBuilder builder(input.committed->payload);
+  RuntimePayloadBuilder builder(input.committed->payload);
   auto built = builder.SetContexts(std::move(input.contexts))
                    .SetDatabase(std::move(input.database))
                    .SetOptimizer(std::move(input.optimizer))
@@ -325,7 +325,7 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
   auto reservations =
       input.committed->payload->resident_memory_reservations;
   reservations[agent] = std::move(reservation);
-  SessionPayloadBuilder builder(input.committed->payload);
+  RuntimePayloadBuilder builder(input.committed->payload);
   auto built = builder.SetContexts(std::move(contexts))
                    .SetDatabase(std::move(database))
                    .SetOptimizer(std::move(input.optimizer))

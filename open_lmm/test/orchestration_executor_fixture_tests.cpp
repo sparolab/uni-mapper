@@ -51,13 +51,13 @@ class EmptyIndex final : public DescriptorIndex {
   }
 };
 
-std::shared_ptr<const SessionState> State() {
+std::shared_ptr<const RuntimeState> State() {
   const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
-  auto config = std::make_shared<SessionConfig>();
+  auto config = std::make_shared<RuntimeConfig>();
   config->loop_detector = std::make_shared<const LoopDetectorConfig>();
   config->optimizer = std::make_shared<const OptimizerConfig>();
   auto database = std::make_shared<SharedDatabase>();
-  auto payload = std::make_shared<SessionPayload>();
+  auto payload = std::make_shared<RuntimePayload>();
   for (std::size_t index = 0; index < agents.size(); ++index) {
     auto raw = std::make_shared<AgentRawData>();
     raw->agent_id = agents[index];
@@ -77,7 +77,7 @@ std::shared_ptr<const SessionState> State() {
   }
   payload->database = database;
   payload->optimizer = std::make_shared<FakeOptimizer>();
-  auto state = std::make_shared<SessionState>();
+  auto state = std::make_shared<RuntimeState>();
   state->revision = 41;
   state->config = std::move(config);
   state->ordered_agents = agents;
@@ -182,12 +182,12 @@ void TestOptimizeReplayClearsSuffixAndHonorsCancellation() {
 }
 
 void TestArtifactStoreRehydratesOnlyFromCommittedAuthority() {
-  auto mutable_state = std::make_shared<SessionState>(*State());
-  auto config = std::make_shared<SessionConfig>(*mutable_state->config);
+  auto mutable_state = std::make_shared<RuntimeState>(*State());
+  auto config = std::make_shared<RuntimeConfig>(*mutable_state->config);
   auto metadata = std::make_shared<AlignmentArtifactMetadata>();
   metadata->cache_path = "/tmp/alignment-cache.json";
   metadata->input_fingerprints[Id("A")] = "input-a";
-  metadata->session_fingerprint = "session";
+  metadata->runtime_fingerprint = "session";
   config->fingerprint = "config";
   config->alignment_artifacts = metadata;
   mutable_state->config = config;
@@ -196,13 +196,13 @@ void TestArtifactStoreRehydratesOnlyFromCommittedAuthority() {
   StoredAlignment approval;
   approval.proposal.source_agent = Id("B");
   database->stored_alignments[Id("B")] = approval;
-  auto payload = std::make_shared<SessionPayload>(*mutable_state->payload);
+  auto payload = std::make_shared<RuntimePayload>(*mutable_state->payload);
   payload->database = database;
   mutable_state->payload = payload;
 
   auto store = AlignmentArtifactStore::FromCommitted(*mutable_state);
   Check(store && store.Value().Identity().config_fingerprint == "config" &&
-            store.Value().Identity().session_fingerprint == "session" &&
+            store.Value().Identity().runtime_fingerprint == "session" &&
             store.Value().Cached().contains(Id("B")),
         "artifact store is reconstructed from committed metadata and payload");
 }

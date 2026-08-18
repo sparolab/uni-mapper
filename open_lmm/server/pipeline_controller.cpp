@@ -21,7 +21,7 @@ std::string StageName(StageId stage) {
 }
 
 Error AddExecutionContext(
-    Error error, const std::shared_ptr<SessionQueryPort>& query_port,
+    Error error, const std::shared_ptr<RuntimeQueryPort>& query_port,
     StageId stage,
     std::optional<NodeId> node = std::nullopt,
     std::optional<AgentId> agent = std::nullopt) {
@@ -30,7 +30,7 @@ Error AddExecutionContext(
   error.WithExecution(StageName(stage), std::move(node_name), agent);
   try {
     if (query_port) {
-      error.WithSessionRevision(query_port->Snapshot().revision);
+      error.WithRuntimeRevision(query_port->Snapshot().revision);
     }
   } catch (...) {
     // Preserve the original execution error if diagnostic snapshotting fails.
@@ -72,7 +72,7 @@ PipelineController::PipelineController(std::shared_ptr<StageRuntimePort> port)
 
 PipelineController::PipelineController(
     std::shared_ptr<StageCommandPort> command_port,
-    std::shared_ptr<SessionQueryPort> query_port)
+    std::shared_ptr<RuntimeQueryPort> query_port)
     : command_port_(std::move(command_port)),
       query_port_(std::move(query_port)),
       event_subscribers_(std::make_shared<ExecutionEventSubscriberRegistry>()),
@@ -93,16 +93,16 @@ PipelineController::PipelineController(
       });
   if (command_port_ && query_port_) {
     cancellation_capability_ = command_port_->CancellationMetadata();
-    synchronizeCommittedSession(query_port_);
+    synchronizeCommittedRuntime(query_port_);
   }
 }
 
-void PipelineController::synchronizeCommittedSession(
-    const std::shared_ptr<SessionQueryPort>& query_port) {
+void PipelineController::synchronizeCommittedRuntime(
+    const std::shared_ptr<RuntimeQueryPort>& query_port) {
   if (!query_port) return;
-  CommittedSessionSnapshot session;
+  CommittedRuntimeSnapshot runtime;
   try {
-    session = query_port->Snapshot();
+    runtime = query_port->Snapshot();
   } catch (const std::exception&) {
     return;
   } catch (...) {
@@ -110,22 +110,22 @@ void PipelineController::synchronizeCommittedSession(
   }
   {
     std::lock_guard lock(mutex_);
-    committed_session_ = session;
-    agents_ = session.ordered_agents;
-    config_revision_ = session.config_revision;
-    committed_session_revision_ = session.revision;
+    committed_runtime_ = runtime;
+    agents_ = runtime.ordered_agents;
+    config_revision_ = runtime.config_revision;
+    committed_runtime_revision_ = runtime.revision;
   }
 }
 
 Result<void> PipelineController::acceptExecutionReceipt(
     const ExecutionReceipt& receipt, uint64_t sent_base_revision,
-    const std::shared_ptr<SessionQueryPort>& query_port) {
+    const std::shared_ptr<RuntimeQueryPort>& query_port) {
   auto fail_protocol = [this](std::string message,
                               std::optional<uint64_t> observed_revision =
                                   std::nullopt) {
     Error error = Error::InvalidArgument(std::move(message));
-    error.MarkFatalSession();
-    if (observed_revision) error.WithSessionRevision(*observed_revision);
+    error.MarkFatalRuntime();
+    if (observed_revision) error.WithRuntimeRevision(*observed_revision);
     {
       std::lock_guard lock(mutex_);
       protocol_failure_ = error;
@@ -134,43 +134,43 @@ Result<void> PipelineController::acceptExecutionReceipt(
   };
   if (!query_port) {
     return fail_protocol(
-        "session query port is unavailable after successful execution");
+        "runtime query port is unavailable after successful execution");
   }
-  CommittedSessionSnapshot session;
+  CommittedRuntimeSnapshot runtime;
   try {
-    session = query_port->Snapshot();
+    runtime = query_port->Snapshot();
   } catch (const std::exception& error) {
     return fail_protocol(std::string(
-        "session query snapshot failed after successful execution: ") +
+        "runtime query snapshot failed after successful execution: ") +
                          error.what());
   } catch (...) {
     return fail_protocol(
-        "session query snapshot failed after successful execution");
+        "runtime query snapshot failed after successful execution");
   }
   // Snapshot publication is the committed authority.  Publish it locally even
   // when the receipt is malformed so a post-commit protocol failure cannot
   // leave the controller displaying the pre-command artifacts/config.
   {
     std::lock_guard lock(mutex_);
-    committed_session_ = session;
-    agents_ = session.ordered_agents;
-    config_revision_ = session.config_revision;
-    committed_session_revision_ = session.revision;
+    committed_runtime_ = runtime;
+    agents_ = runtime.ordered_agents;
+    config_revision_ = runtime.config_revision;
+    committed_runtime_revision_ = runtime.revision;
   }
   if (receipt.base_revision != sent_base_revision) {
     return fail_protocol(
         "execution receipt base revision does not match the command context",
-        session.revision);
+        runtime.revision);
   }
   if (receipt.committed_revision <= receipt.base_revision) {
     return fail_protocol(
         "successful execution did not advance the committed revision",
-        session.revision);
+        runtime.revision);
   }
-  if (session.revision != receipt.committed_revision) {
+  if (runtime.revision != receipt.committed_revision) {
     return fail_protocol(
         "query snapshot revision does not match the execution receipt",
-        session.revision);
+        runtime.revision);
   }
   return Result<void>::Ok();
 }
@@ -222,7 +222,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
     cancel_requested_ = false;
     cancellation_ = cancellation;
     execution_context = {
-        cancellation, alignment_feedback_, committed_session_revision_};
+        cancellation, alignment_feedback_, committed_runtime_revision_};
   }
 
   // Joining is deliberately outside both controller mutexes. The queued job
@@ -319,7 +319,7 @@ Result<uint64_t> PipelineController::SubmitNode(
     ExecutionContext command_context = context;
     {
       std::lock_guard lock(mutex_);
-      command_context.base_revision = committed_session_.revision;
+      command_context.base_revision = committed_runtime_.revision;
     }
     auto result = command_port_->Execute(
         ExecutionCommand::Node(node, agent), command_context);
@@ -363,7 +363,7 @@ Result<uint64_t> PipelineController::SubmitNode(
 Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
                                              uint64_t revision) {
   std::shared_ptr<StageCommandPort> command_port;
-  std::shared_ptr<SessionQueryPort> query_port;
+  std::shared_ptr<RuntimeQueryPort> query_port;
   uint64_t base_revision = 0;
   {
     std::lock_guard command_lock(command_mutex_);
@@ -389,7 +389,7 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
     maintenance_in_progress_ = true;
     command_port = command_port_;
     query_port = query_port_;
-    base_revision = committed_session_revision_;
+    base_revision = committed_runtime_revision_;
   }
   Result<ExecutionReceipt> reconfigured =
       Result<ExecutionReceipt>::Failure(
@@ -428,7 +428,7 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
 Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
     const ConfigCandidate& candidate, const ExpectedRevision& expected) {
   std::shared_ptr<StageCommandPort> command_port;
-  std::shared_ptr<SessionQueryPort> query_port;
+  std::shared_ptr<RuntimeQueryPort> query_port;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
   {
     std::lock_guard command_lock(command_mutex_);
@@ -447,10 +447,10 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
       return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
           "cannot apply config while a job is running"));
     }
-    if (expected.session_revision != committed_session_.revision ||
-        expected.config_revision != committed_session_.config_revision) {
+    if (expected.runtime_revision != committed_runtime_.revision ||
+        expected.config_revision != committed_runtime_.config_revision) {
       return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
-          "config expected revision does not match committed session"));
+          "config expected revision does not match committed runtime"));
     }
     maintenance_in_progress_ = true;
     command_port = command_port_;
@@ -465,7 +465,7 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
       applied = command_port->ApplyConfig(
           candidate, expected,
           {std::make_shared<CancellationToken>(), alignment_feedback,
-           expected.session_revision});
+           expected.runtime_revision});
     }
   } catch (const std::exception& error) {
     applied = Result<ConfigApplyReceipt>::Failure(
@@ -482,9 +482,9 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
 
   const auto& receipt = applied.Value();
   auto accepted = acceptExecutionReceipt(
-      {receipt.base_session_revision, receipt.session_revision,
+      {receipt.base_runtime_revision, receipt.runtime_revision,
        receipt.affected_agents},
-      expected.session_revision, query_port);
+      expected.runtime_revision, query_port);
   Error config_protocol_error = Error::InvalidArgument("");
   bool config_protocol_failed = false;
   {
@@ -493,11 +493,11 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
     if (accepted &&
         (receipt.previous_config_revision != expected.config_revision ||
          receipt.config_revision <= receipt.previous_config_revision ||
-         committed_session_.config_revision != receipt.config_revision)) {
+         committed_runtime_.config_revision != receipt.config_revision)) {
       config_protocol_error = Error::InvalidArgument(
-          "config transaction receipt does not match committed session");
-      config_protocol_error.MarkFatalSession().WithSessionRevision(
-          committed_session_.revision);
+          "config transaction receipt does not match committed runtime");
+      config_protocol_error.MarkFatalRuntime().WithRuntimeRevision(
+          committed_runtime_.revision);
       protocol_failure_ = config_protocol_error;
       config_protocol_failed = true;
     }
@@ -518,7 +518,7 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
 
 Result<void> PipelineController::ReplacePorts(
     std::shared_ptr<StageCommandPort> command_port,
-    std::shared_ptr<SessionQueryPort> query_port) {
+    std::shared_ptr<RuntimeQueryPort> query_port) {
   if (IsInEventCallback()) {
     return Result<void>::Failure(Error::InvalidArgument(
         "cannot replace pipeline ports from an event callback"));
@@ -540,17 +540,17 @@ Result<void> PipelineController::ReplacePorts(
                  job_->state == JobState::kWaitingForAlignmentFeedback ||
                  job_->state == JobState::kCancelling)) {
       return Result<void>::Failure(
-          Error::InvalidArgument("cannot create a session while a job is running"));
+          Error::InvalidArgument("cannot replace a runtime while a job is running"));
     }
     maintenance_in_progress_ = true;
     if (worker_.joinable()) finished_worker = std::move(worker_);
   }
   if (finished_worker.joinable()) finished_worker.join();
-  CommittedSessionSnapshot session;
+  CommittedRuntimeSnapshot runtime;
   CancellationCapability cancellation_capability;
   try {
     cancellation_capability = command_port->CancellationMetadata();
-    session = query_port->Snapshot();
+    runtime = query_port->Snapshot();
   } catch (const std::exception& error) {
     std::lock_guard lock(mutex_);
     maintenance_in_progress_ = false;
@@ -565,20 +565,20 @@ Result<void> PipelineController::ReplacePorts(
     std::lock_guard lock(mutex_);
     command_port_ = std::move(command_port);
     query_port_ = std::move(query_port);
-    agents_ = session.ordered_agents;
+    agents_ = runtime.ordered_agents;
     cancellation_capability_ = std::move(cancellation_capability);
     job_.reset();
     terminal_event_completed_job_id_ = 0;
     cancellation_.reset();
     cancel_requested_ = false;
-    config_revision_ = session.config_revision;
-    committed_session_revision_ = session.revision;
-    committed_session_ = session;
+    config_revision_ = runtime.config_revision;
+    committed_runtime_revision_ = runtime.revision;
+    committed_runtime_ = runtime;
     protocol_failure_.reset();
     maintenance_in_progress_ = false;
   }
   emit({0, EventType::kArtifactInvalidated, std::nullopt,
-        "new pipeline session created"});
+        "new pipeline runtime initialized"});
   return Result<void>::Ok();
 }
 
@@ -603,7 +603,7 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(AgentId target_agent)
     ExecutionContext command_context = context;
     {
       std::lock_guard lock(mutex_);
-      command_context.base_revision = committed_session_.revision;
+      command_context.base_revision = committed_runtime_.revision;
     }
     auto result = command_port_->Execute(
         ExecutionCommand::OptimizeThrough(target_agent), command_context);
@@ -650,7 +650,7 @@ Result<void> PipelineController::runOneStage(
   ExecutionContext command_context = context;
   {
     std::lock_guard lock(mutex_);
-    command_context.base_revision = committed_session_.revision;
+    command_context.base_revision = committed_runtime_.revision;
   }
   auto result = command_port_->Execute(ExecutionCommand::Stage(stage),
                                        command_context);
@@ -834,10 +834,10 @@ PipelineSnapshot PipelineController::Snapshot() const {
     std::lock_guard lock(mutex_);
     snapshot.job = job_;
     cancellation = cancellation_;
-    snapshot.session_revision = committed_session_.revision;
-    snapshot.config_revision = committed_session_.config_revision;
-    snapshot.agents = committed_session_.ordered_agents;
-    snapshot.artifacts = committed_session_.artifacts;
+    snapshot.runtime_revision = committed_runtime_.revision;
+    snapshot.config_revision = committed_runtime_.config_revision;
+    snapshot.agents = committed_runtime_.ordered_agents;
+    snapshot.artifacts = committed_runtime_.artifacts;
     snapshot.recent_events = recent_events_;
   }
   if (snapshot.job && cancellation) {
@@ -848,14 +848,14 @@ PipelineSnapshot PipelineController::Snapshot() const {
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     const AgentId& agent) const {
-  std::shared_ptr<SessionQueryPort> query_port;
+  std::shared_ptr<RuntimeQueryPort> query_port;
   {
     std::lock_guard lock(mutex_);
     query_port = query_port_;
   }
   if (!query_port) {
     return Result<VisualizationSnapshot>::Failure(
-        Error::InvalidArgument("session query port is not available"));
+        Error::InvalidArgument("runtime query port is not available"));
   }
   auto result = query_port->Visualization(agent);
   if (!result) return result;

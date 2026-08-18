@@ -33,8 +33,7 @@ int main() {
       !telemetry.cancel_completed_at_unix_ns) {
     return 6;
   }
-  auto session_id = open_lmm::SessionId::Parse(
-      "01234567-89ab-4def-8123-456789abcdef");
-  if (!session_id) return 7;
+  open_lmm::JobHandle job{7};
+  if (job.value != 7) return 7;
   return 0;
 }

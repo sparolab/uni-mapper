@@ -41,7 +41,7 @@ AlgorithmExecutionContext Context() {
 }
 
 void CheckContext(const Error& error) {
-  Check(error.context.session_revision == 17,
+  Check(error.context.runtime_revision == 17,
         "error must retain the base revision");
   Check(error.context.stage == "algorithm" &&
             error.context.node == "fixture.process",

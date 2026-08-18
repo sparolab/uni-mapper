@@ -55,11 +55,8 @@ Result<ExecutionRequest> DecodeGoal(
   return Result<ExecutionRequest>::Ok(std::move(request));
 }
 
-open_lmm_ros::msg::ExecutionEvent ToRosEvent(
-    const SessionExecutionEvent& source) {
+open_lmm_ros::msg::ExecutionEvent ToRosEvent(const ExecutionEvent& event) {
   open_lmm_ros::msg::ExecutionEvent result;
-  result.session_id = source.session_id.Value();
-  const auto& event = source.event;
   result.job_id = event.job_id;
   result.sequence = event.sequence;
   result.event_type = static_cast<uint8_t>(event.type);
@@ -99,19 +96,12 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
             .string();
   }
 
-  auto created = runtime_->CreateSession(
+  auto opened = runtime_->Open(
       BootstrapRequest{std::filesystem::path(config_path), "ros"});
-  if (!created) {
-    throw std::runtime_error("Runtime session creation failed: " +
-                             created.GetError().Message());
+  if (!opened) {
+    throw std::runtime_error("Runtime initialization failed: " +
+                             opened.GetError().Message());
   }
-  auto session = RuntimeSessionClient::Create(runtime_,
-                                               std::move(created).Value());
-  if (!session) {
-    throw std::runtime_error("Runtime session client failed: " +
-                             session.GetError().Message());
-  }
-  session_ = std::move(session).Value();
 
   event_publisher_ =
       this->create_publisher<open_lmm_ros::msg::ExecutionEvent>(
@@ -129,8 +119,8 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
              std::shared_ptr<GetRuntimeStatus::Response> response) {
         HandleStatus(request, response);
       });
-  auto subscribed = session_->Subscribe(
-      [this](const SessionExecutionEvent& event) { PublishEvent(event); });
+  auto subscribed = runtime_->SubscribeEvents(
+      [this](const ExecutionEvent& event) { PublishEvent(event); });
   if (!subscribed) {
     throw std::runtime_error("Runtime event subscription failed: " +
                              subscribed.GetError().Message());
@@ -158,7 +148,7 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
     throw std::runtime_error("GUI plugin was not found at " + gui_plugin_path);
   }
   auto loaded = GuiRuntimeHost::LoadAndStart(
-      gui_plugin_path, session_,
+      gui_plugin_path, runtime_,
       (std::filesystem::path(config_path) / "config.json").string());
   if (!loaded) {
     throw std::runtime_error("GUI load failed: " +
@@ -170,22 +160,19 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
 
 OpenLMMROS::~OpenLMMROS() {
   event_subscription_.Reset();
-  std::optional<JobId> active_job;
-  std::optional<SessionId> active_session;
+  std::optional<JobHandle> active_job;
   {
     std::lock_guard lock(action_mutex_);
-    active_job = active_job_id_;
-    active_session = active_session_id_;
+    active_job = active_job_;
   }
-  if (active_job && active_session) {
-    (void)session_->Cancel(BoundJob{*active_session, *active_job});
-  }
+  if (active_job) (void)runtime_->Cancel(*active_job);
   if (action_worker_.joinable()) action_worker_.join();
+  (void)runtime_->Close(CloseMode::kCancelAndWait);
 }
 
 PipelineSnapshot OpenLMMROS::Snapshot() const {
-  if (!session_) return {};
-  auto snapshot = session_->Snapshot();
+  if (!runtime_) return {};
+  auto snapshot = runtime_->Snapshot();
   return snapshot ? std::move(snapshot).Value().pipeline : PipelineSnapshot{};
 }
 
@@ -204,15 +191,13 @@ rclcpp_action::GoalResponse OpenLMMROS::HandleGoal(
 rclcpp_action::CancelResponse OpenLMMROS::HandleCancel(
     const std::shared_ptr<GoalHandleExecutePipeline>& goal_handle) {
   (void)goal_handle;
-  std::optional<JobId> job;
-  std::optional<SessionId> session;
+  std::optional<JobHandle> job;
   {
     std::lock_guard lock(action_mutex_);
-    job = active_job_id_;
-    session = active_session_id_;
+    job = active_job_;
   }
-  if (!job || !session) return rclcpp_action::CancelResponse::REJECT;
-  return session_->Cancel(BoundJob{*session, *job})
+  if (!job) return rclcpp_action::CancelResponse::REJECT;
+  return runtime_->Cancel(*job)
              ? rclcpp_action::CancelResponse::ACCEPT
              : rclcpp_action::CancelResponse::REJECT;
 }
@@ -232,10 +217,10 @@ void OpenLMMROS::ExecuteGoal(
     const std::shared_ptr<GoalHandleExecutePipeline>& goal_handle) {
   auto result = std::make_shared<ExecutePipeline::Result>();
   auto request = DecodeGoal(*goal_handle->get_goal());
-  auto submitted = request && session_
-                       ? session_->Submit(request.Value())
-                       : Result<BoundJob>::Failure(
-                             request ? Error::InvalidArgument("session missing")
+  auto submitted = request && runtime_
+                       ? runtime_->Submit(request.Value())
+                       : Result<JobHandle>::Failure(
+                             request ? Error::InvalidArgument("runtime missing")
                                      : request.GetError());
   if (!submitted) {
     result->message = submitted.GetError().Message();
@@ -245,19 +230,18 @@ void OpenLMMROS::ExecuteGoal(
     active_goal_.reset();
     return;
   }
-  const BoundJob bound_job = submitted.Value();
-  result->job_id = bound_job.job_id;
+  const JobHandle job = submitted.Value();
+  result->job_id = job.value;
   {
     std::lock_guard lock(action_mutex_);
-    active_job_id_ = result->job_id;
-    active_session_id_ = bound_job.session_id;
+    active_job_ = job;
   }
 
-  auto waited = session_->Wait(bound_job);
-  auto snapshot = runtime_->RuntimeSnapshot(bound_job.session_id);
+  auto waited = runtime_->Wait(job);
+  auto snapshot = runtime_->Snapshot();
   if (snapshot) {
     const auto& value = snapshot.Value();
-    result->session_state = static_cast<uint8_t>(value.state);
+    result->runtime_state = static_cast<uint8_t>(value.state);
     result->config_revision = value.pipeline.config_revision;
     result->output_directory = value.output_directory.string();
   }
@@ -273,8 +257,7 @@ void OpenLMMROS::ExecuteGoal(
     goal_handle->abort(result);
   }
   std::lock_guard lock(action_mutex_);
-  active_job_id_.reset();
-  active_session_id_.reset();
+  active_job_.reset();
   goal_admission_.Release();
   active_goal_.reset();
 }
@@ -283,19 +266,18 @@ void OpenLMMROS::HandleStatus(
     const std::shared_ptr<GetRuntimeStatus::Request>& request,
     std::shared_ptr<GetRuntimeStatus::Response> response) const {
   (void)request;
-  if (!session_) {
-    response->error = "runtime session missing";
+  if (!runtime_) {
+    response->error = "runtime missing";
     return;
   }
-  auto snapshot = session_->Snapshot();
+  auto snapshot = runtime_->Snapshot();
   if (!snapshot) {
     response->error = snapshot.GetError().Message();
     return;
   }
   const auto& value = snapshot.Value();
   response->success = true;
-  response->session_id = value.id.Value();
-  response->session_state = static_cast<uint8_t>(value.state);
+  response->runtime_state = static_cast<uint8_t>(value.state);
   response->output_directory = value.output_directory.string();
   response->config_revision = value.pipeline.config_revision;
   response->has_job = value.pipeline.job.has_value();
@@ -315,15 +297,13 @@ void OpenLMMROS::HandleStatus(
   }
 }
 
-void OpenLMMROS::PublishEvent(const SessionExecutionEvent& event) {
+void OpenLMMROS::PublishEvent(const ExecutionEvent& event) {
   auto message = ToRosEvent(event);
   event_publisher_->publish(message);
   std::shared_ptr<GoalHandleExecutePipeline> goal;
   {
     std::lock_guard lock(action_mutex_);
-    if (active_job_id_ && active_session_id_ &&
-        *active_job_id_ == event.event.job_id &&
-        *active_session_id_ == event.session_id) {
+    if (active_job_ && active_job_->value == event.job_id) {
       goal = active_goal_.lock();
     }
   }

@@ -6,7 +6,7 @@
 #include <open_lmm/server/nodes/optimize_node.hpp>
 #include <open_lmm/server/bootstrap/algorithm_factory.hpp>
 #include <open_lmm/server/execution/algorithm_context.hpp>
-#include <open_lmm/server/session_payload_builder.hpp>
+#include <open_lmm/server/runtime_payload_builder.hpp>
 
 namespace open_lmm {
 namespace {
@@ -20,7 +20,7 @@ Result<void> CancelledBeforePublish(const ExecutionContext& context) {
   return Result<void>::Ok();
 }
 
-Error OptimizerFactoryFailure(Error error, const SessionState& committed,
+Error OptimizerFactoryFailure(Error error, const RuntimeState& committed,
                               const ExecutionContext& runtime) {
   if (committed.config && committed.config->documents &&
       committed.config->optimizer) {
@@ -31,7 +31,7 @@ Error OptimizerFactoryFailure(Error error, const SessionState& committed,
     return WithAlgorithmContext(std::move(error), context);
   }
   return std::move(error)
-      .WithSessionRevision(committed.revision)
+      .WithRuntimeRevision(committed.revision)
       .WithExecution("algorithm", "optimize_factory");
 }
 
@@ -58,7 +58,7 @@ AlignmentExecutor::AlignmentExecutor(OptimizerFactory optimizer_factory,
       algorithms_(std::make_shared<AlgorithmFactory>()) {}
 
 Result<void> AlignmentExecutor::ValidateBase(
-    const SessionState& committed, const ExecutionContext& context) {
+    const RuntimeState& committed, const ExecutionContext& context) {
   if (context.base_revision != committed.revision) {
     return Result<void>::Failure(Error::InvalidArgument(
         "alignment base revision does not match committed state"));
@@ -67,7 +67,7 @@ Result<void> AlignmentExecutor::ValidateBase(
       !committed.config->optimizer || !committed.payload ||
       !committed.payload->database) {
     return Result<void>::Failure(
-        Error::InvalidArgument("alignment requires a complete session state"));
+        Error::InvalidArgument("alignment requires a complete runtime state"));
   }
   if (committed.payload->database->raw_data.size() !=
       committed.payload->contexts.size()) {
@@ -78,15 +78,15 @@ Result<void> AlignmentExecutor::ValidateBase(
 }
 
 Result<std::shared_ptr<BackendOptimizerBase>>
-AlignmentExecutor::CreateOptimizer(const SessionState& committed) const {
+AlignmentExecutor::CreateOptimizer(const RuntimeState& committed) const {
   return optimizer_factory_(*committed.config->optimizer);
 }
 
-Result<std::shared_ptr<const SessionPayload>> AlignmentExecutor::BuildPayload(
-    const SessionState& committed, std::vector<AgentPipelineCtx> contexts,
+Result<std::shared_ptr<const RuntimePayload>> AlignmentExecutor::BuildPayload(
+    const RuntimeState& committed, std::vector<AgentPipelineCtx> contexts,
     std::shared_ptr<SharedDatabase> database,
     std::shared_ptr<BackendOptimizerBase> optimizer) {
-  SessionPayloadBuilder builder(committed.payload);
+  RuntimePayloadBuilder builder(committed.payload);
   return builder.SetContexts(std::move(contexts))
       .SetDatabase(std::move(database))
       .SetOptimizer(std::move(optimizer))
@@ -94,7 +94,7 @@ Result<std::shared_ptr<const SessionPayload>> AlignmentExecutor::BuildPayload(
 }
 
 Result<ExecutionCandidate> AlignmentExecutor::ExecuteStage(
-    std::shared_ptr<const SessionState> committed,
+    std::shared_ptr<const RuntimeState> committed,
     const ExecutionContext& runtime) const {
   if (!committed) {
     return Result<ExecutionCandidate>::Failure(
@@ -180,7 +180,7 @@ Result<ExecutionCandidate> AlignmentExecutor::ExecuteStage(
 }
 
 Result<ExecutionCandidate> AlignmentExecutor::ReplayLoopDetectThrough(
-    std::shared_ptr<const SessionState> committed,
+    std::shared_ptr<const RuntimeState> committed,
     const AgentId& target_agent, const ExecutionContext& runtime) const {
   if (!committed) {
     return Result<ExecutionCandidate>::Failure(

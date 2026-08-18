@@ -4,7 +4,7 @@
 #include <utility>
 
 #include <open_lmm/server/artifact_repository.hpp>
-#include <open_lmm/server/bootstrap/session_bootstrapper.hpp>
+#include <open_lmm/server/bootstrap/runtime_bootstrapper.hpp>
 #include <open_lmm/utils/logging.hpp>
 
 namespace open_lmm {
@@ -25,16 +25,16 @@ class ExecutionLease {
   bool acquired_;
 };
 
-Result<void> ValidateNodeTarget(const SessionState& state, NodeId node,
+Result<void> ValidateNodeTarget(const RuntimeState& state, NodeId node,
                                 const std::optional<AgentId>& agent) {
   const auto& spec = ExecutionSpecFor(node);
   if (spec.scope == ExecutionScope::kPerAgent && !agent) {
     return Result<void>::Failure(
         Error::InvalidArgument("per-agent node requires an agent target"));
   }
-  if (spec.scope == ExecutionScope::kSession && agent) {
+  if (spec.scope == ExecutionScope::kRuntime && agent) {
     return Result<void>::Failure(
-        Error::InvalidArgument("session node must not have an agent target"));
+        Error::InvalidArgument("runtime node must not have an agent target"));
   }
   if (agent &&
       std::find(state.ordered_agents.begin(), state.ordered_agents.end(),
@@ -52,7 +52,7 @@ StageExecutor::StageExecutor(
     std::shared_ptr<ResourceGovernor> resource_governor)
     : resource_governor_(std::move(resource_governor)) {
   InitializeLogging();
-  SessionBootstrapper bootstrap;
+  RuntimeBootstrapper bootstrap;
   auto initialized = bootstrap.Bootstrap(
       {std::move(bootstrap_config), std::move(output_directory), {}});
   if (!initialized) {
@@ -64,21 +64,21 @@ StageExecutor::StageExecutor(
     resource_governor_ =
         std::make_shared<ResourceGovernor>(result.suggested_resource_budget);
   }
-  session_manager_.Initialize(std::move(result.initial_state));
+  runtime_state_store_.Initialize(std::move(result.initial_state));
   coordinator_ = std::make_unique<StageCoordinator>(
-      session_manager_, output_repository_, resource_governor_);
+      runtime_state_store_, output_repository_, resource_governor_);
 }
 
 StageExecutor::~StageExecutor() = default;
 
-std::shared_ptr<const SessionState> StageExecutor::CommittedState() const {
-  return session_manager_.Snapshot();
+std::shared_ptr<const RuntimeState> StageExecutor::CommittedState() const {
+  return runtime_state_store_.Snapshot();
 }
 
 Result<void> StageExecutor::EnsureReady() {
   if (initialization_error_) {
     Error error = *initialization_error_;
-    error.MarkFatalSession();
+    error.MarkFatalRuntime();
     return Result<void>::Failure(std::move(error));
   }
   const auto state = CommittedState();
@@ -86,7 +86,7 @@ Result<void> StageExecutor::EnsureReady() {
       !state->payload->database || !state->payload->optimizer ||
       state->ordered_agents.empty()) {
     return Result<void>::Failure(
-        Error::InvalidArgument("session state is unavailable"));
+        Error::InvalidArgument("runtime state is unavailable"));
   }
   if (state->ordered_agents.size() > AgentSymbolCatalog::kMaximumAgents) {
     return Result<void>::Failure(Error::InvalidArgument(
@@ -119,10 +119,10 @@ CancellationCapability StageExecutor::CancellationMetadata() const {
   };
 }
 
-CommittedSessionSnapshot StageExecutor::Snapshot() const {
+CommittedRuntimeSnapshot StageExecutor::Snapshot() const {
   const auto state = CommittedState();
   if (!state) return {};
-  CommittedSessionSnapshot snapshot{state->revision,
+  CommittedRuntimeSnapshot snapshot{state->revision,
                                     state->config ? state->config->revision : 0,
                                     state->ordered_agents, state->artifacts};
   if (state->payload && state->payload->database) {
@@ -167,7 +167,7 @@ Result<ExecutionReceipt> StageExecutor::Execute(
   const auto base = CommittedState();
   if (context.base_revision != base->revision) {
     return Result<ExecutionReceipt>::Failure(Error::InvalidArgument(
-        "execution base revision does not match committed session"));
+        "execution base revision does not match committed runtime"));
   }
 
   Result<void> result = Result<void>::Failure(
@@ -238,7 +238,7 @@ Result<ExecutionReceipt> StageExecutor::Execute(
     return Result<ExecutionReceipt>::Failure(Error::InvalidArgument(
         "successful command did not advance the committed revision"));
   }
-  const CommittedSessionSnapshot before{
+  const CommittedRuntimeSnapshot before{
       base->revision, base->config->revision, base->ordered_agents,
       base->artifacts};
   return Result<ExecutionReceipt>::Ok(
@@ -264,10 +264,10 @@ Result<ConfigApplyReceipt> StageExecutor::ApplyConfig(
   }
   const auto base = CommittedState();
   if (context.base_revision != base->revision ||
-      expected.session_revision != base->revision ||
+      expected.runtime_revision != base->revision ||
       !base->config || expected.config_revision != base->config->revision) {
     return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
-        "config transaction revision does not match committed session"));
+        "config transaction revision does not match committed runtime"));
   }
   auto applied = coordinator_->ApplyConfig(base, candidate, expected, context);
   if (!applied) return applied;
@@ -278,6 +278,27 @@ Result<ConfigApplyReceipt> StageExecutor::ApplyConfig(
     PublishVisualization(false);
   }
   return applied;
+}
+
+Result<void> StageExecutor::InitializeRuntimeRevisions(
+    uint64_t runtime_revision, uint64_t config_revision) {
+  const auto committed = CommittedState();
+  if (!committed || !committed->config) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("runtime state is unavailable for rebase"));
+  }
+  if (runtime_revision == 0 || config_revision == 0) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("runtime revisions must be non-zero"));
+  }
+  auto rebased = std::make_shared<RuntimeState>(*committed);
+  auto config = std::make_shared<RuntimeConfig>(*committed->config);
+  rebased->revision = runtime_revision;
+  config->revision = config_revision;
+  rebased->config = std::move(config);
+  runtime_state_store_.Initialize(std::move(rebased));
+  PublishEmptyVisualization();
+  return Result<void>::Ok();
 }
 
 }  // namespace open_lmm

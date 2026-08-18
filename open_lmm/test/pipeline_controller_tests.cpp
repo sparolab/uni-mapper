@@ -33,7 +33,7 @@ class FakeRunner final : public test::RuntimePortFixture {
       std::vector<AgentId> agents = {Id("A"), Id("B")})
       : RuntimePortFixture(std::move(agents)) {}
 
-  CommittedSessionSnapshot Snapshot() const override {
+  CommittedRuntimeSnapshot Snapshot() const override {
     if (on_agent_ids) on_agent_ids();
     return RuntimePortFixture::Snapshot();
   }
@@ -168,10 +168,10 @@ class FakeRunner final : public test::RuntimePortFixture {
     switch (config_receipt_fault) {
       case ConfigReceiptFault::kNone: break;
       case ConfigReceiptFault::kBaseSession:
-        ++receipt.base_session_revision;
+        ++receipt.base_runtime_revision;
         break;
       case ConfigReceiptFault::kCommittedSession:
-        ++receipt.session_revision;
+        ++receipt.runtime_revision;
         break;
       case ConfigReceiptFault::kPreviousConfig:
         ++receipt.previous_config_revision;
@@ -295,7 +295,7 @@ void TestMalformedExecutionReceiptsCannotPublishSuccess() {
     runner->receipt_fault = FakeRunner::ReceiptFault::kNone;
     const auto rejected = controller.SubmitStage(StageId::kDataLoad);
     Check(!rejected &&
-              rejected.GetError().severity == Error::Severity::kFatalSession,
+              rejected.GetError().severity == Error::Severity::kFatalRuntime,
           "receipt protocol failure rejects later commands as fatal");
   }
 }
@@ -310,7 +310,7 @@ void TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession() {
   runner->receipt_fault = FakeRunner::ReceiptFault::kCommitted;
   const auto applied = controller.ApplyConfig(ConfigDomain::kDataLoader, 2);
   Check(!applied &&
-            applied.GetError().severity == Error::Severity::kFatalSession,
+            applied.GetError().severity == Error::Severity::kFatalRuntime,
         "malformed post-commit reconfigure receipt is a fatal protocol error");
   const auto snapshot = controller.Snapshot();
   Check(snapshot.config_revision == 2 &&
@@ -323,7 +323,7 @@ void TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession() {
 
   runner->receipt_fault = FakeRunner::ReceiptFault::kNone;
   const auto retry = controller.ApplyConfig(ConfigDomain::kOptimizer, 3);
-  Check(!retry && retry.GetError().severity == Error::Severity::kFatalSession &&
+  Check(!retry && retry.GetError().severity == Error::Severity::kFatalRuntime &&
             runner->Snapshot().revision == committed.revision,
         "poisoned controller performs no further reconfigure command");
 
@@ -349,10 +349,10 @@ void TestMalformedConfigCandidateReceiptsPoisonCommittedSession() {
     candidate.document_json = "{}";
     auto applied = controller.ApplyConfig(candidate, {1, 1});
     Check(!applied &&
-              applied.GetError().severity == Error::Severity::kFatalSession,
+              applied.GetError().severity == Error::Severity::kFatalRuntime,
           "malformed config candidate receipt is a fatal protocol error");
     const auto snapshot = controller.Snapshot();
-    Check(snapshot.session_revision == 2 && snapshot.config_revision == 2,
+    Check(snapshot.runtime_revision == 2 && snapshot.config_revision == 2,
           "malformed config receipt still resynchronizes committed revisions");
     Check(std::none_of(snapshot.recent_events.begin(),
                        snapshot.recent_events.end(),
@@ -473,8 +473,8 @@ void TestNodeCommandsAndMetadata() {
   const auto descriptors = controller.NodeDescriptors();
   Check(descriptors.size() == 6, "all node descriptors exposed");
   Check(descriptors[2].ordered, "optimizer metadata is ordered");
-  Check(descriptors[4].scope == ExecutionScope::kSession &&
-            descriptors[5].scope == ExecutionScope::kSession,
+  Check(descriptors[4].scope == ExecutionScope::kRuntime &&
+            descriptors[5].scope == ExecutionScope::kRuntime,
         "session node scope is exposed to API consumers");
   auto missing_input = controller.SubmitNode(NodeId::kLoopDetect, Id("A"));
   Check(missing_input && !controller.Wait(missing_input.Value()),
@@ -719,7 +719,7 @@ void TestManagedSessionMetadataIsAuthoritative() {
       });
   Check(failed_event != after.recent_events.rend() && failed_event->error &&
             failed_event->error->severity == Error::Severity::kRecoverable &&
-            failed_event->error->context.session_revision ==
+            failed_event->error->context.runtime_revision ==
                 std::optional<uint64_t>(2) &&
             failed_event->error->context.stage == "data_load" &&
             failed_event->error->context.node == "data_load" &&

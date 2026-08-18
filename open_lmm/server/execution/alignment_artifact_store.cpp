@@ -132,14 +132,14 @@ Result<AlignmentArtifactStore> AlignmentArtifactStore::Open(
     }
     store.identity_.input_fingerprints[input.agents[index]] = Hex(hash);
   }
-  uint64_t session_hash = kFnvOffset;
-  HashText(session_hash, store.identity_.config_fingerprint);
+  uint64_t runtime_hash = kFnvOffset;
+  HashText(runtime_hash, store.identity_.config_fingerprint);
   for (const auto& [agent, fingerprint] :
        store.identity_.input_fingerprints) {
-    HashText(session_hash, agent.Value());
-    HashText(session_hash, fingerprint);
+    HashText(runtime_hash, agent.Value());
+    HashText(runtime_hash, fingerprint);
   }
-  store.identity_.session_fingerprint = Hex(session_hash);
+  store.identity_.runtime_fingerprint = Hex(runtime_hash);
   store.identity_.cache_path = input.cache_root / "map_alignment_cache.json";
 
   std::ifstream cache(store.identity_.cache_path);
@@ -148,8 +148,8 @@ Result<AlignmentArtifactStore> AlignmentArtifactStore::Open(
     nlohmann::json root;
     cache >> root;
     if (root.value("version", 0) != 3 ||
-        root.value("session_fingerprint", std::string()) !=
-            store.identity_.session_fingerprint) {
+        root.value("runtime_fingerprint", std::string()) !=
+            store.identity_.runtime_fingerprint) {
       return Result<AlignmentArtifactStore>::Ok(std::move(store));
     }
     for (const auto& item : root.at("alignments")) {
@@ -197,11 +197,11 @@ Result<AlignmentArtifactStore> AlignmentArtifactStore::Open(
 }
 
 Result<AlignmentArtifactStore> AlignmentArtifactStore::FromCommitted(
-    const SessionState& committed) {
+    const RuntimeState& committed) {
   if (!committed.config || !committed.config->alignment_artifacts ||
       !committed.payload || !committed.payload->database) {
     return Result<AlignmentArtifactStore>::Failure(Error::InvalidArgument(
-        "committed session has no alignment artifact metadata"));
+        "committed runtime has no alignment artifact metadata"));
   }
   AlignmentArtifactStore store;
   store.identity_.config_fingerprint = committed.config->fingerprint;
@@ -209,8 +209,8 @@ Result<AlignmentArtifactStore> AlignmentArtifactStore::FromCommitted(
       committed.config->alignment_artifacts->cache_path;
   store.identity_.input_fingerprints =
       committed.config->alignment_artifacts->input_fingerprints;
-  store.identity_.session_fingerprint =
-      committed.config->alignment_artifacts->session_fingerprint;
+  store.identity_.runtime_fingerprint =
+      committed.config->alignment_artifacts->runtime_fingerprint;
   store.cached_ = committed.payload->database->stored_alignments;
   return Result<AlignmentArtifactStore>::Ok(std::move(store));
 }
@@ -229,12 +229,12 @@ void AlignmentArtifactStore::InstallInto(SharedDatabase& database) const {
 }
 
 Result<void> AlignmentArtifactStore::Prepare(
-    const SessionState& state,
+    const RuntimeState& state,
     const std::filesystem::path& output_directory,
     PendingOutputSet& pending, ArtifactRepository& artifacts) const {
   if (!state.payload || !state.payload->database) {
     return Result<void>::Failure(
-        Error::InvalidArgument("alignment artifact has no session payload"));
+        Error::InvalidArgument("alignment artifact has no runtime payload"));
   }
   nlohmann::json root;
   root["version"] = 3;
@@ -243,7 +243,7 @@ Result<void> AlignmentArtifactStore::Prepare(
       std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::system_clock::now().time_since_epoch()).count());
   root["config_fingerprint"] = identity_.config_fingerprint;
-  root["session_fingerprint"] = identity_.session_fingerprint;
+  root["runtime_fingerprint"] = identity_.runtime_fingerprint;
   root["input_fingerprints"] = nlohmann::json::object();
   for (const auto& [agent, fingerprint] : identity_.input_fingerprints) {
     root["input_fingerprints"][agent.Value()] = fingerprint;

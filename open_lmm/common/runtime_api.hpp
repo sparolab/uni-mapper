@@ -51,24 +51,18 @@ struct JobSnapshot {
 
 struct PipelineSnapshot {
   std::optional<JobSnapshot> job;
-  uint64_t session_revision = 0;
+  uint64_t runtime_revision = 0;
   uint64_t config_revision = 0;
   std::vector<AgentId> agents;
   std::vector<ArtifactMetadata> artifacts;
   std::vector<ExecutionEvent> recent_events;
 };
 
-struct RuntimeSessionSnapshot {
-  SessionId id;
+struct RuntimeSnapshot {
   std::string label;
-  RuntimeSessionState state = RuntimeSessionState::kCreating;
+  RuntimeStatus state = RuntimeStatus::kCreating;
   std::filesystem::path output_directory;
   PipelineSnapshot pipeline;
-};
-
-struct SessionExecutionEvent {
-  SessionId session_id;
-  ExecutionEvent event;
 };
 
 class ExecutionEventSubscription {
@@ -84,11 +78,6 @@ class ExecutionEventSubscription {
 
  private:
   std::function<void()> unsubscribe_;
-};
-
-struct RuntimeSessionReplacement {
-  SessionId session_id;
-  ExecutionEventSubscription event_subscription;
 };
 
 }  // namespace open_lmm

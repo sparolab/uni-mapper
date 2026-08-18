@@ -7,7 +7,7 @@
 
 #include <open_lmm/server/artifact_repository.hpp>
 #include <open_lmm/server/output_repository.hpp>
-#include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/runtime_state.hpp>
 
 namespace open_lmm {
 
@@ -27,27 +27,27 @@ struct AlignmentArtifactIdentityInput {
 struct AlignmentArtifactIdentity {
   std::string config_fingerprint;
   std::map<AgentId, std::string> input_fingerprints;
-  std::string session_fingerprint;
+  std::string runtime_fingerprint;
   std::filesystem::path cache_path;
 };
 
 // Owns alignment cache identity and loaded approvals. It never commits files;
-// all output remains part of the caller's session transaction.
+// all output remains part of the caller's runtime transaction.
 class AlignmentArtifactStore {
  public:
   static Result<AlignmentArtifactStore> Open(
       const AlignmentArtifactIdentityInput& input,
       AgentSymbolCatalogHandle catalog);
   // Rehydrates an ephemeral writer from the committed authority. Coordinators
-  // must not retain this object as a second mutable session/config mirror.
+  // must not retain this object as a second mutable runtime/config mirror.
   static Result<AlignmentArtifactStore> FromCommitted(
-      const SessionState& committed);
+      const RuntimeState& committed);
 
   [[nodiscard]] const AlignmentArtifactIdentity& Identity() const;
   [[nodiscard]] const std::map<AgentId, StoredAlignment>& Cached() const;
   void InstallInto(SharedDatabase& database) const;
 
-  Result<void> Prepare(const SessionState& state,
+  Result<void> Prepare(const RuntimeState& state,
                        const std::filesystem::path& output_directory,
                        PendingOutputSet& pending,
                        ArtifactRepository& artifacts) const;

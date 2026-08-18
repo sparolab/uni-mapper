@@ -139,7 +139,7 @@ Error RecoveryRequired(const std::string& reason,
   }
   return Error::IoError(detail)
       .WithExecution("file_transaction", "recovery_required")
-      .MarkFatalSession();
+      .MarkFatalRuntime();
 }
 
 Result<void> RollBack(std::vector<Entry>& entries) {

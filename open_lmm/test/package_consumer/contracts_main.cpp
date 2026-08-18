@@ -3,7 +3,6 @@
 
 int main() {
   auto agent = open_lmm::AgentId::Parse("agent-folder-name");
-  auto session = open_lmm::SessionId::Parse(
-      "01234567-89ab-4def-8123-456789abcdef");
-  return agent && session ? 0 : 1;
+  open_lmm::JobHandle job{1};
+  return agent && job.value == 1 ? 0 : 1;
 }

@@ -9,7 +9,7 @@
 
 namespace open_lmm {
 
-// Owns every temporary file produced by one session transaction. Destruction
+// Owns every temporary file produced by one runtime transaction. Destruction
 // rolls back uncommitted temporaries; Commit installs the complete set through
 // the recoverable file-set barrier.
 class PendingOutputSet {

@@ -4,7 +4,7 @@
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/server/artifact_repository.hpp>
 #include <open_lmm/server/output_repository.hpp>
-#include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/runtime_state.hpp>
 
 #include <filesystem>
 #include <memory>
@@ -19,7 +19,7 @@ enum class SaveExecutionMode : uint8_t {
 };
 
 struct SaveExecutionRequest {
-  const SessionState& state;
+  const RuntimeState& state;
   SaveExecutionMode mode = SaveExecutionMode::kStage;
   std::filesystem::path output_directory;
   bool map_update_enabled = false;
@@ -34,7 +34,7 @@ struct SaveExecutionSummary {
 
 // Prepares a full Save stage or one explicitly requested Save node into a
 // caller-owned PendingOutputSet. The coordinator remains responsible for
-// committing the candidate SessionState and the complete file set.
+// committing the candidate RuntimeState and the complete file set.
 class SaveExecutor {
  public:
   Result<SaveExecutionSummary> Prepare(

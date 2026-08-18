@@ -46,7 +46,6 @@ class IridescenceGui final : public GuiPlugin {
   std::shared_ptr<GuiEventQueue> event_queue_;
   ExecutionEventSubscription event_subscription_;
   GuiModel model_;
-  std::optional<SessionId> synchronized_session_;
   std::vector<NodeDescriptor> node_descriptors_;
   VisualizationRepository visualization_;
   std::unique_ptr<VisualizationSnapshotWorker> visualization_worker_;

@@ -5,15 +5,15 @@
 
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/visualization_snapshot.hpp>
-#include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/runtime_state.hpp>
 
 namespace open_lmm {
 
-// Read model derived exclusively from one immutable committed session.
+// Read model derived exclusively from one immutable committed runtime state.
 class VisualizationProjector {
  public:
-  void Clear(uint64_t session_revision);
-  void Publish(std::shared_ptr<const SessionState> session,
+  void Clear(uint64_t runtime_revision);
+  void Publish(std::shared_ptr<const RuntimeState> runtime,
                bool include_maps);
   [[nodiscard]] Result<VisualizationSnapshot> Project(
       const AgentId& agent) const;

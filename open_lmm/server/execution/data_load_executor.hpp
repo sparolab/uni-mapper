@@ -7,16 +7,16 @@
 #include <open_lmm/common/alignment_feedback.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 #include <open_lmm/server/execution/execution_candidate.hpp>
-#include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/runtime_state.hpp>
 
 namespace open_lmm {
 
 class AlgorithmFactory;
 
-// All inputs are per-invocation values derived from one committed session.
+// All inputs are per-invocation values derived from one committed runtime.
 // The executor deliberately owns no config, agent list, or runtime policy.
 struct DataLoadExecutionContext {
-  std::shared_ptr<const SessionState> committed;
+  std::shared_ptr<const RuntimeState> committed;
   std::vector<AgentPipelineCtx> contexts;
   std::shared_ptr<SharedDatabase> database;
   std::shared_ptr<ResourceGovernor> governor;

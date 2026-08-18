@@ -5,31 +5,31 @@
 #include <vector>
 
 #include <open_lmm/common/result.hpp>
-#include <open_lmm/server/session_state.hpp>
+#include <open_lmm/server/runtime_state.hpp>
 
 namespace open_lmm {
 
 // Builds immutable payload candidates while keeping resident-memory
 // reservations coupled to the raw point-cloud handles they account for.
-class SessionPayloadBuilder {
+class RuntimePayloadBuilder {
  public:
-  explicit SessionPayloadBuilder(
-      std::shared_ptr<const SessionPayload> base_payload);
+  explicit RuntimePayloadBuilder(
+      std::shared_ptr<const RuntimePayload> base_payload);
 
-  SessionPayloadBuilder& SetContexts(std::vector<AgentPipelineCtx> contexts);
-  SessionPayloadBuilder& SetDatabase(
+  RuntimePayloadBuilder& SetContexts(std::vector<AgentPipelineCtx> contexts);
+  RuntimePayloadBuilder& SetDatabase(
       std::shared_ptr<const SharedDatabase> database);
-  SessionPayloadBuilder& SetOptimizer(
+  RuntimePayloadBuilder& SetOptimizer(
       std::shared_ptr<BackendOptimizerBase> optimizer);
-  SessionPayloadBuilder& ReplaceResidentReservations(
+  RuntimePayloadBuilder& ReplaceResidentReservations(
       std::map<AgentId, std::shared_ptr<MemoryReservation>> reservations);
-  SessionPayloadBuilder& SetResidentReservation(
+  RuntimePayloadBuilder& SetResidentReservation(
       const AgentId& agent, std::shared_ptr<MemoryReservation> reservation);
 
-  [[nodiscard]] Result<std::shared_ptr<const SessionPayload>> Build();
+  [[nodiscard]] Result<std::shared_ptr<const RuntimePayload>> Build();
 
  private:
-  std::shared_ptr<const SessionPayload> base_;
+  std::shared_ptr<const RuntimePayload> base_;
   std::vector<AgentPipelineCtx> contexts_;
   std::shared_ptr<const SharedDatabase> database_;
   std::shared_ptr<BackendOptimizerBase> optimizer_;
@@ -37,7 +37,7 @@ class SessionPayloadBuilder {
 };
 
 [[nodiscard]] Result<void> ValidateResidentMemoryOwnership(
-    const SessionPayload& payload,
-    const SessionPayload* base_payload = nullptr);
+    const RuntimePayload& payload,
+    const RuntimePayload* base_payload = nullptr);
 
 }  // namespace open_lmm

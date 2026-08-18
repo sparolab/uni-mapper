@@ -53,7 +53,6 @@ add_subdirectory(server)
 
 add_library(open_lmm_client SHARED
   server/runtime_client.cpp
-  server/runtime_session_client.cpp
 )
 add_dependencies(open_lmm_client open_lmm_map_server)
 target_link_libraries(open_lmm_client PUBLIC open_lmm_contracts Eigen3::Eigen PRIVATE
@@ -108,7 +107,7 @@ add_library(open_lmm::utils ALIAS open_lmm_utils)
 # construction never reuses it and never starts a batch pipeline implicitly.
 add_executable(open_lmm_batch main.cpp)
 target_link_libraries(open_lmm_batch PRIVATE
-  open_lmm_map_server
+  open_lmm_client
   open_lmm_utils
 )
 openlmm_set_global_target_properties(open_lmm_batch)
@@ -205,7 +204,6 @@ set(_open_lmm_public_headers
   core/descriptor/descriptor_artifact.hpp
   core/descriptor/descriptor_engine.hpp
   server/runtime_client.hpp
-  server/runtime_session_client.hpp
   gui/gui_plugin.hpp
   gui/gui_runtime_host.hpp
   utils/config_schema.hpp

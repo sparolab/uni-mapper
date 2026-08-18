@@ -24,7 +24,7 @@ class PipelineController {
  public:
   explicit PipelineController(std::shared_ptr<StageRuntimePort> port);
   PipelineController(std::shared_ptr<StageCommandPort> command_port,
-                     std::shared_ptr<SessionQueryPort> query_port);
+                     std::shared_ptr<RuntimeQueryPort> query_port);
   ~PipelineController();
   PipelineController(const PipelineController&) = delete;
   PipelineController& operator=(const PipelineController&) = delete;
@@ -38,7 +38,7 @@ class PipelineController {
   Result<ConfigApplyReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected);
   Result<void> ReplacePorts(std::shared_ptr<StageCommandPort> command_port,
-                            std::shared_ptr<SessionQueryPort> query_port);
+                            std::shared_ptr<RuntimeQueryPort> query_port);
   [[nodiscard]] std::vector<NodeDescriptor> NodeDescriptors() const;
   Result<void> Cancel(uint64_t job_id);
   Result<void> Wait(uint64_t job_id);
@@ -66,14 +66,14 @@ class PipelineController {
   void emit(ExecutionEvent event);
   void commitTerminal(uint64_t job_id, const Result<void>& result);
   void drainEventCallbacks();
-  void synchronizeCommittedSession(
-      const std::shared_ptr<SessionQueryPort>& query_port);
+  void synchronizeCommittedRuntime(
+      const std::shared_ptr<RuntimeQueryPort>& query_port);
   Result<void> acceptExecutionReceipt(
       const ExecutionReceipt& receipt, uint64_t sent_base_revision,
-      const std::shared_ptr<SessionQueryPort>& query_port);
+      const std::shared_ptr<RuntimeQueryPort>& query_port);
 
   std::shared_ptr<StageCommandPort> command_port_;
-  std::shared_ptr<SessionQueryPort> query_port_;
+  std::shared_ptr<RuntimeQueryPort> query_port_;
   // Serializes commands that may replace the worker, runner, or cancellation
   // token. The state mutex alone cannot protect the check-then-start sequence.
   mutable std::mutex command_mutex_;
@@ -81,11 +81,11 @@ class PipelineController {
   std::condition_variable completed_;
   std::optional<JobSnapshot> job_;
   std::vector<AgentId> agents_;
-  CommittedSessionSnapshot committed_session_;
+  CommittedRuntimeSnapshot committed_runtime_;
   // A successful command followed by an invalid receipt leaves commit outcome
   // uncertain from the controller's perspective.  Keep the best query-port
   // snapshot for diagnostics, but reject further commands until the ports are
-  // replaced with a fresh session.
+  // replaced with a fresh runtime instance.
   std::optional<Error> protocol_failure_;
   bool maintenance_in_progress_ = false;
   std::shared_ptr<ExecutionEventSubscriberRegistry> event_subscribers_;
@@ -106,7 +106,7 @@ class PipelineController {
   uint64_t next_event_sequence_ = 1;
   uint64_t terminal_event_completed_job_id_ = 0;
   uint64_t config_revision_ = 1;
-  uint64_t committed_session_revision_ = 0;
+  uint64_t committed_runtime_revision_ = 0;
 };
 
 }  // namespace open_lmm

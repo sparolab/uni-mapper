@@ -63,7 +63,7 @@ class LoopDetectNode : public PipelineNodeBase {
                                algorithm_context));
     }
 
-    // Mutate only the caller-owned working database. The SessionTransaction
+    // Mutate only the caller-owned working database. The RuntimeTransaction
     // installs this descriptor state and per-agent output together.
     if (ctx.agent.is_anchor()) {
       db.descriptor_store.set_anchor_descriptor(ctx.agent.id,

@@ -13,15 +13,15 @@ target_sources(open_lmm_map_server PRIVATE
   execution/stage_coordinator.cpp
   bootstrap/algorithm_factory.cpp
   bootstrap/bootstrap_config.cpp
-  bootstrap/session_bootstrapper.cpp
+  bootstrap/runtime_bootstrapper.cpp
   artifact_repository.cpp
   file_set_transaction.cpp
   output_repository.cpp
-  session_manager.cpp
-  session_payload_builder.cpp
-  session_state.cpp
+  runtime_state_store.cpp
+  runtime_payload_builder.cpp
+  runtime_state.cpp
   query/visualization_projector.cpp
-  transaction/session_reconfigurer.cpp
+  transaction/runtime_reconfigurer.cpp
   pipeline_controller.cpp
   resource_governor.cpp
   runtime_service.cpp

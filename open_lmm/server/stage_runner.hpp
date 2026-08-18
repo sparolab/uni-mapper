@@ -18,7 +18,7 @@
 
 namespace open_lmm {
 
-struct CommittedSessionSnapshot {
+struct CommittedRuntimeSnapshot {
   uint64_t revision = 0;
   uint64_t config_revision = 0;
   std::vector<AgentId> ordered_agents;
@@ -62,7 +62,7 @@ struct NodeExecutionSpec {
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(StageId stage);
 [[nodiscard]] std::vector<ArtifactType> AffectedArtifacts(ConfigDomain domain);
 [[nodiscard]] std::vector<AgentId> ArtifactRevisionAffectedAgents(
-    const CommittedSessionSnapshot& before,
-    const CommittedSessionSnapshot& after);
+    const CommittedRuntimeSnapshot& before,
+    const CommittedRuntimeSnapshot& after);
 
 }  // namespace open_lmm

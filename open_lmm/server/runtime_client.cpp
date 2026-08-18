@@ -2,131 +2,94 @@
 
 #include <open_lmm/server/runtime_service.hpp>
 
-#include <utility>
 #include <thread>
+#include <utility>
 
 namespace open_lmm {
 
 struct RuntimeClient::Impl {
-  explicit Impl(std::size_t maximum_sessions) : service(maximum_sessions) {}
+  explicit Impl(std::size_t max_agent_tasks) : service(max_agent_tasks) {}
   RuntimeService service;
 };
 
-RuntimeClient::RuntimeClient(std::size_t maximum_sessions)
-    : impl_(std::make_unique<Impl>(maximum_sessions)) {}
+RuntimeClient::RuntimeClient(std::size_t max_agent_tasks)
+    : impl_(std::make_unique<Impl>(max_agent_tasks)) {}
+
 RuntimeClient::~RuntimeClient() {
   if (!impl_ || !impl_->service.IsInEventCallback()) return;
-  // RuntimeService teardown waits for controller workers. If the last client
-  // owner is released by one of those workers' callbacks, destroy the Impl on
-  // a neutral cleanup thread so PipelineController never joins itself.
+  // Controller workers must never join themselves.  Move assignment below
+  // shares this same destruction path by routing the old Impl through this
+  // destructor when necessary.
   Impl* deferred = impl_.release();
   try {
     std::thread([deferred] { delete deferred; }).detach();
   } catch (...) {
-    // Destructing on this callback thread is unsafe. In the exceptional case
-    // that a cleanup thread cannot be created, leak rather than self-join or
-    // access a controller after destruction.
+    // A leak is preferable to self-join during process teardown failure.
   }
 }
+
 RuntimeClient::RuntimeClient(RuntimeClient&&) noexcept = default;
-RuntimeClient& RuntimeClient::operator=(RuntimeClient&&) noexcept = default;
-
-Result<SessionId> RuntimeClient::CreateSession(const BootstrapRequest& request) {
-  return impl_->service.CreateSession(request);
-}
-
-Result<SessionId> RuntimeClient::CreateSession(
-    const BootstrapRequest& request,
-    const ConfigCandidate& root_candidate) {
-  return impl_->service.CreateSession(request, root_candidate);
-}
-
-Result<RuntimeSessionReplacement> RuntimeClient::ReplaceSession(
-    const SessionId& previous_session, const BootstrapRequest& request,
-    const ConfigCandidate& root_candidate,
-    std::function<void(const SessionExecutionEvent&)> callback) {
-  return impl_->service.ReplaceSession(previous_session, request,
-                                       root_candidate, std::move(callback));
-}
-
-Result<JobId> RuntimeClient::Submit(const SessionId& session_id,
-                                    const ExecutionRequest& request) {
-  return impl_->service.Submit(session_id, request);
-}
-
-Result<JobId> RuntimeClient::SubmitRunAll(const SessionId& session_id) {
-  return impl_->service.Submit(session_id, ExecutionRequest{});
-}
-
-Result<void> RuntimeClient::Cancel(const SessionId& session_id, JobId job_id) {
-  return impl_->service.Cancel(session_id, job_id);
-}
-
-Result<void> RuntimeClient::Wait(const SessionId& session_id, JobId job_id) {
-  return impl_->service.Wait(session_id, job_id);
-}
-
-Result<ClientSessionSnapshot> RuntimeClient::Snapshot(
-    const SessionId& session_id) const {
-  auto snapshot = impl_->service.Snapshot(session_id);
-  if (!snapshot) {
-    return Result<ClientSessionSnapshot>::Failure(snapshot.GetError());
+RuntimeClient& RuntimeClient::operator=(RuntimeClient&& other) noexcept {
+  if (this == &other) return *this;
+  auto retiring = std::move(impl_);
+  impl_ = std::move(other.impl_);
+  if (!retiring || !retiring->service.IsInEventCallback()) return *this;
+  Impl* deferred = retiring.release();
+  try {
+    std::thread([deferred] { delete deferred; }).detach();
+  } catch (...) {
+    // A leak is preferable to joining the emitting controller worker.
   }
-  const auto& value = snapshot.Value();
-  return Result<ClientSessionSnapshot>::Ok(
-      {value.id, value.label, value.state, value.output_directory});
+  return *this;
 }
 
-Result<RuntimeSessionSnapshot> RuntimeClient::RuntimeSnapshot(
-    const SessionId& session_id) const {
-  return impl_->service.Snapshot(session_id);
+Result<void> RuntimeClient::Open(const BootstrapRequest& request) {
+  return impl_->service.Open(request);
 }
-
-Result<std::vector<NodeDescriptor>> RuntimeClient::NodeDescriptors(
-    const SessionId& session_id) const {
-  return impl_->service.NodeDescriptors(session_id);
+Result<void> RuntimeClient::Open(const BootstrapRequest& request,
+                                 const ConfigCandidate& candidate) {
+  return impl_->service.Open(request, candidate);
 }
-
-Result<open_lmm::VisualizationSnapshot> RuntimeClient::VisualizationSnapshot(
-    const SessionId& session_id, const AgentId& agent) const {
-  return impl_->service.VisualizationSnapshot(session_id, agent);
-}
-
-Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>
-RuntimeClient::AlignmentFeedbackSnapshot(const SessionId& session_id) const {
-  return impl_->service.AlignmentFeedbackSnapshot(session_id);
-}
-
-Result<void> RuntimeClient::RespondToAlignment(
-    const SessionId& session_id, JobId job_id, AlignmentResponse response) {
-  return impl_->service.RespondToAlignment(session_id, job_id,
-                                           std::move(response));
-}
-
-Result<void> RuntimeClient::SetAlignmentFeedbackEnabled(
-    const SessionId& session_id, bool enabled) {
-  return impl_->service.SetAlignmentFeedbackEnabled(session_id, enabled);
-}
-
-Result<ConfigApplyReceipt> RuntimeClient::ApplyConfig(
-    const SessionId& session_id, const ConfigCandidate& candidate,
+Result<RuntimeReplaceReceipt> RuntimeClient::ReplaceRootConfig(
+    const BootstrapRequest& request, const ConfigCandidate& candidate,
     const ExpectedRevision& expected) {
-  return impl_->service.ApplyConfig(session_id, candidate, expected);
+  return impl_->service.ReplaceRootConfig(request, candidate, expected);
 }
-
+Result<JobHandle> RuntimeClient::Submit(const ExecutionRequest& request) {
+  return impl_->service.Submit(request);
+}
+Result<JobHandle> RuntimeClient::SubmitRunAll() {
+  return impl_->service.Submit(ExecutionRequest{});
+}
+Result<void> RuntimeClient::Cancel(JobHandle job) { return impl_->service.Cancel(job); }
+Result<void> RuntimeClient::Wait(JobHandle job) { return impl_->service.Wait(job); }
+Result<RuntimeSnapshot> RuntimeClient::Snapshot() const {
+  return impl_->service.Snapshot();
+}
+Result<std::vector<NodeDescriptor>> RuntimeClient::NodeDescriptors() const {
+  return impl_->service.NodeDescriptors();
+}
+Result<VisualizationSnapshot> RuntimeClient::Visualization(const AgentId& agent) const {
+  return impl_->service.Visualization(agent);
+}
+Result<std::optional<AlignmentFeedbackSnapshot>>
+RuntimeClient::AlignmentFeedback() const { return impl_->service.AlignmentFeedback(); }
+Result<void> RuntimeClient::RespondToAlignment(JobHandle job,
+                                                AlignmentResponse response) {
+  return impl_->service.RespondToAlignment(job, std::move(response));
+}
+Result<void> RuntimeClient::SetAlignmentFeedbackEnabled(bool enabled) {
+  return impl_->service.SetAlignmentFeedbackEnabled(enabled);
+}
+Result<ConfigApplyReceipt> RuntimeClient::ApplyConfig(
+    const ConfigCandidate& candidate, const ExpectedRevision& expected) {
+  return impl_->service.ApplyConfig(candidate, expected);
+}
 Result<ExecutionEventSubscription> RuntimeClient::SubscribeEvents(
-    const SessionId& session_id,
-    std::function<void(const SessionExecutionEvent&)> callback) {
-  return impl_->service.SubscribeEvents(session_id, std::move(callback));
+    std::function<void(const ExecutionEvent&)> callback) {
+  return impl_->service.SubscribeEvents(std::move(callback));
 }
-
-Result<void> RuntimeClient::CloseSession(const SessionId& session_id,
-                                         CloseMode mode) {
-  return impl_->service.CloseSession(session_id, mode);
-}
-
-std::vector<SessionId> RuntimeClient::SessionIds() const {
-  return impl_->service.SessionIds();
-}
+Result<void> RuntimeClient::Close(CloseMode mode) { return impl_->service.Close(mode); }
+bool RuntimeClient::IsOpen() const { return impl_->service.IsOpen(); }
 
 }  // namespace open_lmm

@@ -1,4 +1,4 @@
-#include "session_bootstrapper.hpp"
+#include "runtime_bootstrapper.hpp"
 
 #include "algorithm_factory.hpp"
 
@@ -28,11 +28,11 @@ constexpr uint64_t kFnvOffset = 14695981039346656037ULL;
 constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 struct LoadedConfig {
-  SessionConfigDocument document;
+  RuntimeConfigDocument document;
   ValidatedConfigDocument validated;
 };
 
-Result<void> CheckCancelled(const SessionBootstrapRequest& request,
+Result<void> CheckCancelled(const RuntimeBootstrapRequest& request,
                             std::string_view boundary) {
   if (request.cancellation &&
       request.cancellation->IsCancellationRequested()) {
@@ -241,7 +241,7 @@ std::optional<Eigen::Isometry3d> MatrixFromJson(const nlohmann::json& value) {
 }
 
 std::map<AgentId, StoredAlignment> LoadAlignmentCache(
-    const fs::path& path, const std::string& session_fingerprint,
+    const fs::path& path, const std::string& runtime_fingerprint,
     const AgentSymbolCatalogHandle& catalog) {
   std::map<AgentId, StoredAlignment> alignments;
   std::ifstream input(path);
@@ -250,8 +250,8 @@ std::map<AgentId, StoredAlignment> LoadAlignmentCache(
     nlohmann::json root;
     input >> root;
     if (root.value("version", 0) != 3 ||
-        root.value("session_fingerprint", std::string()) !=
-            session_fingerprint) {
+        root.value("runtime_fingerprint", std::string()) !=
+            runtime_fingerprint) {
       return {};
     }
     for (const auto& item : root.at("alignments")) {
@@ -343,7 +343,7 @@ Result<void> WriteAgentManifest(const fs::path& output_directory,
   }
   auto committed = CommitFileSet({{temporary, destination}});
   if (!committed &&
-      committed.GetError().severity != Error::Severity::kFatalSession) {
+      committed.GetError().severity != Error::Severity::kFatalRuntime) {
     std::error_code ignored;
     fs::remove(temporary, ignored);
   }
@@ -352,17 +352,17 @@ Result<void> WriteAgentManifest(const fs::path& output_directory,
 
 }  // namespace
 
-SessionBootstrapper::SessionBootstrapper(
+RuntimeBootstrapper::RuntimeBootstrapper(
     std::shared_ptr<const AlgorithmFactory> algorithms)
     : algorithms_(algorithms ? std::move(algorithms)
                              : std::make_shared<AlgorithmFactory>()) {}
 
-Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
-    const SessionBootstrapRequest& request) const {
+Result<RuntimeBootstrapResult> RuntimeBootstrapper::Bootstrap(
+    const RuntimeBootstrapRequest& request) const {
   try {
-  auto cancelled = CheckCancelled(request, "before session bootstrap");
+  auto cancelled = CheckCancelled(request, "before runtime bootstrap");
   if (!cancelled) {
-    return Result<SessionBootstrapResult>::Failure(cancelled.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(cancelled.GetError());
   }
   const auto& bootstrap = request.bootstrap_config;
   const auto& root_document = bootstrap.Root().Document();
@@ -379,71 +379,71 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   for (const auto* loaded : {&map_source, &data_source, &loop_source,
                              &optimizer_source, &remover_source}) {
     if (!*loaded) {
-      return Result<SessionBootstrapResult>::Failure(loaded->GetError());
+      return Result<RuntimeBootstrapResult>::Failure(loaded->GetError());
     }
   }
-  auto session_registry = std::make_shared<const SchemaRegistry>(
+  auto runtime_registry = std::make_shared<const SchemaRegistry>(
       BuiltinConfigSchemaRegistry());
 
   auto map_loaded =
       ValidateSnapshot(ConfigDocumentKind::kMapServer,
                        bootstrap.MapServerConfig(), map_source.Value(),
-                       *session_registry);
+                       *runtime_registry);
   auto data_loaded =
       ValidateSnapshot(ConfigDocumentKind::kDataLoader,
                        bootstrap.DataLoaderConfig(), data_source.Value(),
-                       *session_registry);
+                       *runtime_registry);
   auto loop_loaded =
       ValidateSnapshot(ConfigDocumentKind::kLoopDetector,
                        bootstrap.LoopDetectorConfig(), loop_source.Value(),
-                       *session_registry);
+                       *runtime_registry);
   auto optimizer_loaded =
       ValidateSnapshot(ConfigDocumentKind::kBackendOptimizer,
                        bootstrap.BackendOptimizerConfig(),
-                       optimizer_source.Value(), *session_registry);
+                       optimizer_source.Value(), *runtime_registry);
   auto remover_loaded =
       ValidateSnapshot(ConfigDocumentKind::kDynamicRemover,
                        bootstrap.DynamicRemoverConfig(), remover_source.Value(),
-                       *session_registry);
+                       *runtime_registry);
   if (!map_loaded)
-    return Result<SessionBootstrapResult>::Failure(map_loaded.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(map_loaded.GetError());
   if (!data_loaded)
-    return Result<SessionBootstrapResult>::Failure(data_loaded.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(data_loaded.GetError());
   if (!loop_loaded)
-    return Result<SessionBootstrapResult>::Failure(loop_loaded.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(loop_loaded.GetError());
   if (!optimizer_loaded)
-    return Result<SessionBootstrapResult>::Failure(optimizer_loaded.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(optimizer_loaded.GetError());
   if (!remover_loaded)
-    return Result<SessionBootstrapResult>::Failure(remover_loaded.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(remover_loaded.GetError());
   LoadedConfig map = std::move(map_loaded).Value();
   LoadedConfig data = std::move(data_loaded).Value();
   LoadedConfig loop = std::move(loop_loaded).Value();
   LoadedConfig optimizer = std::move(optimizer_loaded).Value();
   LoadedConfig remover = std::move(remover_loaded).Value();
 
-  auto root_schema = session_registry->Validate(
+  auto root_schema = runtime_registry->Validate(
       ConfigDocumentKind::kRoot, root_document,
       (bootstrap.ConfigDirectory() / "config.json").string());
-  auto map_schema = session_registry->ParseAndValidate(
+  auto map_schema = runtime_registry->ParseAndValidate(
       ConfigDocumentKind::kMapServer, map.document.canonical_json,
       map.document.path.string());
   if (!root_schema) {
-    return Result<SessionBootstrapResult>::Failure(root_schema.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(root_schema.GetError());
   }
   if (!map_schema) {
-    return Result<SessionBootstrapResult>::Failure(map_schema.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(map_schema.GetError());
   }
-  auto session_schema = ValidateSessionConfigDocuments(root_schema.Value(),
+  auto runtime_schema = ValidateRuntimeConfigDocuments(root_schema.Value(),
                                                         map_schema.Value());
-  if (!session_schema) {
-    return Result<SessionBootstrapResult>::Failure(session_schema.GetError());
+  if (!runtime_schema) {
+    return Result<RuntimeBootstrapResult>::Failure(runtime_schema.GetError());
   }
 
   const fs::path& root_data = bootstrap.DataRoot();
   const auto& subdirectories = bootstrap.DataSubdirectories();
   const fs::path& root_output = bootstrap.OutputRoot();
   if (root_data.empty() || root_output.empty() || subdirectories.empty()) {
-    return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
+    return Result<RuntimeBootstrapResult>::Failure(Error::InvalidArgument(
         "directory root_dir_path, root_save_dir, and sub_dir_list must be non-empty"));
   }
 
@@ -454,18 +454,18 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   for (const std::string& name : subdirectories) {
     auto agent = AgentId::Parse(name);
     if (!agent) {
-      return Result<SessionBootstrapResult>::Failure(agent.GetError());
+      return Result<RuntimeBootstrapResult>::Failure(agent.GetError());
     }
     const fs::path directory = root_data / name;
     std::error_code error;
     const bool is_directory = fs::is_directory(directory, error);
     if (error) {
-      return Result<SessionBootstrapResult>::Failure(Error::IoError(
+      return Result<RuntimeBootstrapResult>::Failure(Error::IoError(
           "failed to inspect agent directory " + directory.string() + ": " +
           error.message()));
     }
     if (!is_directory) {
-      return Result<SessionBootstrapResult>::Failure(
+      return Result<RuntimeBootstrapResult>::Failure(
           Error::FileNotFound(directory.string()));
     }
     configured_agents.push_back(std::move(agent).Value());
@@ -473,7 +473,7 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   }
   auto catalog_result = AgentSymbolCatalog::Build(configured_agents);
   if (!catalog_result) {
-    return Result<SessionBootstrapResult>::Failure(catalog_result.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(catalog_result.GetError());
   }
   auto catalog = std::make_shared<const AgentSymbolCatalog>(
       std::move(catalog_result).Value());
@@ -482,19 +482,19 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   const bool map_enabled = map_document.at("enable_map_updater").get<bool>();
   const int anchor = map_document.at("anchor_agent_index").get<int>();
   if (anchor < 0 || anchor >= static_cast<int>(configured_agents.size())) {
-    return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
+    return Result<RuntimeBootstrapResult>::Failure(Error::InvalidArgument(
         "map_server/anchor_agent_index is outside the configured agent range"));
   }
   const double save_voxel = map_document.at("save_voxel_size").get<double>();
   if (save_voxel <= 0.0) {
-    return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
+    return Result<RuntimeBootstrapResult>::Failure(Error::InvalidArgument(
         "map_server/save_voxel_size must be greater than zero"));
   }
   const bool parallel_load = map_document.at("parallel_data_load").get<bool>();
   const bool parallel_map = map_document.at("parallel_map_update").get<bool>();
   const int max_parallel = map_document.at("max_parallel_agents").get<int>();
   if (max_parallel <= 0) {
-    return Result<SessionBootstrapResult>::Failure(Error::InvalidArgument(
+    return Result<RuntimeBootstrapResult>::Failure(Error::InvalidArgument(
         "map_server/max_parallel_agents must be greater than zero"));
   }
 
@@ -504,31 +504,31 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   auto remover_config = DecodeDynamicRemoverConfig(remover.validated);
   auto map_config = DecodeMapSaveConfig(map.validated);
   if (!data_config)
-    return Result<SessionBootstrapResult>::Failure(data_config.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(data_config.GetError());
   if (!loop_config)
-    return Result<SessionBootstrapResult>::Failure(loop_config.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(loop_config.GetError());
   if (!optimizer_config)
-    return Result<SessionBootstrapResult>::Failure(optimizer_config.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(optimizer_config.GetError());
   if (!remover_config)
-    return Result<SessionBootstrapResult>::Failure(remover_config.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(remover_config.GetError());
   if (!map_config)
-    return Result<SessionBootstrapResult>::Failure(map_config.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(map_config.GetError());
 
   auto input_cardinality = ValidateInputCardinality(
       configured_agents, data_directories, data_config.Value());
   if (!input_cardinality) {
-    return Result<SessionBootstrapResult>::Failure(
+    return Result<RuntimeBootstrapResult>::Failure(
         input_cardinality.GetError());
   }
 
   auto preflight = algorithms_->Preflight(loop_config.Value(),
                                           remover_config.Value());
   if (!preflight) {
-    return Result<SessionBootstrapResult>::Failure(preflight.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(preflight.GetError());
   }
   auto optimizer_instance = algorithms_->CreateOptimizer(optimizer_config.Value());
   if (!optimizer_instance) {
-    return Result<SessionBootstrapResult>::Failure(
+    return Result<RuntimeBootstrapResult>::Failure(
         optimizer_instance.GetError());
   }
 
@@ -538,16 +538,16 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   auto input_fingerprints = InputFingerprints(
       configured_agents, data_directories, data_config.Value());
   if (!input_fingerprints) {
-    return Result<SessionBootstrapResult>::Failure(
+    return Result<RuntimeBootstrapResult>::Failure(
         input_fingerprints.GetError());
   }
-  uint64_t session_hash = kFnvOffset;
-  HashText(session_hash, config_fingerprint);
+  uint64_t runtime_hash = kFnvOffset;
+  HashText(runtime_hash, config_fingerprint);
   for (const auto& [agent, fingerprint] : input_fingerprints.Value()) {
-    HashText(session_hash, agent.Value());
-    HashText(session_hash, fingerprint);
+    HashText(runtime_hash, agent.Value());
+    HashText(runtime_hash, fingerprint);
   }
-  const std::string session_fingerprint = HexFingerprint(session_hash);
+  const std::string runtime_fingerprint = HexFingerprint(runtime_hash);
   const fs::path cache_root =
       request.output_directory ? *request.output_directory : root_output;
   const fs::path cache_path = cache_root / "map_alignment_cache.json";
@@ -568,8 +568,8 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
 
   auto database = std::make_shared<SharedDatabase>();
   database->stored_alignments =
-      LoadAlignmentCache(cache_path, session_fingerprint, catalog);
-  auto payload = std::make_shared<SessionPayload>();
+      LoadAlignmentCache(cache_path, runtime_fingerprint, catalog);
+  auto payload = std::make_shared<RuntimePayload>();
   for (std::size_t index = 0; index < configured_agents.size(); ++index) {
     AgentPipelineCtx context;
     context.agent = {.id = configured_agents[index],
@@ -592,7 +592,7 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   payload->database = std::move(database);
   payload->optimizer = std::move(optimizer_instance).Value();
 
-  auto documents = std::make_shared<SessionConfigDocuments>();
+  auto documents = std::make_shared<RuntimeConfigDocuments>();
   documents->root = {bootstrap.ConfigDirectory() / "config.json",
                      bootstrap.Root().CanonicalJson()};
   documents->map_server = std::move(map.document);
@@ -603,9 +603,9 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   auto alignment = std::make_shared<AlignmentArtifactMetadata>();
   alignment->cache_path = cache_path;
   alignment->input_fingerprints = std::move(input_fingerprints).Value();
-  alignment->session_fingerprint = session_fingerprint;
+  alignment->runtime_fingerprint = runtime_fingerprint;
 
-  auto config = std::make_shared<SessionConfig>();
+  auto config = std::make_shared<RuntimeConfig>();
   config->root = {data_directories,
                   output,
                   anchor,
@@ -627,11 +627,11 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
   config->fingerprint = config_fingerprint;
   config->documents = std::move(documents);
   config->alignment_artifacts = std::move(alignment);
-  config->schema_registry = std::move(session_registry);
+  config->schema_registry = std::move(runtime_registry);
 
   ArtifactRepository initial_artifacts;
   initial_artifacts.Reset(ordered_agents);
-  auto state = std::make_shared<SessionState>();
+  auto state = std::make_shared<RuntimeState>();
   state->revision = 1;
   state->config = std::move(config);
   state->ordered_agents = ordered_agents;
@@ -641,52 +641,51 @@ Result<SessionBootstrapResult> SessionBootstrapper::Bootstrap(
 
   // Output publication is the final bootstrap step. All config, input, and
   // in-memory state validation must succeed before an existing manifest can be
-  // replaced or a new runtime-session directory can be created.
+  // replaced or a new runtime output directory can be created.
   cancelled = CheckCancelled(request, "before agent manifest");
   if (!cancelled) {
-    return Result<SessionBootstrapResult>::Failure(cancelled.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(cancelled.GetError());
   }
   std::error_code directory_error;
   const bool output_existed = fs::exists(output, directory_error);
   if (directory_error) {
-    return Result<SessionBootstrapResult>::Failure(Error::IoError(
+    return Result<RuntimeBootstrapResult>::Failure(Error::IoError(
         "failed to inspect output directory " + output.string() + ": " +
         directory_error.message()));
   }
   fs::create_directories(output, directory_error);
   if (directory_error) {
-    return Result<SessionBootstrapResult>::Failure(Error::IoError(
+    return Result<RuntimeBootstrapResult>::Failure(Error::IoError(
         "failed to create output directory " + output.string() + ": " +
         directory_error.message()));
   }
   const bool output_is_directory = fs::is_directory(output, directory_error);
   if (directory_error || !output_is_directory) {
-    return Result<SessionBootstrapResult>::Failure(Error::IoError(
+    return Result<RuntimeBootstrapResult>::Failure(Error::IoError(
         "failed to access output directory " + output.string() +
         (directory_error ? ": " + directory_error.message() : "")));
   }
   auto manifest = WriteAgentManifest(output, *state->agent_catalog);
   if (!manifest) {
     if (!output_existed &&
-        manifest.GetError().severity != Error::Severity::kFatalSession) {
+        manifest.GetError().severity != Error::Severity::kFatalRuntime) {
       std::error_code ignored;
       fs::remove(output, ignored);
     }
-    return Result<SessionBootstrapResult>::Failure(manifest.GetError());
+    return Result<RuntimeBootstrapResult>::Failure(manifest.GetError());
   }
 
   ResourceBudget budget;
-  budget.max_active_sessions = 1;
   budget.max_agent_tasks = static_cast<std::size_t>(max_parallel);
   budget.max_cpu_threads = static_cast<std::size_t>(max_parallel);
-  return Result<SessionBootstrapResult>::Ok(
+  return Result<RuntimeBootstrapResult>::Ok(
       {std::move(state), budget});
   } catch (const std::exception& error) {
-    return Result<SessionBootstrapResult>::Failure(
+    return Result<RuntimeBootstrapResult>::Failure(
         Error::ParseError(error.what()).WithConfig(
             request.bootstrap_config.ConfigDirectory().string()));
   } catch (...) {
-    return Result<SessionBootstrapResult>::Failure(
+    return Result<RuntimeBootstrapResult>::Failure(
         Error::ParseError("unknown bootstrap exception")
             .WithConfig(request.bootstrap_config.ConfigDirectory().string()));
   }

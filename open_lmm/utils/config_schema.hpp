@@ -202,7 +202,7 @@ class SchemaRegistry {
 };
 
 [[nodiscard]] const SchemaRegistry& BuiltinConfigSchemaRegistry();
-[[nodiscard]] Result<void> ValidateSessionConfigDocuments(
+[[nodiscard]] Result<void> ValidateRuntimeConfigDocuments(
     const ValidatedConfigDocument& root,
     const ValidatedConfigDocument& map_server);
 [[nodiscard]] std::string_view ConfigDocumentKindName(

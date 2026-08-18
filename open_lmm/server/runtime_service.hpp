@@ -1,11 +1,11 @@
 #pragma once
 
+#include <open_lmm/common/runtime_api.hpp>
 #include <open_lmm/common/runtime_contracts.hpp>
-#include <open_lmm/server/pipeline_controller.hpp>
 #include <open_lmm/server/bootstrap/bootstrap_config.hpp>
+#include <open_lmm/server/pipeline_controller.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 
-#include <compare>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -13,76 +13,93 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace open_lmm {
 
+// Owns exactly one externally visible runtime. A root/DataLoad replacement
+// builds one private candidate and atomically swaps it for active_ only after
+// config-file installation succeeds.
 class RuntimeService {
  public:
   using PortFactory = std::function<Result<std::shared_ptr<StageRuntimePort>>(
       const BootstrapConfigSnapshot&, const std::filesystem::path&)>;
 
-  explicit RuntimeService(std::size_t maximum_sessions = 8,
+  explicit RuntimeService(std::size_t max_agent_tasks = 2,
                           PortFactory port_factory = {});
-  explicit RuntimeService(ResourceBudget budget,
-                          PortFactory port_factory = {});
+  explicit RuntimeService(ResourceBudget budget, PortFactory port_factory = {});
   ~RuntimeService();
   RuntimeService(const RuntimeService&) = delete;
   RuntimeService& operator=(const RuntimeService&) = delete;
 
-  Result<SessionId> CreateSession(const BootstrapRequest& request);
-  Result<SessionId> CreateSession(const BootstrapRequest& request,
-                                  const ConfigCandidate& root_candidate);
-  Result<RuntimeSessionReplacement> ReplaceSession(
-      const SessionId& previous_session, const BootstrapRequest& request,
-      const ConfigCandidate& root_candidate,
-      std::function<void(const SessionExecutionEvent&)> callback);
-  Result<JobId> Submit(const SessionId& session_id,
-                       const ExecutionRequest& request);
-  Result<void> Cancel(const SessionId& session_id, JobId job_id);
-  Result<void> Wait(const SessionId& session_id, JobId job_id);
-  Result<RuntimeSessionSnapshot> Snapshot(const SessionId& session_id) const;
-  Result<std::vector<NodeDescriptor>> NodeDescriptors(
-      const SessionId& session_id) const;
-  Result<open_lmm::VisualizationSnapshot> VisualizationSnapshot(
-      const SessionId& session_id, const AgentId& agent) const;
-  Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>
-  AlignmentFeedbackSnapshot(const SessionId& session_id) const;
-  Result<void> RespondToAlignment(const SessionId& session_id, JobId job_id,
-                                  AlignmentResponse response);
-  Result<void> SetAlignmentFeedbackEnabled(const SessionId& session_id,
-                                           bool enabled);
-  Result<ConfigApplyReceipt> ApplyConfig(
-      const SessionId& session_id, const ConfigCandidate& candidate,
+  Result<void> Open(const BootstrapRequest& request);
+  Result<void> Open(const BootstrapRequest& request,
+                    const ConfigCandidate& root_candidate);
+  Result<RuntimeReplaceReceipt> ReplaceRootConfig(
+      const BootstrapRequest& request, const ConfigCandidate& root_candidate,
       const ExpectedRevision& expected);
-  Result<void> CloseSession(const SessionId& session_id, CloseMode mode);
+
+  Result<JobHandle> Submit(const ExecutionRequest& request);
+  Result<void> Cancel(JobHandle job);
+  Result<void> Wait(JobHandle job);
+  Result<RuntimeSnapshot> Snapshot() const;
+  Result<std::vector<NodeDescriptor>> NodeDescriptors() const;
+  Result<VisualizationSnapshot> Visualization(const AgentId& agent) const;
+  Result<std::optional<AlignmentFeedbackSnapshot>> AlignmentFeedback() const;
+  Result<void> RespondToAlignment(JobHandle job, AlignmentResponse response);
+  Result<void> SetAlignmentFeedbackEnabled(bool enabled);
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected);
   Result<ExecutionEventSubscription> SubscribeEvents(
-      const SessionId& session_id,
-      std::function<void(const SessionExecutionEvent&)> callback);
-  [[nodiscard]] std::vector<SessionId> SessionIds() const;
+      std::function<void(const ExecutionEvent&)> callback);
+  Result<void> Close(CloseMode mode = CloseMode::kCancelAndWait);
+
+  [[nodiscard]] bool IsOpen() const;
   [[nodiscard]] bool IsInEventCallback() const;
   [[nodiscard]] const ResourceGovernor& Governor() const noexcept {
     return *governor_;
   }
 
  private:
-  struct RuntimeSession;
-  Result<std::shared_ptr<RuntimeSession>> lookup(
-      const SessionId& session_id) const;
-  static bool IsActive(JobState state);
-  static RuntimeSessionState DeriveState(const RuntimeSession& session,
-                                         const PipelineSnapshot& pipeline);
-  static Result<SessionId> GenerateSessionId();
-  static std::string GenerateOutputNamespace();
-  Result<SessionId> createSession(
-      const BootstrapRequest& request,
-      BootstrapConfigSnapshot bootstrap_config);
+  struct RuntimeInstance;
+  struct SubscriberSlot;
+  struct OperationLease;
+  struct PublicJob;
 
-  mutable std::mutex registry_mutex_;
-  std::map<SessionId, std::shared_ptr<RuntimeSession>> sessions_;
+  Result<std::shared_ptr<RuntimeInstance>> BuildInstance(
+      const BootstrapRequest& request, BootstrapConfigSnapshot bootstrap,
+      uint64_t epoch, uint64_t initial_runtime_revision = 1,
+      uint64_t initial_config_revision = 1) const;
+  Result<std::shared_ptr<RuntimeInstance>> BuildInstance(
+      const BootstrapRequest& request, const ConfigCandidate& root_candidate,
+      uint64_t epoch, uint64_t initial_runtime_revision = 1,
+      uint64_t initial_config_revision = 1) const;
+  Result<std::shared_ptr<RuntimeInstance>> Active() const;
+  Result<OperationLease> AcquireOperation(bool require_ready) const;
+  Result<PublicJob> ResolveJob(JobHandle job) const;
+  Result<void> AttachEventSource(const std::shared_ptr<RuntimeInstance>& instance);
+  Result<void> InstallRootConfig(const RuntimeInstance& candidate) const;
+  void DispatchEvent(const std::shared_ptr<RuntimeInstance>& instance,
+                     const ExecutionEvent& event);
+  uint64_t MapPublicJobLocked(uint64_t epoch, JobId local_job);
+  static bool IsActive(JobState state);
+  static RuntimeStatus DeriveState(
+      const RuntimeInstance& instance, const PipelineSnapshot& pipeline);
+  static std::string GenerateOutputNamespace();
+
+  mutable std::mutex mutex_;
+  std::shared_ptr<RuntimeInstance> active_;
+  bool replacement_in_progress_ = false;
+  uint64_t epoch_ = 0;
+  uint64_t next_public_job_ = 1;
+  std::optional<std::pair<uint64_t, uint64_t>> pending_public_job_;
+  std::map<std::pair<uint64_t, JobId>, uint64_t> public_job_ids_;
+  std::map<uint64_t, PublicJob> public_jobs_;
+  uint64_t next_subscriber_id_ = 1;
+  std::map<uint64_t, std::shared_ptr<SubscriberSlot>> subscribers_;
   std::shared_ptr<ResourceGovernor> governor_;
   PortFactory port_factory_;
+  mutable std::mutex submit_mutex_;
 };
 
 }  // namespace open_lmm

@@ -12,7 +12,7 @@ string agent
 ---
 bool success
 uint64 job_id
-uint8 session_state
+uint8 runtime_state
 uint64 config_revision
 string output_directory
 string message

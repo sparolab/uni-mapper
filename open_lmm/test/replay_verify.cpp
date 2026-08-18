@@ -29,7 +29,7 @@ void Require(const Result<T>& result, const std::string& operation) {
   if (!result) Fail(operation + ": " + result.GetError().Message());
 }
 
-CommittedSessionSnapshot RequireSessionSnapshot(const MapServer& server) {
+CommittedRuntimeSnapshot RequireSessionSnapshot(const MapServer& server) {
   const auto snapshot = server.Snapshot();
   if (snapshot.revision == 0) Fail("committed session snapshot is unavailable");
   return snapshot;
@@ -54,7 +54,7 @@ Result<ExecutionReceipt> Execute(MapServer& server,
        server.Snapshot().revision});
 }
 
-ArtifactState StateOf(const CommittedSessionSnapshot& snapshot,
+ArtifactState StateOf(const CommittedRuntimeSnapshot& snapshot,
                       ArtifactType type, std::optional<AgentId> agent) {
   for (const auto& artifact : snapshot.artifacts) {
     if (artifact.key == ArtifactKey{type, agent}) return artifact.state;
@@ -118,8 +118,8 @@ PoseDifference CompareAgent(const VisualizationSnapshot& expected,
   return difference;
 }
 
-void VerifyDescriptorCounts(const CommittedSessionSnapshot& expected,
-                            const CommittedSessionSnapshot& actual,
+void VerifyDescriptorCounts(const CommittedRuntimeSnapshot& expected,
+                            const CommittedRuntimeSnapshot& actual,
                             const std::string& operation) {
   if (actual.descriptor_count != expected.descriptor_count ||
       actual.per_agent_descriptor_count !=

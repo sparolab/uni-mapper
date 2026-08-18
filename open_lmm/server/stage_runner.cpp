@@ -41,11 +41,11 @@ const std::vector<NodeExecutionSpec>& ExecutionSpecs() {
        {ArtifactType::kGlobalMap, ArtifactType::kPcdFile},
        {ArtifactType::kGlobalMap, ArtifactType::kPcdFile}},
       {NodeId::kPoseSave, "pose_save", StageId::kSave,
-       ExecutionScope::kSession, false, true,
+       ExecutionScope::kRuntime, false, true,
        {ArtifactType::kOptimizedPoses}, {ArtifactType::kPoseFile},
        {ArtifactType::kPoseFile}},
       {NodeId::kFallbackMapSave, "fallback_map_save", StageId::kSave,
-       ExecutionScope::kSession, false, true,
+       ExecutionScope::kRuntime, false, true,
        {ArtifactType::kRawData, ArtifactType::kOptimizedPoses},
        {ArtifactType::kGlobalMap, ArtifactType::kPcdFile},
        {ArtifactType::kGlobalMap, ArtifactType::kPcdFile}},
@@ -55,13 +55,13 @@ const std::vector<NodeExecutionSpec>& ExecutionSpecs() {
 
 const std::vector<ArtifactExecutionSpec>& ArtifactExecutionSpecs() {
   static const std::vector<ArtifactExecutionSpec> specs{
-      {ArtifactType::kConfigSnapshot, ExecutionScope::kSession},
+      {ArtifactType::kConfigSnapshot, ExecutionScope::kRuntime},
       {ArtifactType::kAgentInput, ExecutionScope::kPerAgent},
       {ArtifactType::kRawData, ExecutionScope::kPerAgent},
-      {ArtifactType::kDescriptorState, ExecutionScope::kSession},
+      {ArtifactType::kDescriptorState, ExecutionScope::kRuntime},
       {ArtifactType::kLoopCandidates, ExecutionScope::kPerAgent},
       {ArtifactType::kMapAlignment, ExecutionScope::kPerAgent},
-      {ArtifactType::kOptimizerState, ExecutionScope::kSession},
+      {ArtifactType::kOptimizerState, ExecutionScope::kRuntime},
       {ArtifactType::kOptimizedPoses, ExecutionScope::kPerAgent},
       {ArtifactType::kGlobalMap, ExecutionScope::kPerAgent},
       {ArtifactType::kPoseFile, ExecutionScope::kPerAgent},
@@ -234,8 +234,8 @@ std::vector<ArtifactType> AffectedArtifacts(ConfigDomain domain) {
 }
 
 std::vector<AgentId> ArtifactRevisionAffectedAgents(
-    const CommittedSessionSnapshot& before,
-    const CommittedSessionSnapshot& after) {
+    const CommittedRuntimeSnapshot& before,
+    const CommittedRuntimeSnapshot& after) {
   std::map<ArtifactKey, uint64_t> before_revisions;
   std::map<ArtifactKey, uint64_t> after_revisions;
   for (const auto& artifact : before.artifacts) {
@@ -245,13 +245,13 @@ std::vector<AgentId> ArtifactRevisionAffectedAgents(
     after_revisions[artifact.key] = artifact.revision;
   }
 
-  bool session_artifact_changed = false;
+  bool runtime_artifact_changed = false;
   std::set<AgentId> changed_agents;
   const auto record_change = [&](const ArtifactKey& key) {
     if (key.agent) {
       changed_agents.insert(*key.agent);
     } else {
-      session_artifact_changed = true;
+      runtime_artifact_changed = true;
     }
   };
   for (const auto& [key, revision] : after_revisions) {
@@ -265,7 +265,7 @@ std::vector<AgentId> ArtifactRevisionAffectedAgents(
     if (!after_revisions.contains(key)) record_change(key);
   }
 
-  if (session_artifact_changed) return after.ordered_agents;
+  if (runtime_artifact_changed) return after.ordered_agents;
   std::vector<AgentId> result;
   result.reserve(changed_agents.size());
   for (const AgentId& agent : after.ordered_agents) {

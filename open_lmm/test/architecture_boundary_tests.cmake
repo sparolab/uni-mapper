@@ -136,7 +136,7 @@ file(READ
 foreach(forbidden
     "plugin_support.hpp"
     "stage_executor.hpp"
-    "session_state.hpp"
+    "runtime_state.hpp"
     "server/execution/")
   string(FIND "${public_header_allowlist}" "${forbidden}" found)
   if(NOT found EQUAL -1)
@@ -146,7 +146,7 @@ foreach(forbidden
 endforeach()
 
 # MapServer is the stable command/query port façade only; mutable
-# session/runtime responsibilities belong to StageExecutor and SessionManager.
+# session/runtime responsibilities belong to StageExecutor and RuntimeStateStore.
 file(READ "${OPEN_LMM_SOURCE_DIR}/server/map_server.hpp" map_server_header)
 foreach(expected
     "std::unique_ptr<StageExecutor> executor_"
@@ -156,7 +156,7 @@ foreach(expected
     message(FATAL_ERROR "MapServer façade must contain: ${expected}")
   endif()
 endforeach()
-foreach(forbidden "SessionManager" "OutputRepository" "state_mutex_")
+foreach(forbidden "RuntimeStateStore" "OutputRepository" "state_mutex_")
   string(FIND "${map_server_header}" "${forbidden}" found)
   if(NOT found EQUAL -1)
     message(FATAL_ERROR
@@ -191,18 +191,41 @@ file(READ "${OPEN_LMM_SOURCE_DIR}/server/runtime_service.hpp"
 foreach(expected
     "class RuntimeService"
     "CloseMode"
-    "std::map<SessionId, std::shared_ptr<RuntimeSession>> sessions_")
+    "std::shared_ptr<RuntimeInstance> active_"
+    "replacement_in_progress_")
   string(FIND "${runtime_service_header}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "RuntimeService contract must contain: ${expected}")
   endif()
 endforeach()
 
+foreach(removed_internal_path
+    "server/session_state.hpp"
+    "server/session_manager.hpp"
+    "server/runtime_session_client.hpp")
+  if(EXISTS "${OPEN_LMM_SOURCE_DIR}/${removed_internal_path}")
+    message(FATAL_ERROR
+      "single-runtime migration must remove ${removed_internal_path}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/server/runtime_state_store.hpp"
+  runtime_state_store_header)
+foreach(expected "class RuntimeStateStore" "std::shared_ptr<const RuntimeState>")
+  string(FIND "${runtime_state_store_header}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "RuntimeStateStore contract must contain: ${expected}")
+  endif()
+endforeach()
+
 file(READ "${OPEN_LMM_SOURCE_DIR}/common/runtime_contracts.hpp"
   runtime_contracts_header)
-string(FIND "${runtime_contracts_header}" "class SessionId" found_session_id)
-if(found_session_id EQUAL -1)
-  message(FATAL_ERROR "Lightweight runtime contracts must contain SessionId")
+string(FIND "${runtime_contracts_header}" "SessionId" found_session_id)
+if(NOT found_session_id EQUAL -1)
+  message(FATAL_ERROR "Single-runtime contracts must not expose SessionId")
+endif()
+string(FIND "${runtime_contracts_header}" "struct JobHandle" found_job_handle)
+if(found_job_handle EQUAL -1)
+  message(FATAL_ERROR "Single-runtime contracts must expose JobHandle")
 endif()
 foreach(lightweight_header IN ITEMS
     common/agent_id.hpp common/result.hpp common/runtime_contracts.hpp
@@ -215,7 +238,6 @@ file(READ "${OPEN_LMM_SOURCE_DIR}/server/resource_governor.hpp"
   resource_governor_header)
 foreach(expected
     "struct ResourceBudget"
-    "max_active_sessions"
     "max_agent_tasks"
     "max_cpu_threads"
     "soft_memory_bytes"
@@ -226,6 +248,8 @@ foreach(expected
     message(FATAL_ERROR "ResourceGovernor contract must contain: ${expected}")
   endif()
 endforeach()
+assert_file_excludes("server/resource_governor.hpp"
+  "max_active_sessions" "TryAcquireSession" "ReleaseSession")
 assert_file_excludes(
   "utils/bounded_executor.cpp"
   "std::async"
@@ -325,14 +349,13 @@ file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
   ros_adapter)
 foreach(expected
     "RuntimeClient"
-    "RuntimeSessionClient"
     "GuiRuntimeHost"
     "create_server<ExecutePipeline>"
     "\"~/execute\""
     "\"~/status\""
     "\"~/events\""
-    "session_->Submit("
-    "session_->Cancel(")
+    "runtime_->Submit("
+    "runtime_->Cancel(")
   string(FIND "${ros_adapter}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "ROS command adapter must contain: ${expected}")
@@ -342,7 +365,8 @@ assert_file_excludes(
   "../ros/ros2/open_lmm_ros/open_lmm_ros.hpp"
   "server/runtime_service.hpp"
   "gui_controller_bridge.hpp"
-  "gui_plugin_host.hpp")
+  "gui_plugin_host.hpp"
+  "RuntimeSessionClient")
 file(READ "${OPEN_LMM_SOURCE_DIR}/CMakeLists.txt" core_cmake)
 string(FIND "${core_cmake}" "add_executable(open_lmm_batch main.cpp)"
   found_batch_launcher)

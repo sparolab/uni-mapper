@@ -1,8 +1,7 @@
 #include <iostream>
 #include <string>
 
-#include <open_lmm/server/map_server.hpp>
-#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
+#include <open_lmm/server/runtime_client.hpp>
 #include <open_lmm/utils/logging.hpp>
 
 int main(int argc, char** argv) {
@@ -16,16 +15,20 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  auto configured = open_lmm::LoadBootstrapConfig(argv[1]);
-  if (!configured) {
-    open_lmm::LogError(configured.GetError().Message());
+  open_lmm::RuntimeClient runtime(1);
+  auto opened = runtime.Open({argv[1], "batch"});
+  if (!opened) {
+    open_lmm::LogError(opened.GetError().Message());
     return 1;
   }
-
-  open_lmm::MapServer map_server(std::move(configured).Value());
-  auto result = map_server.process();
-  if (!result) {
-    open_lmm::LogError(result.GetError().Message());
+  auto submitted = runtime.SubmitRunAll();
+  if (!submitted) {
+    open_lmm::LogError(submitted.GetError().Message());
+    return 1;
+  }
+  auto completed = runtime.Wait(submitted.Value());
+  if (!completed) {
+    open_lmm::LogError(completed.GetError().Message());
     return 1;
   }
 

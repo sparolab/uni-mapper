@@ -517,7 +517,7 @@ const SchemaRegistry& BuiltinConfigSchemaRegistry() {
   return registry;
 }
 
-Result<void> ValidateSessionConfigDocuments(
+Result<void> ValidateRuntimeConfigDocuments(
     const ValidatedConfigDocument& root,
     const ValidatedConfigDocument& map_server) {
   if (root.Kind() != ConfigDocumentKind::kRoot ||

@@ -47,11 +47,11 @@ void ArtifactRepository::RegisterAgents(const std::vector<AgentId>& agents) {
   artifacts_.try_emplace(descriptor, ArtifactMetadata{descriptor});
   ArtifactKey config{ArtifactType::kConfigSnapshot, std::nullopt};
   artifacts_[config] = ArtifactMetadata{config, ArtifactState::kReady,
-                                        next_revision_++, "session"};
+                                        next_revision_++, "runtime"};
   for (const AgentId& agent : agents_) {
     ArtifactKey input{ArtifactType::kAgentInput, agent};
     artifacts_[input] = ArtifactMetadata{input, ArtifactState::kReady,
-                                         next_revision_++, "session"};
+                                         next_revision_++, "runtime"};
   }
 }
 
@@ -224,14 +224,14 @@ Result<std::vector<AgentId>> ArtifactRepository::executionAgentsLocked(
     NodeId node, std::optional<AgentId> agent) const {
   const auto& spec = ExecutionSpecFor(node);
   std::vector<AgentId> execution_agents;
-  if (spec.scope == ExecutionScope::kSession) {
+  if (spec.scope == ExecutionScope::kRuntime) {
     for (ArtifactType type : spec.required_artifacts) {
       if (IsPerAgent(type)) continue;
       const auto found = artifacts_.find({type, std::nullopt});
       if (found == artifacts_.end() ||
           found->second.state != ArtifactState::kReady) {
         return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
-            "required session artifact is not ready for node " +
+            "required runtime artifact is not ready for node " +
             std::string(spec.name)));
       }
     }
@@ -248,7 +248,7 @@ Result<std::vector<AgentId>> ArtifactRepository::executionAgentsLocked(
     }
     if (execution_agents.empty()) {
       return Result<std::vector<AgentId>>::Failure(Error::InvalidArgument(
-          "no ready agent artifacts for session node " +
+          "no ready agent artifacts for runtime node " +
           std::string(spec.name)));
     }
     return Result<std::vector<AgentId>>::Ok(std::move(execution_agents));
@@ -302,7 +302,7 @@ void ArtifactRepository::beginNodeLocked(
     NodeId node, const std::vector<AgentId>& affected_agents) {
   if (affected_agents.empty()) return;
   const auto& spec = ExecutionSpecFor(node);
-  const auto start = spec.scope == ExecutionScope::kSession
+  const auto start = spec.scope == ExecutionScope::kRuntime
       ? agents_.begin()
       : std::find(agents_.begin(), agents_.end(), affected_agents.back());
   const auto stale = [&](ArtifactType type, bool from_agent) {
@@ -318,7 +318,7 @@ void ArtifactRepository::beginNodeLocked(
       const bool explicitly_affected =
           std::find(affected_agents.begin(), affected_agents.end(), *it) !=
           affected_agents.end();
-      if ((spec.scope == ExecutionScope::kSession || !spec.ordered) &&
+      if ((spec.scope == ExecutionScope::kRuntime || !spec.ordered) &&
           !explicitly_affected) continue;
       auto& item = artifacts_[ArtifactKey{type, *it}];
       item.state = ArtifactState::kStale;
@@ -334,7 +334,7 @@ void ArtifactRepository::beginNodeLocked(
 
 void ArtifactRepository::CompleteNode(NodeId node, std::optional<AgentId> agent) {
   std::lock_guard lock(mutex_);
-  if (ExecutionSpecFor(node).scope == ExecutionScope::kSession) {
+  if (ExecutionSpecFor(node).scope == ExecutionScope::kRuntime) {
     auto affected_agents = executionAgentsLocked(node, agent);
     if (!affected_agents) return;
     completeNodeLocked(node, affected_agents.Value(), ArtifactState::kReady,
@@ -379,7 +379,7 @@ void ArtifactRepository::completeNodeLocked(
 void ArtifactRepository::FailNode(NodeId node, std::optional<AgentId> agent,
                                   std::string detail) {
   std::lock_guard lock(mutex_);
-  if (ExecutionSpecFor(node).scope == ExecutionScope::kSession) {
+  if (ExecutionSpecFor(node).scope == ExecutionScope::kRuntime) {
     auto affected_agents = executionAgentsLocked(node, agent);
     if (!affected_agents) return;
     completeNodeLocked(node, affected_agents.Value(), ArtifactState::kFailed,
