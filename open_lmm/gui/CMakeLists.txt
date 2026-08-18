@@ -4,10 +4,15 @@ add_library(open_lmm_gui_core SHARED
   gui_event_queue.cpp
   gui_model.cpp
   gui_plugin_host.cpp
+  gui_runtime_host.cpp
   visualization_repository.cpp
   visualization_snapshot_worker.cpp
 )
-target_link_libraries(open_lmm_gui_core PUBLIC open_lmm_map_server open_lmm_utils)
+target_link_libraries(open_lmm_gui_core
+  PUBLIC open_lmm_client
+  PRIVATE open_lmm_utils)
+target_include_directories(open_lmm_gui_core PUBLIC
+  $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>)
 openlmm_set_global_target_properties(open_lmm_gui_core)
 
 if(OPEN_LMM_BUILD_IRIDESCENCE_GUI)

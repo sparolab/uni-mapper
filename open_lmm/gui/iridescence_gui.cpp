@@ -90,10 +90,12 @@ Result<void> IridescenceGui::Start(GuiServices services) {
   event_queue_ = std::make_shared<GuiEventQueue>();
   if (services_.subscribe_events) {
     std::weak_ptr<GuiEventQueue> weak_queue = event_queue_;
-    event_subscription_ = services_.subscribe_events(
+    auto subscribed = services_.subscribe_events(
         [weak_queue](const ExecutionEvent& event) {
           if (auto queue = weak_queue.lock()) queue->Push(event);
         });
+    if (!subscribed) return Result<void>::Failure(subscribed.GetError());
+    event_subscription_ = std::move(subscribed).Value();
   }
   stop_requested_ = false;
   open_ = false;
@@ -189,8 +191,11 @@ void IridescenceGui::ViewerLoop() {
 }
 
 void IridescenceGui::SynchronizeModel() {
-  if (services_.snapshot) {
-    model_.Synchronize(services_.snapshot());
+  if (services_.runtime_snapshot) {
+    auto snapshot = services_.runtime_snapshot();
+    if (!snapshot) return;
+    synchronized_session_ = snapshot.Value().id;
+    model_.Synchronize(std::move(snapshot).Value().pipeline);
     config_revision_draft_ = model_.ConfigRevision() + 1;
     for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
   }
@@ -923,29 +928,66 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
       config_dynamic_remover_.data(), root_dir_path_.data(),
       selected_datasets_, root_save_dir_.data()};
   auto result = document.SetValues(value);
-  if (result) result = document.Save();
-  if (result && *config_stage_ == StageId::kAlignment) {
-    result = SaveAlignmentConfig(
-        std::filesystem::path(services_.config_file_path).parent_path() /
-            config_loop_detector_.data(),
+  if (!result) return result;
+  ConfigCandidate candidate;
+  const auto config_directory =
+      std::filesystem::path(services_.config_file_path).parent_path();
+  if (*config_stage_ == StageId::kDataLoad) {
+    candidate.domain = ConfigDomain::kGlobal;
+    auto json = document.CanonicalJson();
+    if (!json) return Result<void>::Failure(json.GetError());
+    candidate.document_json = std::move(json).Value();
+    if (!services_.replace_session) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("session replacement is unavailable"));
+    }
+    result = services_.replace_session(std::move(candidate));
+    if (result) {
+      event_queue_->ResetEpoch();
+      SynchronizeModel();
+    }
+  } else if (*config_stage_ == StageId::kAlignment) {
+    candidate.domain = ConfigDomain::kLoopDetector;
+    candidate.selected_document = config_loop_detector_.data();
+    auto json = BuildAlignmentConfigCandidate(
+        config_directory / config_loop_detector_.data(),
         AlignmentConfigValues{kiss_voxel_size_, kiss_use_quatro_,
                               pose_nn_distance_threshold_});
-  }
-  if (result && *config_stage_ == StageId::kDataLoad) {
-    if (!services_.create_session) {
-      return Result<void>::Failure(
-          Error::InvalidArgument("session creation is unavailable"));
-    }
-    result = services_.create_session(services_.config_file_path);
-  } else if (result) {
+    if (!json) return Result<void>::Failure(json.GetError());
+    candidate.document_json = std::move(json).Value();
     if (!services_.apply_config) {
       return Result<void>::Failure(
           Error::InvalidArgument("stage reconfiguration is unavailable"));
     }
-    const auto domain = *config_stage_ == StageId::kAlignment
-                            ? ConfigDomain::kLoopDetector
-                            : ConfigDomain::kDynamicRemover;
-    result = services_.apply_config(domain, model_.ConfigRevision() + 1);
+    if (!synchronized_session_) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("configuration session is unavailable"));
+    }
+    auto applied = services_.apply_config(
+        *synchronized_session_, std::move(candidate),
+        ExpectedRevision{model_.SessionRevision(), model_.ConfigRevision()});
+    result = applied ? Result<void>::Ok()
+                     : Result<void>::Failure(applied.GetError());
+  } else {
+    candidate.domain = ConfigDomain::kDynamicRemover;
+    candidate.selected_document = config_dynamic_remover_.data();
+    auto json = LoadDynamicRemoverConfigCandidate(
+        config_directory / config_dynamic_remover_.data());
+    if (!json) return Result<void>::Failure(json.GetError());
+    candidate.document_json = std::move(json).Value();
+    if (!services_.apply_config) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("stage reconfiguration is unavailable"));
+    }
+    if (!synchronized_session_) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("configuration session is unavailable"));
+    }
+    auto applied = services_.apply_config(
+        *synchronized_session_, std::move(candidate),
+        ExpectedRevision{model_.SessionRevision(), model_.ConfigRevision()});
+    result = applied ? Result<void>::Ok()
+                     : Result<void>::Failure(applied.GetError());
   }
   if (result) SynchronizeModel();
   return result;

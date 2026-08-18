@@ -289,10 +289,15 @@ foreach(expected
 endforeach()
 
 file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/CMakeLists.txt" ros_cmake)
-string(FIND "${ros_cmake}" "find_package(open_lmm CONFIG REQUIRED)"
+string(FIND "${ros_cmake}"
+  "find_package(open_lmm CONFIG REQUIRED COMPONENTS client gui)"
   found_open_lmm_package)
 if(found_open_lmm_package EQUAL -1)
   message(FATAL_ERROR "ROS must consume the installed open_lmm package")
+endif()
+string(FIND "${ros_cmake}" "open_lmm::utils" found_ros_utils)
+if(NOT found_ros_utils EQUAL -1)
+  message(FATAL_ERROR "ROS adapter must not link the unused utils façade")
 endif()
 string(FIND "${ros_cmake}" "add_subdirectory(" found_ros_subdirectory)
 if(NOT found_ros_subdirectory EQUAL -1)
@@ -304,27 +309,41 @@ if(NOT found_ros_o3 EQUAL -1)
   message(FATAL_ERROR "ROS CMake must not append a global -O3 flag")
 endif()
 
-# A component is a command adapter, not a hidden batch launcher. The
-# standalone open_lmm_batch executable owns the direct synchronous path.
+# A component is a typed public RuntimeClient adapter, not a hidden batch
+# launcher or a consumer of internal RuntimeService headers.
+# The standalone open_lmm_batch executable owns the direct synchronous path.
 assert_file_excludes(
   "../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
   "map_server->process()"
-  "gui_auto_run")
+  "gui_auto_run"
+  "MapServer"
+  "PipelineController"
+  "ReplacePorts"
+  "std_srvs"
+  "Trigger"
+  "std_msgs::msg::String")
 file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
   ros_adapter)
 foreach(expected
-    "\"~/start\""
-    "\"~/cancel\""
+    "RuntimeClient"
+    "RuntimeSessionClient"
+    "GuiRuntimeHost"
+    "create_server<ExecutePipeline>"
+    "\"~/execute\""
     "\"~/status\""
-    "\"~/progress\""
-    "\"~/result\""
-    "controller_->SubmitRunAll()"
-    "controller_->Cancel(")
+    "\"~/events\""
+    "session_->Submit("
+    "session_->Cancel(")
   string(FIND "${ros_adapter}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "ROS command adapter must contain: ${expected}")
   endif()
 endforeach()
+assert_file_excludes(
+  "../ros/ros2/open_lmm_ros/open_lmm_ros.hpp"
+  "server/runtime_service.hpp"
+  "gui_controller_bridge.hpp"
+  "gui_plugin_host.hpp")
 file(READ "${OPEN_LMM_SOURCE_DIR}/CMakeLists.txt" core_cmake)
 string(FIND "${core_cmake}" "add_executable(open_lmm_batch main.cpp)"
   found_batch_launcher)

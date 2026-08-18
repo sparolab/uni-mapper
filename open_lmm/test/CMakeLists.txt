@@ -121,7 +121,8 @@ add_test(NAME open_lmm_pipeline_controller_tests
 
 add_executable(open_lmm_runtime_service_tests runtime_service_tests.cpp)
 target_link_libraries(open_lmm_runtime_service_tests PRIVATE
-  open_lmm_map_server)
+  open_lmm_map_server
+  open_lmm_client)
 if(TARGET create_scan_context)
   add_dependencies(open_lmm_runtime_service_tests create_scan_context)
 endif()
@@ -252,7 +253,9 @@ add_test(NAME open_lmm_map_alignment_coordinator_tests
          COMMAND open_lmm_map_alignment_coordinator_tests)
 
 add_executable(open_lmm_gui_plugin_tests gui_plugin_tests.cpp)
-target_link_libraries(open_lmm_gui_plugin_tests PRIVATE open_lmm_gui_core)
+target_link_libraries(open_lmm_gui_plugin_tests PRIVATE
+  open_lmm_gui_core
+  nlohmann_json::nlohmann_json)
 openlmm_set_global_target_properties(open_lmm_gui_plugin_tests)
 add_test(NAME open_lmm_gui_plugin_tests COMMAND open_lmm_gui_plugin_tests)
 

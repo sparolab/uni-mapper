@@ -1,16 +1,9 @@
 #include "stage_coordinator.hpp"
 
-#include <atomic>
-#include <cerrno>
-#include <chrono>
-#include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <sstream>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <utility>
 
 #include <open_lmm/server/execution/alignment_artifact_store.hpp>
@@ -54,63 +47,6 @@ const SessionConfigDocument* ConfigDocumentFor(
     case ConfigDomain::kDataLoader: return nullptr;
   }
   return nullptr;
-}
-
-Result<void> StageConfigDocument(const SessionConfigDocument& document,
-                                 PendingOutputSet& pending) {
-  static std::atomic<uint64_t> sequence{0};
-  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
-  std::filesystem::path temporary = document.path;
-  temporary += ".open_lmm_candidate_" + std::to_string(nonce) + "_" +
-               std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)) +
-               ".tmp";
-  const int raw_fd = ::open(temporary.c_str(),
-                            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-                            S_IRUSR | S_IWUSR);
-  if (raw_fd < 0) {
-    return Result<void>::Failure(Error::IoError(
-        "failed to create config transaction file " + temporary.string() +
-        ": " + std::strerror(errno)));
-  }
-  struct Descriptor {
-    int value;
-    ~Descriptor() {
-      if (value >= 0) ::close(value);
-    }
-  } descriptor{raw_fd};
-  const std::string contents = document.canonical_json + '\n';
-  std::size_t offset = 0;
-  while (offset < contents.size()) {
-    const ssize_t count =
-        ::write(descriptor.value, contents.data() + offset,
-                contents.size() - offset);
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) {
-      const int error_number = errno;
-      descriptor.value = -1;
-      ::close(raw_fd);
-      std::error_code ignored;
-      std::filesystem::remove(temporary, ignored);
-      return Result<void>::Failure(Error::IoError(
-          "failed to write config transaction file " + temporary.string() +
-          ": " + std::strerror(error_number)));
-    }
-    offset += static_cast<std::size_t>(count);
-  }
-  int error_number = 0;
-  if (::fsync(descriptor.value) != 0) error_number = errno;
-  if (::close(descriptor.value) != 0 && error_number == 0) error_number = errno;
-  if (error_number != 0) {
-    descriptor.value = -1;
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    return Result<void>::Failure(Error::IoError(
-        "failed to finalize config transaction file " + temporary.string() +
-        ": " + std::strerror(error_number)));
-  }
-  descriptor.value = -1;
-  pending.Add(std::move(temporary), document.path);
-  return Result<void>::Ok();
 }
 
 Result<void> ValidateInvocation(const std::shared_ptr<const SessionState>& base,
@@ -460,12 +396,15 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
   }
 
   auto pending = outputs_.Begin();
-  auto staged = StageConfigDocument(*module, pending);
+  auto staged =
+      StageConfigFile(module->path, module->canonical_json, pending);
   if (!staged)
     return Result<ConfigApplyReceipt>::Failure(staged.GetError());
   if (next_config->documents->root.canonical_json !=
       base->config->documents->root.canonical_json) {
-    staged = StageConfigDocument(next_config->documents->root, pending);
+    staged = StageConfigFile(next_config->documents->root.path,
+                             next_config->documents->root.canonical_json,
+                             pending);
     if (!staged)
       return Result<ConfigApplyReceipt>::Failure(staged.GetError());
   }

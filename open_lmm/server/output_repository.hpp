@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 #include <open_lmm/common/result.hpp>
@@ -35,5 +36,12 @@ class OutputRepository {
  public:
   [[nodiscard]] PendingOutputSet Begin() const { return {}; }
 };
+
+// Stages one canonical JSON document beside its destination using an
+// owner-only, exclusive, no-follow temporary. The PendingOutputSet owns
+// cleanup and the caller chooses the state/file commit boundary.
+Result<void> StageConfigFile(const std::filesystem::path& destination,
+                             std::string_view canonical_json,
+                             PendingOutputSet& pending);
 
 }  // namespace open_lmm

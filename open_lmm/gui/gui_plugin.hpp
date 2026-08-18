@@ -1,6 +1,9 @@
 #pragma once
 #include <open_lmm/common/result.hpp>
-#include <open_lmm/server/pipeline_controller.hpp>
+#include <open_lmm/common/config_transaction.hpp>
+#include <open_lmm/common/runtime_api.hpp>
+#include <open_lmm/common/visualization_snapshot.hpp>
+#include <open_lmm/common/alignment_types.hpp>
 #include <functional>
 #include <optional>
 #include <string>
@@ -13,16 +16,18 @@ struct GuiServices {
   std::function<Result<uint64_t>(NodeId, std::optional<AgentId>)> submit_node;
   std::function<Result<uint64_t>(AgentId)> submit_optimize_through;
   std::function<Result<void>(uint64_t)> cancel_job;
-  std::function<Result<void>(ConfigDomain, uint64_t)> apply_config;
-  std::function<Result<void>(const std::string&)> create_session;
+  std::function<Result<ConfigApplyReceipt>(SessionId, ConfigCandidate,
+                                           ExpectedRevision)> apply_config;
+  std::function<Result<void>(ConfigCandidate)> replace_session;
   std::function<std::vector<NodeDescriptor>()> node_descriptors;
+  std::function<Result<RuntimeSessionSnapshot>()> runtime_snapshot;
   std::function<PipelineSnapshot()> snapshot;
   std::function<Result<VisualizationSnapshot>(const AgentId&)> visualization_snapshot;
   std::function<std::optional<AlignmentFeedbackSnapshot>()>
       alignment_feedback_snapshot;
   std::function<Result<void>(uint64_t, AlignmentResponse)>
       respond_to_alignment;
-  std::function<ExecutionEventSubscription(
+  std::function<Result<ExecutionEventSubscription>(
       std::function<void(const ExecutionEvent&)>)> subscribe_events;
 };
 

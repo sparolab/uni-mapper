@@ -2,6 +2,7 @@
 
 #include <open_lmm/server/map_server.hpp>
 #include <open_lmm/server/bootstrap/bootstrap_config.hpp>
+#include <open_lmm/server/output_repository.hpp>
 
 #include <algorithm>
 #include <array>
@@ -47,6 +48,7 @@ struct RuntimeService::RuntimeSession {
   mutable std::mutex mutex;
   std::condition_variable idle;
   std::size_t commands_in_progress = 0;
+  bool replacement_in_progress = false;
   RuntimeSessionState state = RuntimeSessionState::kCreating;
 };
 
@@ -99,6 +101,171 @@ Result<SessionId> RuntimeService::CreateSession(
     return Result<SessionId>::Failure(
         Error::InvalidArgument("session config directory must be non-empty"));
   }
+  auto loaded = LoadBootstrapConfig(request.config_directory);
+  if (!loaded) return Result<SessionId>::Failure(loaded.GetError());
+  return createSession(request, std::move(loaded).Value());
+}
+
+Result<RuntimeSessionReplacement> RuntimeService::ReplaceSession(
+    const SessionId& previous_session, const BootstrapRequest& request,
+    const ConfigCandidate& root_candidate,
+    std::function<void(const SessionExecutionEvent&)> callback) {
+  if (!callback) {
+    return Result<RuntimeSessionReplacement>::Failure(
+        Error::InvalidArgument("replacement event callback must be non-empty"));
+  }
+  auto found = lookup(previous_session);
+  if (!found) {
+    return Result<RuntimeSessionReplacement>::Failure(found.GetError());
+  }
+  auto previous = found.Value();
+  if (previous->controller->IsInEventCallback()) {
+    return Result<RuntimeSessionReplacement>::Failure(Error::InvalidArgument(
+        "cannot replace a session from its event callback"));
+  }
+  {
+    const auto pipeline = previous->controller->Snapshot();
+    std::lock_guard lock(previous->mutex);
+    previous->state = DeriveState(*previous, pipeline);
+    if (previous->replacement_in_progress) {
+      return Result<RuntimeSessionReplacement>::Failure(
+          Error::InvalidArgument("session replacement is already in progress"));
+    }
+    if (previous->commands_in_progress != 0 ||
+        (pipeline.job && IsActive(pipeline.job->state))) {
+      return Result<RuntimeSessionReplacement>::Failure(Error::InvalidArgument(
+          "cannot replace a session while a job or operation is active"));
+    }
+    previous->replacement_in_progress = true;
+  }
+  struct ReplacementRollback {
+    std::shared_ptr<RuntimeSession> session;
+    bool committed = false;
+    ~ReplacementRollback() {
+      if (committed) return;
+      std::lock_guard lock(session->mutex);
+      session->replacement_in_progress = false;
+    }
+  } rollback{previous};
+
+  auto callbacks_idle = previous->controller->WaitForEventCallbacks();
+  if (!callbacks_idle) {
+    return Result<RuntimeSessionReplacement>::Failure(
+        callbacks_idle.GetError());
+  }
+  if (request.config_directory.empty() ||
+      root_candidate.domain != ConfigDomain::kGlobal ||
+      root_candidate.selected_document || root_candidate.document_json.empty()) {
+    return Result<RuntimeSessionReplacement>::Failure(Error::InvalidArgument(
+        "replacement requires a global in-memory root candidate"));
+  }
+  auto loaded = LoadBootstrapConfigCandidate(
+      request.config_directory, root_candidate.document_json);
+  if (!loaded) {
+    return Result<RuntimeSessionReplacement>::Failure(loaded.GetError());
+  }
+  auto bootstrap = std::make_shared<const BootstrapConfigSnapshot>(
+      std::move(loaded).Value());
+  const fs::path output_root =
+      request.output_root.value_or(bootstrap->OutputRoot());
+  if (output_root.empty()) {
+    return Result<RuntimeSessionReplacement>::Failure(
+        Error::InvalidArgument("replacement output root must be non-empty"));
+  }
+  auto generated = GenerateSessionId();
+  if (!generated) {
+    return Result<RuntimeSessionReplacement>::Failure(generated.GetError());
+  }
+  const SessionId replacement_id = generated.Value();
+  const fs::path output_directory = output_root / GenerateOutputNamespace();
+  struct OutputRollback {
+    fs::path path;
+    fs::path expected_parent;
+    bool committed = false;
+    ~OutputRollback() {
+      if (committed || path.parent_path() != expected_parent ||
+          path.filename().string().rfind("runtime-session-", 0) != 0) {
+        return;
+      }
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } output_rollback{output_directory, output_root};
+  auto port = port_factory_(*bootstrap, output_directory);
+  if (!port) {
+    return Result<RuntimeSessionReplacement>::Failure(port.GetError());
+  }
+  auto replacement = std::make_shared<RuntimeSession>(replacement_id);
+  replacement->label = request.label;
+  replacement->bootstrap_config = bootstrap;
+  replacement->output_directory = output_directory;
+  replacement->port = std::move(port).Value();
+  replacement->controller =
+      std::make_shared<PipelineController>(replacement->port);
+  replacement->controller->SetAlignmentFeedbackEnabled(true);
+  auto event_subscription = replacement->controller->SubscribeEvents(
+      [replacement_id, callback = std::move(callback)](
+          const ExecutionEvent& event) { callback({replacement_id, event}); });
+  replacement->state = RuntimeSessionState::kReady;
+
+  OutputRepository outputs;
+  auto pending = outputs.Begin();
+  auto staged = StageConfigFile(bootstrap->ConfigDirectory() / "config.json",
+                                bootstrap->Root().CanonicalJson(), pending);
+  if (!staged) {
+    return Result<RuntimeSessionReplacement>::Failure(staged.GetError());
+  }
+  {
+    std::lock_guard registry_lock(registry_mutex_);
+    const auto current = sessions_.find(previous_session);
+    if (current == sessions_.end() || current->second != previous) {
+      return Result<RuntimeSessionReplacement>::Failure(
+          Error::InvalidArgument("replacement source session was retired"));
+    }
+    if (sessions_.contains(replacement_id)) {
+      return Result<RuntimeSessionReplacement>::Failure(
+          Error::InvalidArgument("replacement SessionId collision"));
+    }
+    sessions_.emplace(replacement_id, replacement);
+    auto installed = pending.Commit();
+    if (!installed) {
+      sessions_.erase(replacement_id);
+      return Result<RuntimeSessionReplacement>::Failure(installed.GetError());
+    }
+    sessions_.erase(current);
+  }
+  {
+    std::lock_guard lock(previous->mutex);
+    previous->replacement_in_progress = false;
+    previous->state = RuntimeSessionState::kClosed;
+  }
+  rollback.committed = true;
+  output_rollback.committed = true;
+  return Result<RuntimeSessionReplacement>::Ok(
+      {replacement_id, std::move(event_subscription)});
+}
+
+Result<SessionId> RuntimeService::CreateSession(
+    const BootstrapRequest& request,
+    const ConfigCandidate& root_candidate) {
+  if (request.config_directory.empty()) {
+    return Result<SessionId>::Failure(
+        Error::InvalidArgument("session config directory must be non-empty"));
+  }
+  if (root_candidate.domain != ConfigDomain::kGlobal ||
+      root_candidate.selected_document || root_candidate.document_json.empty()) {
+    return Result<SessionId>::Failure(Error::InvalidArgument(
+        "root session candidate must contain global document JSON only"));
+  }
+  auto loaded = LoadBootstrapConfigCandidate(
+      request.config_directory, root_candidate.document_json);
+  if (!loaded) return Result<SessionId>::Failure(loaded.GetError());
+  return createSession(request, std::move(loaded).Value());
+}
+
+Result<SessionId> RuntimeService::createSession(
+    const BootstrapRequest& request,
+    BootstrapConfigSnapshot bootstrap_config) {
   if (!governor_->TryAcquireSession()) {
     return Result<SessionId>::Failure(
         Error::InvalidArgument("session resource admission limit reached"));
@@ -111,10 +278,8 @@ Result<SessionId> RuntimeService::CreateSession(
     }
   } admission{*governor_};
 
-  auto loaded = LoadBootstrapConfig(request.config_directory);
-  if (!loaded) return Result<SessionId>::Failure(loaded.GetError());
   auto bootstrap = std::make_shared<const BootstrapConfigSnapshot>(
-      std::move(loaded).Value());
+      std::move(bootstrap_config));
   fs::path output_root = request.output_root.value_or(bootstrap->OutputRoot());
   if (output_root.empty()) {
     return Result<SessionId>::Failure(
@@ -178,6 +343,9 @@ RuntimeSessionState RuntimeService::DeriveState(
       session.state == RuntimeSessionState::kClosed) {
     return session.state;
   }
+  if (session.state == RuntimeSessionState::kFailedFatal) {
+    return session.state;
+  }
   if (!pipeline.job) return RuntimeSessionState::kReady;
   switch (pipeline.job->state) {
     case JobState::kQueued:
@@ -210,8 +378,9 @@ Result<JobId> RuntimeService::Submit(const SessionId& session_id,
     std::lock_guard lock(session->mutex);
     const auto pipeline = session->controller->Snapshot();
     session->state = DeriveState(*session, pipeline);
-    if (session->state != RuntimeSessionState::kReady &&
-        session->state != RuntimeSessionState::kFailedRecoverable) {
+    if (session->replacement_in_progress ||
+        (session->state != RuntimeSessionState::kReady &&
+         session->state != RuntimeSessionState::kFailedRecoverable)) {
       return Result<JobId>::Failure(
           Error::InvalidArgument("session is not ready for submission"));
     }
@@ -260,7 +429,8 @@ Result<void> RuntimeService::Cancel(const SessionId& session_id,
   auto session = found.Value();
   {
     std::lock_guard lock(session->mutex);
-    if (session->state == RuntimeSessionState::kClosing ||
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
         session->state == RuntimeSessionState::kClosed) {
       return Result<void>::Failure(Error::InvalidArgument("session is closing"));
     }
@@ -274,6 +444,30 @@ Result<void> RuntimeService::Cancel(const SessionId& session_id,
     session->idle.notify_all();
   }
   return cancelled;
+}
+
+Result<void> RuntimeService::Wait(const SessionId& session_id, JobId job_id) {
+  auto found = lookup(session_id);
+  if (!found) return Result<void>::Failure(found.GetError());
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
+        session->state == RuntimeSessionState::kClosed) {
+      return Result<void>::Failure(Error::InvalidArgument("session is closing"));
+    }
+    ++session->commands_in_progress;
+  }
+  auto waited = session->controller->Wait(job_id);
+  const auto pipeline = session->controller->Snapshot();
+  {
+    std::lock_guard lock(session->mutex);
+    --session->commands_in_progress;
+    session->state = DeriveState(*session, pipeline);
+    session->idle.notify_all();
+  }
+  return waited;
 }
 
 Result<RuntimeSessionSnapshot> RuntimeService::Snapshot(
@@ -291,6 +485,141 @@ Result<RuntimeSessionSnapshot> RuntimeService::Snapshot(
        session->output_directory, pipeline});
 }
 
+Result<std::vector<NodeDescriptor>> RuntimeService::NodeDescriptors(
+    const SessionId& session_id) const {
+  auto found = lookup(session_id);
+  if (!found) {
+    return Result<std::vector<NodeDescriptor>>::Failure(found.GetError());
+  }
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
+        session->state == RuntimeSessionState::kClosed) {
+      return Result<std::vector<NodeDescriptor>>::Failure(
+          Error::InvalidArgument("session is closing"));
+    }
+  }
+  return Result<std::vector<NodeDescriptor>>::Ok(
+      session->controller->NodeDescriptors());
+}
+
+Result<open_lmm::VisualizationSnapshot> RuntimeService::VisualizationSnapshot(
+    const SessionId& session_id, const AgentId& agent) const {
+  auto found = lookup(session_id);
+  if (!found) {
+    return Result<open_lmm::VisualizationSnapshot>::Failure(found.GetError());
+  }
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
+        session->state == RuntimeSessionState::kClosed) {
+      return Result<open_lmm::VisualizationSnapshot>::Failure(
+          Error::InvalidArgument("session is closing"));
+    }
+  }
+  return session->controller->GetVisualizationSnapshot(agent);
+}
+
+Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>
+RuntimeService::AlignmentFeedbackSnapshot(
+    const SessionId& session_id) const {
+  auto found = lookup(session_id);
+  if (!found) {
+    return Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>::Failure(
+        found.GetError());
+  }
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
+        session->state == RuntimeSessionState::kClosed) {
+      return Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>::Failure(
+          Error::InvalidArgument("session is closing"));
+    }
+  }
+  return Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>::Ok(
+      session->controller->GetAlignmentFeedbackSnapshot());
+}
+
+Result<void> RuntimeService::RespondToAlignment(
+    const SessionId& session_id, JobId job_id, AlignmentResponse response) {
+  auto found = lookup(session_id);
+  if (!found) return Result<void>::Failure(found.GetError());
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
+        session->state == RuntimeSessionState::kClosed) {
+      return Result<void>::Failure(Error::InvalidArgument("session is closing"));
+    }
+    ++session->commands_in_progress;
+  }
+  auto responded =
+      session->controller->RespondToAlignment(job_id, std::move(response));
+  {
+    std::lock_guard lock(session->mutex);
+    --session->commands_in_progress;
+    session->idle.notify_all();
+  }
+  return responded;
+}
+
+Result<void> RuntimeService::SetAlignmentFeedbackEnabled(
+    const SessionId& session_id, bool enabled) {
+  auto found = lookup(session_id);
+  if (!found) return Result<void>::Failure(found.GetError());
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    if (session->replacement_in_progress ||
+        session->state == RuntimeSessionState::kClosing ||
+        session->state == RuntimeSessionState::kClosed) {
+      return Result<void>::Failure(Error::InvalidArgument("session is closing"));
+    }
+    session->controller->SetAlignmentFeedbackEnabled(enabled);
+  }
+  return Result<void>::Ok();
+}
+
+Result<ConfigApplyReceipt> RuntimeService::ApplyConfig(
+    const SessionId& session_id, const ConfigCandidate& candidate,
+    const ExpectedRevision& expected) {
+  auto found = lookup(session_id);
+  if (!found) return Result<ConfigApplyReceipt>::Failure(found.GetError());
+  auto session = found.Value();
+  {
+    std::lock_guard lock(session->mutex);
+    const auto pipeline = session->controller->Snapshot();
+    session->state = DeriveState(*session, pipeline);
+    if (session->replacement_in_progress ||
+        (session->state != RuntimeSessionState::kReady &&
+         session->state != RuntimeSessionState::kFailedRecoverable)) {
+      return Result<ConfigApplyReceipt>::Failure(
+          Error::InvalidArgument("session is not ready for configuration"));
+    }
+    ++session->commands_in_progress;
+  }
+  auto applied = session->controller->ApplyConfig(candidate, expected);
+  const auto pipeline = session->controller->Snapshot();
+  {
+    std::lock_guard lock(session->mutex);
+    --session->commands_in_progress;
+    session->state = DeriveState(*session, pipeline);
+    if (!applied &&
+        applied.GetError().severity == Error::Severity::kFatalSession) {
+      session->state = RuntimeSessionState::kFailedFatal;
+    }
+    session->idle.notify_all();
+  }
+  return applied;
+}
+
 Result<void> RuntimeService::CloseSession(const SessionId& session_id,
                                           CloseMode mode) {
   auto found = lookup(session_id);
@@ -304,6 +633,10 @@ Result<void> RuntimeService::CloseSession(const SessionId& session_id,
   const auto initial_pipeline = session->controller->Snapshot();
   {
     std::unique_lock lock(session->mutex);
+    if (session->replacement_in_progress) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("session replacement is in progress"));
+    }
     session->state = DeriveState(*session, initial_pipeline);
     if ((session->state == RuntimeSessionState::kRunning ||
          session->state == RuntimeSessionState::kCancelling ||
@@ -356,7 +689,15 @@ Result<ExecutionEventSubscription> RuntimeService::SubscribeEvents(
     return Result<ExecutionEventSubscription>::Failure(
         Error::InvalidArgument("event callback must be non-empty"));
   }
-  auto subscription = found.Value()->controller->SubscribeEvents(
+  auto session = found.Value();
+  std::lock_guard lock(session->mutex);
+  if (session->replacement_in_progress ||
+      session->state == RuntimeSessionState::kClosing ||
+      session->state == RuntimeSessionState::kClosed) {
+    return Result<ExecutionEventSubscription>::Failure(
+        Error::InvalidArgument("session is closing"));
+  }
+  auto subscription = session->controller->SubscribeEvents(
       [session_id, callback = std::move(callback)](const ExecutionEvent& event) {
         callback({session_id, event});
       });
@@ -372,6 +713,15 @@ std::vector<SessionId> RuntimeService::SessionIds() const {
     result.push_back(id);
   }
   return result;
+}
+
+bool RuntimeService::IsInEventCallback() const {
+  std::lock_guard lock(registry_mutex_);
+  for (const auto& [id, session] : sessions_) {
+    (void)id;
+    if (session->controller->IsInEventCallback()) return true;
+  }
+  return false;
 }
 
 }  // namespace open_lmm

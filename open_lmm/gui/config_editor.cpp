@@ -49,26 +49,13 @@ Result<AlignmentConfigValues> LoadAlignmentConfig(
 
 Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
                                  const AlignmentConfigValues& values) {
-  std::ifstream input(path);
-  if (!input) return Result<void>::Failure(Error::FileNotFound(path.string()));
-  std::ostringstream contents;
-  contents << input.rdbuf();
-  auto current = BuiltinConfigSchemaRegistry().ParseAndValidate(
-      ConfigDocumentKind::kLoopDetector, contents.str(), path.string());
-  if (!current) return Result<void>::Failure(current.GetError());
-  auto candidate = current.Value().Document();
-  candidate["alignment"]["kiss_voxel_size"] = values.kiss_voxel_size;
-  candidate["alignment"]["kiss_use_quatro"] = values.kiss_use_quatro;
-  candidate["alignment"]["pose_nn_distance_threshold"] =
-      values.pose_nn_distance_threshold;
-  auto validated = BuiltinConfigSchemaRegistry().Validate(
-      ConfigDocumentKind::kLoopDetector, candidate, path.string());
-  if (!validated) return Result<void>::Failure(validated.GetError());
+  auto candidate = BuildAlignmentConfigCandidate(path, values);
+  if (!candidate) return Result<void>::Failure(candidate.GetError());
   const auto temporary = path.string() + ".tmp";
   {
     std::ofstream output(temporary, std::ios::trunc);
     if (!output) return Result<void>::Failure(Error::IoError(temporary));
-    output << validated.Value().CanonicalJson(2) << '\n';
+    output << candidate.Value() << '\n';
     if (!output) return Result<void>::Failure(Error::IoError(temporary));
   }
   std::error_code error;
@@ -78,6 +65,45 @@ Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
     return Result<void>::Failure(Error::IoError(error.message()));
   }
   return Result<void>::Ok();
+}
+
+Result<std::string> BuildAlignmentConfigCandidate(
+    const std::filesystem::path& path,
+    const AlignmentConfigValues& values) {
+  std::ifstream input(path);
+  if (!input) {
+    return Result<std::string>::Failure(Error::FileNotFound(path.string()));
+  }
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  auto current = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kLoopDetector, contents.str(), path.string());
+  if (!current) return Result<std::string>::Failure(current.GetError());
+  auto candidate = current.Value().Document();
+  candidate["alignment"]["kiss_voxel_size"] = values.kiss_voxel_size;
+  candidate["alignment"]["kiss_use_quatro"] = values.kiss_use_quatro;
+  candidate["alignment"]["pose_nn_distance_threshold"] =
+      values.pose_nn_distance_threshold;
+  auto validated = BuiltinConfigSchemaRegistry().Validate(
+      ConfigDocumentKind::kLoopDetector, candidate, path.string());
+  if (!validated) {
+    return Result<std::string>::Failure(validated.GetError());
+  }
+  return Result<std::string>::Ok(validated.Value().CanonicalJson(2));
+}
+
+Result<std::string> LoadDynamicRemoverConfigCandidate(
+    const std::filesystem::path& path) {
+  std::ifstream input(path);
+  if (!input) {
+    return Result<std::string>::Failure(Error::FileNotFound(path.string()));
+  }
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  auto validated = BuiltinConfigSchemaRegistry().ParseAndValidate(
+      ConfigDocumentKind::kDynamicRemover, contents.str(), path.string());
+  if (!validated) return Result<std::string>::Failure(validated.GetError());
+  return Result<std::string>::Ok(validated.Value().CanonicalJson(2));
 }
 
 Result<ConfigEditorDocument> ConfigEditorDocument::Load(
@@ -167,6 +193,14 @@ Result<void> ConfigEditorDocument::SaveAs(
     return Result<void>::Failure(Error::IoError(error.message()));
   }
   return Result<void>::Ok();
+}
+
+Result<std::string> ConfigEditorDocument::CanonicalJson() const {
+  auto validated = BuiltinConfigSchemaRegistry().Validate(
+      ConfigDocumentKind::kRoot, json_,
+      path_.empty() ? "<editor>" : path_.string());
+  if (!validated) return Result<std::string>::Failure(validated.GetError());
+  return Result<std::string>::Ok(validated.Value().CanonicalJson(2));
 }
 
 }  // namespace open_lmm

@@ -64,6 +64,14 @@ GuiEventQueueStats GuiEventQueue::Stats() const {
           resync_required_};
 }
 
+void GuiEventQueue::ResetEpoch() {
+  std::lock_guard lock(mutex_);
+  events_.clear();
+  coalesced_progress_ = 0;
+  evicted_events_ = 0;
+  resync_required_ = false;
+}
+
 void GuiEventQueue::MarkResynchronized() {
   std::lock_guard lock(mutex_);
   resync_required_ = false;

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -20,6 +21,7 @@
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/utils/load_module.hpp>
 #include <open_lmm/utils/config.hpp>
+#include <open_lmm/utils/logging.hpp>
 #include <open_lmm/server/file_set_transaction.hpp>
 
 namespace {
@@ -195,21 +197,34 @@ void TestFileSetCleanupFailureRequiresRecovery() {
   Expect(fs::exists(destination.string() + ".open_lmm_backup/original"),
          "cleanup failure must preserve the original in its backup");
   bool found_manifest = false;
+  fs::path manifest_path;
   for (const auto& item : fs::directory_iterator(root)) {
     const std::string name = item.path().filename().string();
     if (name.starts_with(".open_lmm_recovery_") &&
         item.path().extension() == ".json") {
       found_manifest = true;
+      manifest_path = item.path();
       break;
     }
   }
   Expect(found_manifest,
          "post-commit cleanup failure must leave a recovery manifest");
+  if (found_manifest) {
+    const auto permissions = fs::status(manifest_path).permissions();
+    using fs::perms;
+    Expect((permissions & (perms::group_all | perms::others_all)) == perms::none,
+           "recovery manifest must be owner-only");
+  }
+  const auto logs = open_lmm::RecentRuntimeLogs();
+  Expect(std::any_of(logs.begin(), logs.end(), [](const std::string& line) {
+           return line.find("recovery_required") != std::string::npos;
+         }),
+         "post-commit recovery state must be visible in structured logs");
   std::error_code ignored;
   fs::remove_all(root, ignored);
 }
 
-void TestFileSetRollbackMissingBackupRequiresRecovery() {
+void TestFileSetRejectsAliasingAndDuplicates() {
   namespace fs = std::filesystem;
   const fs::path root = fs::temp_directory_path() /
       ("open_lmm_file_rollback_recovery_" +
@@ -224,32 +239,34 @@ void TestFileSetRollbackMissingBackupRequiresRecovery() {
   std::ofstream(second_temp) << "candidate-two";
   std::ofstream(third_temp) << "candidate-three";
 
-  // The second replacement consumes the first entry's backup. The third then
-  // fails, so rollback must detect that an acknowledged original no longer has
-  // a backup instead of reporting a successful rollback.
-  const auto result = open_lmm::CommitFileSet({
+  const auto backup_alias = open_lmm::CommitFileSet({
       {first_temp, first_final},
       {second_temp, first_final.string() + ".open_lmm_backup"},
       {third_temp, root / "missing" / "third.pcd"},
   });
-  Expect(!result, "missing rollback backup must fail the transaction");
-  if (!result) {
-    Expect(result.GetError().severity == Error::Severity::kFatalSession &&
-               result.GetError().context.node == "recovery_required" &&
-               result.GetError().message.find("backup is missing") !=
-                   std::string::npos,
-           "missing rollback backup must require manual recovery");
-  }
-  bool found_manifest = false;
-  for (const auto& item : fs::directory_iterator(root)) {
-    if (item.path().filename().string().starts_with(
-            ".open_lmm_recovery_")) {
-      found_manifest = true;
-      break;
-    }
-  }
-  Expect(found_manifest,
-         "rollback backup loss must leave a recovery manifest");
+  Expect(!backup_alias &&
+             backup_alias.GetError().message.find("aliases") !=
+                 std::string::npos,
+         "destination-to-backup alias must fail during preflight");
+
+  const fs::path fourth_temp = root / "fourth.tmp";
+  std::ofstream(fourth_temp) << "candidate-four";
+  const auto duplicate_final = open_lmm::CommitFileSet({
+      {first_temp, first_final}, {fourth_temp, first_final}});
+  Expect(!duplicate_final &&
+             duplicate_final.GetError().message.find("duplicate destination") !=
+                 std::string::npos,
+         "duplicate destinations must fail during preflight");
+  const auto duplicate_temp = open_lmm::CommitFileSet({
+      {first_temp, first_final}, {first_temp, root / "other.pcd"}});
+  Expect(!duplicate_temp &&
+             duplicate_temp.GetError().message.find("duplicate temporary") !=
+                 std::string::npos,
+         "duplicate temporaries must fail during preflight");
+  Expect(fs::is_regular_file(first_temp) &&
+             fs::is_regular_file(second_temp) &&
+             fs::is_regular_file(first_final),
+         "preflight rejection must not mutate files");
   std::error_code ignored;
   fs::remove_all(root, ignored);
 }
@@ -868,10 +885,11 @@ void TestOfflineStreamingFrameIdentity() {
 }  // namespace
 
 int main() {
+  open_lmm::InitializeLogging();
   TestAgentContext();
   TestFileSetCommitRollsBackPartialReplacement();
   TestFileSetCleanupFailureRequiresRecovery();
-  TestFileSetRollbackMissingBackupRequiresRecovery();
+  TestFileSetRejectsAliasingAndDuplicates();
   TestRigidTransformInverse();
   TestGlobalAlignmentLoopConvention();
   TestAlignedMapRebuildUsesLatestTransform();

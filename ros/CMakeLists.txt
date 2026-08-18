@@ -30,32 +30,49 @@ endif()
 
 ### ROS2 ###
 find_package(ament_cmake_auto REQUIRED)
+find_package(open_lmm CONFIG REQUIRED COMPONENTS client gui)
 ament_auto_find_build_dependencies()
+find_package(rosidl_default_generators REQUIRED)
 
-### open_lmm ###
-find_package(open_lmm CONFIG REQUIRED)
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ExecutionEvent.msg"
+  "srv/GetRuntimeStatus.srv"
+  "action/ExecutePipeline.action"
+)
 
 ### open_lmm_ros ###
-ament_auto_add_library(open_lmm_ros SHARED
+ament_auto_add_library(open_lmm_ros_component SHARED
   ${ros_version}/open_lmm_ros/open_lmm_ros.cpp
 )
-set_target_properties(open_lmm_ros PROPERTIES
+set_target_properties(open_lmm_ros_component PROPERTIES
+  OUTPUT_NAME open_lmm_ros
   VERSION ${PROJECT_VERSION}
   SOVERSION ${PROJECT_VERSION_MAJOR}
 )
-target_link_libraries(open_lmm_ros
-  open_lmm::utils
-  open_lmm::runtime
+target_link_libraries(open_lmm_ros_component
+  open_lmm::client
   open_lmm::gui
 )
-rclcpp_components_register_nodes(open_lmm_ros "open_lmm::OpenLMMROS")
+rosidl_get_typesupport_target(open_lmm_ros_typesupport_target
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(open_lmm_ros_component "${open_lmm_ros_typesupport_target}")
+rclcpp_components_register_nodes(open_lmm_ros_component "open_lmm::OpenLMMROS")
+
+if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_executable(open_lmm_ros_goal_admission_tests
+    test/goal_admission_tests.cpp)
+  target_link_libraries(open_lmm_ros_goal_admission_tests PRIVATE Threads::Threads)
+  add_test(NAME open_lmm_ros_goal_admission_tests
+    COMMAND open_lmm_ros_goal_admission_tests)
+endif()
 
 ### open_lmm_rosnode ###
 ament_auto_add_executable(open_lmm_rosnode
   ${ros_version}/open_lmm_ros/open_lmm_rosnode.cpp
 )
 target_link_libraries(open_lmm_rosnode
-  open_lmm_ros
+  open_lmm_ros_component
 )
 
 # Install launch files.

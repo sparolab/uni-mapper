@@ -50,11 +50,13 @@ set_target_properties(open_lmm_algorithm_config PROPERTIES EXPORT_NAME config)
 
 add_subdirectory(core)
 add_subdirectory(server)
-add_subdirectory(gui)
 
-add_library(open_lmm_client SHARED server/runtime_client.cpp)
+add_library(open_lmm_client SHARED
+  server/runtime_client.cpp
+  server/runtime_session_client.cpp
+)
 add_dependencies(open_lmm_client open_lmm_map_server)
-target_link_libraries(open_lmm_client PUBLIC open_lmm_contracts PRIVATE
+target_link_libraries(open_lmm_client PUBLIC open_lmm_contracts Eigen3::Eigen PRIVATE
   "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_map_server>>"
   nlohmann_json::nlohmann_json)
 target_include_directories(open_lmm_client PRIVATE
@@ -63,6 +65,8 @@ target_include_directories(open_lmm_client PRIVATE
   "$<TARGET_PROPERTY:gtsam,INTERFACE_INCLUDE_DIRECTORIES>")
 openlmm_set_global_target_properties(open_lmm_client)
 set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
+
+add_subdirectory(gui)
 
 # Stable package-facing target names. Implementation-only static libraries and
 # fetched dependency targets stay behind these shared-library boundaries.
@@ -194,16 +198,22 @@ set(_open_lmm_public_headers
   common/alignment_feedback.hpp
   common/alignment_types.hpp
   common/cancellation.hpp
+  common/config_transaction.hpp
   common/data_types.hpp
   common/descriptor_index.hpp
   common/result.hpp
   common/runtime_contracts.hpp
+  common/runtime_api.hpp
+  common/visualization_snapshot.hpp
   core/alignment/alignment_decision_policy.hpp
   core/alignment/alignment_proposer.hpp
   core/alignment/loop_constraint_builder.hpp
   core/descriptor/descriptor_artifact.hpp
   core/descriptor/descriptor_engine.hpp
   server/runtime_client.hpp
+  server/runtime_session_client.hpp
+  gui/gui_plugin.hpp
+  gui/gui_runtime_host.hpp
   utils/config_schema.hpp
 )
 foreach(public_header IN LISTS _open_lmm_public_headers)

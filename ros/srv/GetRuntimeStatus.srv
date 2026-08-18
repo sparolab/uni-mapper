@@ -1,0 +1,14 @@
+---
+bool success
+string error
+string session_id
+uint8 session_state
+string output_directory
+uint64 config_revision
+bool has_job
+uint64 job_id
+uint8 job_state
+bool has_active_stage
+uint8 active_stage
+string job_message
+string[] agents

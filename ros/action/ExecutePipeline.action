@@ -1,0 +1,20 @@
+uint8 RUN_ALL=0
+uint8 STAGE=1
+uint8 NODE=2
+uint8 OPTIMIZE_THROUGH=3
+uint8 kind
+bool has_stage
+uint8 stage
+bool has_node
+uint8 node
+bool has_agent
+string agent
+---
+bool success
+uint64 job_id
+uint8 session_state
+uint64 config_revision
+string output_directory
+string message
+---
+open_lmm_ros/ExecutionEvent event

@@ -18,33 +18,6 @@
 
 namespace open_lmm {
 
-enum class ExecutionRequestKind : uint8_t {
-  kRunAll,
-  kStage,
-  kNode,
-  kOptimizeThrough,
-};
-
-struct ExecutionRequest {
-  ExecutionRequestKind kind = ExecutionRequestKind::kRunAll;
-  std::optional<StageId> stage;
-  std::optional<NodeId> node;
-  std::optional<AgentId> agent;
-};
-
-struct RuntimeSessionSnapshot {
-  SessionId id;
-  std::string label;
-  RuntimeSessionState state = RuntimeSessionState::kCreating;
-  std::filesystem::path output_directory;
-  PipelineSnapshot pipeline;
-};
-
-struct SessionExecutionEvent {
-  SessionId session_id;
-  ExecutionEvent event;
-};
-
 class RuntimeService {
  public:
   using PortFactory = std::function<Result<std::shared_ptr<StageRuntimePort>>(
@@ -59,15 +32,36 @@ class RuntimeService {
   RuntimeService& operator=(const RuntimeService&) = delete;
 
   Result<SessionId> CreateSession(const BootstrapRequest& request);
+  Result<SessionId> CreateSession(const BootstrapRequest& request,
+                                  const ConfigCandidate& root_candidate);
+  Result<RuntimeSessionReplacement> ReplaceSession(
+      const SessionId& previous_session, const BootstrapRequest& request,
+      const ConfigCandidate& root_candidate,
+      std::function<void(const SessionExecutionEvent&)> callback);
   Result<JobId> Submit(const SessionId& session_id,
                        const ExecutionRequest& request);
   Result<void> Cancel(const SessionId& session_id, JobId job_id);
+  Result<void> Wait(const SessionId& session_id, JobId job_id);
   Result<RuntimeSessionSnapshot> Snapshot(const SessionId& session_id) const;
+  Result<std::vector<NodeDescriptor>> NodeDescriptors(
+      const SessionId& session_id) const;
+  Result<open_lmm::VisualizationSnapshot> VisualizationSnapshot(
+      const SessionId& session_id, const AgentId& agent) const;
+  Result<std::optional<open_lmm::AlignmentFeedbackSnapshot>>
+  AlignmentFeedbackSnapshot(const SessionId& session_id) const;
+  Result<void> RespondToAlignment(const SessionId& session_id, JobId job_id,
+                                  AlignmentResponse response);
+  Result<void> SetAlignmentFeedbackEnabled(const SessionId& session_id,
+                                           bool enabled);
+  Result<ConfigApplyReceipt> ApplyConfig(
+      const SessionId& session_id, const ConfigCandidate& candidate,
+      const ExpectedRevision& expected);
   Result<void> CloseSession(const SessionId& session_id, CloseMode mode);
   Result<ExecutionEventSubscription> SubscribeEvents(
       const SessionId& session_id,
       std::function<void(const SessionExecutionEvent&)> callback);
   [[nodiscard]] std::vector<SessionId> SessionIds() const;
+  [[nodiscard]] bool IsInEventCallback() const;
   [[nodiscard]] const ResourceGovernor& Governor() const noexcept {
     return *governor_;
   }
@@ -81,6 +75,9 @@ class RuntimeService {
                                          const PipelineSnapshot& pipeline);
   static Result<SessionId> GenerateSessionId();
   static std::string GenerateOutputNamespace();
+  Result<SessionId> createSession(
+      const BootstrapRequest& request,
+      BootstrapConfigSnapshot bootstrap_config);
 
   mutable std::mutex registry_mutex_;
   std::map<SessionId, std::shared_ptr<RuntimeSession>> sessions_;

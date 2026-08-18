@@ -1,4 +1,5 @@
 #include <open_lmm/server/runtime_service.hpp>
+#include <open_lmm/server/runtime_client.hpp>
 #include "test_runtime_port.hpp"
 
 #include <atomic>
@@ -7,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -189,6 +191,32 @@ class FatalRunner final : public test::RuntimePortFixture {
                               const ExecutionContext&) override {
     return Result<void>::Failure(
         Error::IoError("fatal session fixture").MarkFatalSession());
+  }
+};
+
+class InteractiveRunner final : public test::RuntimePortFixture {
+ public:
+  InteractiveRunner() : RuntimePortFixture({Id("interactive")}) {}
+
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext& context) override {
+    AlignmentFeedbackSnapshot request;
+    request.proposal.target_agent = Id("interactive");
+    request.proposal.source_agent = Id("interactive");
+    auto response = context.alignment_feedback->Request(
+        std::move(request), context.cancellation);
+    if (!response) return Result<void>::Failure(response.GetError());
+    return Result<void>::Ok();
+  }
+
+  Result<VisualizationSnapshot> CreateVisualization(
+      const AgentId& agent) const override {
+    VisualizationSnapshot result;
+    result.agent = agent;
+    result.revision = 77;
+    result.map_available = true;
+    result.points.push_back({1.0F, 2.0F, 3.0F, 4.0F});
+    return Result<VisualizationSnapshot>::Ok(std::move(result));
   }
 };
 
@@ -406,6 +434,359 @@ void TestBootstrapConfigIsAnImmutableValueSnapshot() {
   fs::remove_all(root);
 }
 
+void TestRuntimeServiceExposesSessionScopedControlPlane() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_control_plane_tests";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "interactive");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<InteractiveRunner>());
+      });
+  auto session = service.CreateSession({root / "config", "control-plane"});
+  Check(session.IsOk(), "control-plane session created");
+  const SessionId id = session.Value();
+  auto descriptors = service.NodeDescriptors(id);
+  Check(descriptors && !descriptors.Value().empty(),
+        "node descriptors are session-keyed");
+  auto visualization = service.VisualizationSnapshot(id, Id("interactive"));
+  Check(visualization && visualization.Value().revision == 77 &&
+            visualization.Value().map_available &&
+            visualization.Value().points.size() == 1,
+        "visualization is queried through the session facade");
+  Check(service.SetAlignmentFeedbackEnabled(id, true).IsOk(),
+        "session alignment feedback is enabled through the facade");
+  auto before_config = service.Snapshot(id);
+  Check(before_config && before_config.Value().pipeline.session_revision == 1 &&
+            before_config.Value().pipeline.config_revision == 1,
+        "runtime snapshot exposes both optimistic concurrency revisions");
+  ConfigCandidate candidate;
+  candidate.domain = ConfigDomain::kMapSave;
+  candidate.document_json = "{}";
+  auto applied = service.ApplyConfig(id, candidate, {1, 1});
+  Check(applied && applied.Value().base_session_revision == 1 &&
+            applied.Value().session_revision == 2 &&
+            applied.Value().previous_config_revision == 1 &&
+            applied.Value().config_revision == 2,
+        "config candidate receipt crosses the session facade unchanged");
+  auto after_config = service.Snapshot(id);
+  Check(after_config && after_config.Value().pipeline.session_revision == 2 &&
+            after_config.Value().pipeline.config_revision == 2 &&
+            !service.ApplyConfig(id, candidate, {1, 1}),
+        "committed revisions advance and stale config candidates are rejected");
+
+  ExecutionRequest request;
+  request.kind = ExecutionRequestKind::kNode;
+  request.node = NodeId::kDataLoad;
+  request.agent = Id("interactive");
+  auto job = service.Submit(id, request);
+  Check(job.IsOk(), "interactive node submitted");
+  WaitUntil([&] {
+    auto feedback = service.AlignmentFeedbackSnapshot(id);
+    return feedback && feedback.Value().has_value();
+  }, "published alignment feedback is visible through its session");
+  auto feedback = service.AlignmentFeedbackSnapshot(id);
+  Check(feedback && feedback.Value(), "alignment feedback snapshot acquired");
+  const uint64_t request_id = feedback.Value()->proposal.request_id;
+  Check(service.RespondToAlignment(
+            id, job.Value(),
+            {request_id, AlignmentDecision::kAccept, std::nullopt})
+            .IsOk(),
+        "alignment response is routed to the owning session");
+  Check(service.Wait(id, job.Value()).IsOk(),
+        "runtime wait observes the terminal journal barrier");
+  auto cleared = service.AlignmentFeedbackSnapshot(id);
+  Check(cleared && !cleared.Value(),
+        "completed alignment feedback is no longer exposed");
+  Check(!service.RespondToAlignment(
+            id, job.Value(),
+            {request_id, AlignmentDecision::kAccept, std::nullopt}),
+        "stale alignment response is rejected");
+  Check(service.CloseSession(id, CloseMode::kRejectIfRunning).IsOk(),
+        "control-plane session closes");
+  Check(!service.Wait(id, job.Value()) && !service.NodeDescriptors(id) &&
+            !service.VisualizationSnapshot(id, Id("interactive")) &&
+            !service.AlignmentFeedbackSnapshot(id) &&
+            !service.SubscribeEvents(id, [](const SessionExecutionEvent&) {}),
+        "all control-plane methods reject a retired session id");
+
+  std::ifstream root_input(root / "config/config.json");
+  std::string root_json((std::istreambuf_iterator<char>(root_input)),
+                        std::istreambuf_iterator<char>());
+  const std::string disk_output = (root / "output").string();
+  const std::string candidate_output = (root / "candidate-output").string();
+  const auto output_position = root_json.find(disk_output);
+  Check(output_position != std::string::npos,
+        "root candidate fixture locates the disk output path");
+  root_json.replace(output_position, disk_output.size(), candidate_output);
+  ConfigCandidate root_candidate;
+  root_candidate.domain = ConfigDomain::kGlobal;
+  root_candidate.document_json = std::move(root_json);
+  auto candidate_session = service.CreateSession(
+      {root / "config", "candidate-session"}, root_candidate);
+  auto candidate_snapshot = candidate_session
+      ? service.Snapshot(candidate_session.Value())
+      : Result<RuntimeSessionSnapshot>::Failure(
+            Error::InvalidArgument("candidate session creation failed"));
+  Check(candidate_session && candidate_snapshot &&
+            candidate_snapshot.Value().output_directory.parent_path() ==
+                root / "candidate-output",
+        "in-memory root candidate creates a replacement session without a pre-write");
+  Check(service.CloseSession(candidate_session.Value(),
+                             CloseMode::kRejectIfRunning).IsOk(),
+        "candidate-root session closes");
+  fs::remove_all(root);
+}
+
+std::string ReadText(const fs::path& path) {
+  std::ifstream input(path);
+  return {std::istreambuf_iterator<char>(input),
+          std::istreambuf_iterator<char>()};
+}
+
+void TestAtomicReplacementTransfersAdmissionAndPersistsRoot() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_atomic_replacement_tests";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output-one", "interactive");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path& output)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        fs::create_directories(output);
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<InteractiveRunner>());
+      });
+  auto original = service.CreateSession({root / "config", "original"});
+  Check(original.IsOk() && service.Governor().ActiveSessions() == 1,
+        "single admitted source session is ready");
+  std::string candidate_json = ReadText(root / "config/config.json");
+  const auto old_output = (root / "output-one").string();
+  const auto new_output = (root / "output-two").string();
+  const auto output_position = candidate_json.find(old_output);
+  Check(output_position != std::string::npos,
+        "replacement fixture locates output root");
+  candidate_json.replace(output_position, old_output.size(), new_output);
+  ConfigCandidate candidate;
+  candidate.domain = ConfigDomain::kGlobal;
+  candidate.document_json = candidate_json;
+  auto replaced = service.ReplaceSession(
+      original.Value(), {root / "config", "replacement"}, candidate,
+      [](const SessionExecutionEvent&) {});
+  Check(replaced && replaced.Value().session_id != original.Value() &&
+            service.Governor().ActiveSessions() == 1 &&
+            !service.Snapshot(original.Value()) &&
+            service.Snapshot(replaced.Value().session_id) &&
+            ReadText(root / "config/config.json").find(new_output) !=
+                std::string::npos,
+        "replacement transfers one admission and installs canonical root");
+  Check(service.CloseSession(replaced.Value().session_id,
+                             CloseMode::kRejectIfRunning).IsOk() &&
+            service.Governor().ActiveSessions() == 0,
+        "replacement admission is released exactly once");
+  fs::remove_all(root);
+}
+
+void TestReplacementInstallFailurePreservesOldSessionAndOutput() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_replacement_rollback_tests";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output-old", "interactive");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path& output)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        fs::create_directories(output);
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<InteractiveRunner>());
+      });
+  auto original = service.CreateSession({root / "config", "original"});
+  const std::string original_json = ReadText(root / "config/config.json");
+  {
+    std::ofstream stale_backup(
+        root / "config/config.json.open_lmm_backup");
+    stale_backup << "blocks replacement commit";
+  }
+  std::string candidate_json = original_json;
+  const auto old_output = (root / "output-old").string();
+  const auto failed_output = (root / "output-failed").string();
+  candidate_json.replace(candidate_json.find(old_output), old_output.size(),
+                         failed_output);
+  ConfigCandidate candidate;
+  candidate.domain = ConfigDomain::kGlobal;
+  candidate.document_json = std::move(candidate_json);
+  auto replaced = service.ReplaceSession(
+      original.Value(), {root / "config", "failed"}, candidate,
+      [](const SessionExecutionEvent&) {});
+  std::size_t orphan_outputs = 0;
+  if (fs::exists(root / "output-failed")) {
+    for (const auto& entry : fs::directory_iterator(root / "output-failed")) {
+      if (entry.path().filename().string().rfind("runtime-session-", 0) == 0) {
+        ++orphan_outputs;
+      }
+    }
+  }
+  Check(!replaced && service.Snapshot(original.Value()) &&
+            service.Governor().ActiveSessions() == 1 &&
+            ReadText(root / "config/config.json") == original_json &&
+            orphan_outputs == 0,
+        "install failure preserves old disk/session and removes prepared output");
+  Check(service.CloseSession(original.Value(), CloseMode::kRejectIfRunning)
+            .IsOk(),
+        "rollback source session remains closable");
+  fs::remove_all(root);
+}
+
+void TestReplacementRejectsAnActiveJobAndWaitOperation() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_replacement_active_tests";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "active-agent");
+  std::shared_ptr<IsolatedRunner> runner;
+  RuntimeService service(
+      1, [&](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        runner = std::make_shared<IsolatedRunner>(Id("active-agent"), true);
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(runner);
+      });
+  auto original = service.CreateSession({root / "config", "active"});
+  auto job = original ? service.Submit(original.Value(), ExecutionRequest{})
+                      : Result<JobId>::Failure(
+                            Error::InvalidArgument("missing session"));
+  Check(job.IsOk(), "active replacement fixture submits a blocking job");
+  WaitUntil([&] { return runner && runner->entered.load(); },
+            "active replacement fixture enters the command");
+
+  std::atomic<bool> wait_started{false};
+  Result<void> waited = Result<void>::Failure(
+      Error::InvalidArgument("wait not started"));
+  std::thread waiter([&] {
+    wait_started = true;
+    waited = service.Wait(original.Value(), job.Value());
+  });
+  WaitUntil([&] { return wait_started.load(); },
+            "active replacement fixture starts Wait");
+
+  ConfigCandidate candidate;
+  candidate.domain = ConfigDomain::kGlobal;
+  candidate.document_json = ReadText(root / "config/config.json");
+  auto replaced = service.ReplaceSession(
+      original.Value(), {root / "config", "rejected"}, candidate,
+      [](const SessionExecutionEvent&) {});
+  Check(!replaced && service.Snapshot(original.Value()) &&
+            service.Governor().ActiveSessions() == 1,
+        "replacement is rejected while a job and Wait operation are active");
+
+  Check(service.Cancel(original.Value(), job.Value()).IsOk(),
+        "active replacement fixture cancels its blocking job");
+  waiter.join();
+  Check((waited.IsOk() ||
+         waited.GetError().code == Error::Code::kCancelled) &&
+        service.CloseSession(original.Value(), CloseMode::kRejectIfRunning)
+            .IsOk(),
+        "rejected replacement leaves the original session usable");
+  fs::remove_all(root);
+}
+
+void TestReplacementBlocksConcurrentMutatingCommands() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_replacement_command_race_tests";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "race-agent");
+  std::atomic<int> factory_calls{0};
+  std::atomic<bool> replacement_factory_entered{false};
+  std::atomic<bool> release_replacement_factory{false};
+  RuntimeService service(
+      1, [&](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        if (++factory_calls == 2) {
+          replacement_factory_entered = true;
+          while (!release_replacement_factory.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+          }
+        }
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<InteractiveRunner>());
+      });
+  auto original = service.CreateSession({root / "config", "race-source"});
+  Check(original.IsOk(), "replacement command race source is created");
+  ConfigCandidate root_candidate;
+  root_candidate.domain = ConfigDomain::kGlobal;
+  root_candidate.document_json = ReadText(root / "config/config.json");
+  Result<RuntimeSessionReplacement> replacement =
+      Result<RuntimeSessionReplacement>::Failure(
+          Error::InvalidArgument("replacement not started"));
+  std::thread replace_thread([&] {
+    replacement = service.ReplaceSession(
+        original.Value(), {root / "config", "race-replacement"},
+        root_candidate, [](const SessionExecutionEvent&) {});
+  });
+  WaitUntil([&] { return replacement_factory_entered.load(); },
+            "replacement command race reaches the prepared-port boundary");
+
+  ConfigCandidate config_candidate;
+  config_candidate.domain = ConfigDomain::kLoopDetector;
+  config_candidate.document_json = "{}";
+  Check(!service.Submit(original.Value(), ExecutionRequest{}) &&
+            !service.ApplyConfig(original.Value(), config_candidate,
+                                 ExpectedRevision{}),
+        "Submit and ApplyConfig reject the source while replacement prepares");
+
+  release_replacement_factory.store(true, std::memory_order_release);
+  replace_thread.join();
+  Check(replacement.IsOk() && !service.Snapshot(original.Value()) &&
+            service.CloseSession(replacement.Value().session_id,
+                                 CloseMode::kRejectIfRunning)
+                .IsOk(),
+        "command exclusion preserves a successful atomic replacement");
+  fs::remove_all(root);
+}
+
+void TestLastRuntimeClientOwnerCanBeReleasedFromTerminalCallback() {
+  const fs::path root = fs::temp_directory_path() /
+                        "open_lmm_runtime_callback_owner_tests";
+  fs::remove_all(root);
+  WriteDefaultRuntimeFixture(root / "config", root / "data", root / "output");
+  auto runtime = std::make_shared<RuntimeClient>(1);
+  std::weak_ptr<RuntimeClient> weak_runtime = runtime;
+  std::atomic<bool> submit_returned{false};
+  auto session = runtime->CreateSession({root / "config", "callback-owner"});
+  Check(session.IsOk(), "callback-owner session is created");
+  std::atomic<bool> owner_released{false};
+  auto subscribed = runtime->SubscribeEvents(
+      session.Value(), [&](const SessionExecutionEvent& event) {
+        if (event.event.type != EventType::kJobCompleted &&
+            event.event.type != EventType::kJobCancelled) {
+          return;
+        }
+        // Keep the last-owner release out of the Submit() call itself. A very
+        // fast fixture may otherwise complete before Submit returns, which
+        // would test destruction of an object with an active member call
+        // rather than the callback-thread teardown boundary.
+        while (!submit_returned.load(std::memory_order_acquire)) {
+          std::this_thread::yield();
+        }
+        runtime.reset();
+        owner_released = true;
+      });
+  Check(subscribed.IsOk(), "callback-owner terminal observer is installed");
+  auto subscription = std::move(subscribed).Value();
+  ExecutionRequest request;
+  request.kind = ExecutionRequestKind::kStage;
+  request.stage = StageId::kDataLoad;
+  auto submitted = runtime->Submit(session.Value(), request);
+  submit_returned.store(true, std::memory_order_release);
+  Check(submitted.IsOk(),
+        "callback-owner job is submitted");
+  WaitUntil([&] { return owner_released.load(); },
+            "terminal callback releases the last RuntimeClient owner");
+  WaitUntil([&] { return weak_runtime.expired(); },
+            "RuntimeClient public lifetime ends without worker self-join");
+  subscription.Reset();
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  fs::remove_all(root);
+}
+
 void TestShutdownStressCancelsAndJoins() {
   const fs::path root = fs::temp_directory_path() /
                         "open_lmm_runtime_service_shutdown_tests";
@@ -496,6 +877,12 @@ void TestDefaultCloseReleasesResidentReservation() {
 
 int main() {
   TestBootstrapConfigIsAnImmutableValueSnapshot();
+  TestRuntimeServiceExposesSessionScopedControlPlane();
+  TestAtomicReplacementTransfersAdmissionAndPersistsRoot();
+  TestReplacementInstallFailurePreservesOldSessionAndOutput();
+  TestReplacementRejectsAnActiveJobAndWaitOperation();
+  TestReplacementBlocksConcurrentMutatingCommands();
+  TestLastRuntimeClientOwnerCanBeReleasedFromTerminalCallback();
   TestMultiSessionIsolationAndLifecycle();
   TestShutdownStressCancelsAndJoins();
   TestFatalStateAndCompletedClose();

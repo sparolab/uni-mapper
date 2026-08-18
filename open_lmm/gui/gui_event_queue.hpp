@@ -22,6 +22,7 @@ class GuiEventQueue {
   bool Push(ExecutionEvent event);
   std::vector<ExecutionEvent> Drain(size_t max_events);
   [[nodiscard]] GuiEventQueueStats Stats() const;
+  void ResetEpoch();
   void MarkResynchronized();
  private:
   static bool IsProgress(const ExecutionEvent& event);
