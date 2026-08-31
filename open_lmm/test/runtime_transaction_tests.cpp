@@ -1,8 +1,9 @@
-#include <open_lmm/server/output_repository.hpp>
-#include <open_lmm/server/runtime_state_store.hpp>
-#include <open_lmm/server/runtime_payload_builder.hpp>
-#include <open_lmm/server/runtime_state.hpp>
-#include <open_lmm/server/transaction/runtime_reconfigurer.hpp>
+#include <storage/transactions/output_repository.hpp>
+#include <plugins/host/algorithm_factory.hpp>
+#include <runtime/state/runtime_state_store.hpp>
+#include <runtime/state/runtime_payload_builder.hpp>
+#include <runtime/state/runtime_state.hpp>
+#include <config/application/runtime_reconfigurer.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -355,7 +356,9 @@ void TestRejectedReconfigurePreservesCommittedResidentOwnership() {
 
   // The fixture intentionally has no canonical config documents, so prepare
   // must fail before a candidate can be published or committed.
-  const auto rejected = RuntimeReconfigurer().Prepare(
+  const auto rejected = RuntimeReconfigurer(
+                            std::make_shared<AlgorithmFactory>())
+                            .Prepare(
       base, ConfigDomain::kOptimizer, base->config->revision + 1);
   Check(!rejected, "invalid reconfigure snapshot is rejected");
   Check(base->revision == revision && base->artifacts.size() == artifacts.size() &&

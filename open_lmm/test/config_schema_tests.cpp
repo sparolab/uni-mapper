@@ -1,5 +1,5 @@
 #include <open_lmm/utils/config_schema.hpp>
-#include <open_lmm/utils/config.hpp>
+#include <config/document/config.hpp>
 
 #include <filesystem>
 #include <fstream>

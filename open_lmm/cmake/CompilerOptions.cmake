@@ -83,10 +83,12 @@ function(openlmm_set_global_target_properties target)
             # $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wconversion>
             $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wdisabled-optimization>
             $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Woverloaded-virtual>)
-  set(INCLUDE_DIRS ${PROJECT_SOURCE_DIR})
-  get_filename_component(INCLUDE_DIRS ${INCLUDE_DIRS} PATH)
-  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-                             PUBLIC $<BUILD_INTERFACE:${INCLUDE_DIRS}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_include_directories(${target} PRIVATE
+                             ${CMAKE_CURRENT_SOURCE_DIR}
+                             ${PROJECT_SOURCE_DIR}/src
+                             PUBLIC
+                             $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+                             $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
   if(openlmm_target_type STREQUAL "SHARED_LIBRARY")
     set_target_properties(${target} PROPERTIES
       VERSION ${PROJECT_VERSION}

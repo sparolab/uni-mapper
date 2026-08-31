@@ -27,33 +27,25 @@ include(cmake/internals.cmake)
 # cmake policy
 # cmake_policy(SET CMP0076 NEW)
 
-add_subdirectory(utils)
-add_subdirectory(common)
-
-add_library(open_lmm_algorithm_config SHARED core/algorithm_config.cpp)
-target_link_libraries(open_lmm_algorithm_config PUBLIC
-  open_lmm_common
-  open_lmm_utils
-  Eigen3::Eigen
-)
-target_compile_definitions(open_lmm_algorithm_config PRIVATE
-  OPEN_LMM_HAVE_DESCRIPTOR_SCAN_CONTEXT=$<BOOL:${OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT}>
-  OPEN_LMM_HAVE_DESCRIPTOR_SOLID=$<BOOL:${OPEN_LMM_BUILD_DESCRIPTOR_SOLID}>
-  OPEN_LMM_HAVE_DYNAMIC_REMOVER_HMM_MOS=$<BOOL:${OPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS}>
-  OPEN_LMM_HAVE_DYNAMIC_REMOVER_DUFOMAP=$<BOOL:${OPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP}>
-  OPEN_LMM_HAVE_DYNAMIC_REMOVER_OTD=$<BOOL:${OPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD}>
-  OPEN_LMM_HAVE_DYNAMIC_REMOVER_FREE_DOM=$<BOOL:${OPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM}>
-  OPEN_LMM_HAVE_DYNAMIC_REMOVER_ERASOR=$<BOOL:${OPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR}>
-)
-openlmm_set_global_target_properties(open_lmm_algorithm_config)
-set_target_properties(open_lmm_algorithm_config PROPERTIES EXPORT_NAME config)
-
-add_subdirectory(core)
-add_subdirectory(server)
+add_subdirectory(src/foundation)
+add_subdirectory(src/config)
+add_subdirectory(src/domain/support)
+add_subdirectory(src/domain/data_loader)
+add_subdirectory(src/domain/descriptor)
+add_subdirectory(src/domain/alignment)
+add_subdirectory(src/plugins/descriptor)
+add_subdirectory(src/domain/loop_detection)
+add_subdirectory(src/domain/optimization)
+add_subdirectory(src/plugins/remover)
+add_subdirectory(src/domain/dynamic_removal)
+add_subdirectory(src/plugins/host)
+add_subdirectory(src/storage)
+add_subdirectory(src/runtime)
+add_subdirectory(src/visualization)
+add_subdirectory(src/adapters/batch/compat)
 
 add_library(open_lmm_client SHARED
-  server/runtime_client.cpp
-)
+  $<TARGET_OBJECTS:open_lmm_runtime_client_objects>)
 add_dependencies(open_lmm_client open_lmm_map_server)
 target_link_libraries(open_lmm_client PUBLIC open_lmm_contracts Eigen3::Eigen PRIVATE
   "$<BUILD_INTERFACE:$<TARGET_FILE:open_lmm_map_server>>"
@@ -67,7 +59,8 @@ target_link_options(open_lmm_client INTERFACE
 openlmm_set_global_target_properties(open_lmm_client)
 set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
 
-add_subdirectory(gui)
+add_subdirectory(src/adapters/batch)
+add_subdirectory(src/adapters/gui)
 
 # Stable package-facing target names. Implementation-only static libraries and
 # fetched dependency targets stay behind these shared-library boundaries.
@@ -87,7 +80,7 @@ set_target_properties(open_lmm_gui_core PROPERTIES EXPORT_NAME gui)
 
 add_library(open_lmm_plugin_sdk INTERFACE)
 target_include_directories(open_lmm_plugin_sdk INTERFACE
-  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/..>
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(open_lmm_plugin_sdk PROPERTIES EXPORT_NAME plugin_sdk)
 
@@ -102,18 +95,6 @@ add_library(open_lmm::core ALIAS open_lmm_core)
 add_library(open_lmm::runtime ALIAS open_lmm_map_server)
 add_library(open_lmm::gui ALIAS open_lmm_gui_core)
 add_library(open_lmm::utils ALIAS open_lmm_utils)
-
-# The batch launcher is deliberately a core-package executable. ROS component
-# construction never reuses it and never starts a batch pipeline implicitly.
-add_executable(open_lmm_batch main.cpp)
-target_link_libraries(open_lmm_batch PRIVATE
-  open_lmm_client
-  open_lmm_utils
-)
-openlmm_set_global_target_properties(open_lmm_batch)
-set_target_properties(open_lmm_batch PROPERTIES
-  INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
-)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -181,7 +162,7 @@ if(_open_lmm_plugin_support_targets)
 endif()
 
 # Package API allowlist.  Do not replace this with install(DIRECTORY): headers
-# under server/execution, server/session, plugin support/host, and concrete
+# under runtime/execution, plugin support/host, and concrete
 # algorithms are implementation details and must not become accidental ABI.
 set(_open_lmm_public_headers
   common/agent_context.hpp
@@ -212,7 +193,9 @@ set(_open_lmm_public_headers
 )
 foreach(public_header IN LISTS _open_lmm_public_headers)
   get_filename_component(public_header_directory "${public_header}" DIRECTORY)
-  install(FILES "${PROJECT_SOURCE_DIR}/${public_header}"
+  set(public_header_source
+    "${PROJECT_SOURCE_DIR}/include/open_lmm/${public_header}")
+  install(FILES "${public_header_source}"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/${public_header_directory}"
     COMPONENT Development)
 endforeach()
@@ -220,22 +203,11 @@ endforeach()
 # Remove only paths owned by the former recursive OpenLMM header install. This
 # makes an in-place upgrade converge to the allowlist without touching unknown
 # files that a user may keep below include/open_lmm.
-file(GLOB_RECURSE _open_lmm_source_headers
-  RELATIVE "${PROJECT_SOURCE_DIR}"
-  "${PROJECT_SOURCE_DIR}/common/*.h"
-  "${PROJECT_SOURCE_DIR}/common/*.hpp"
-  "${PROJECT_SOURCE_DIR}/core/*.h"
-  "${PROJECT_SOURCE_DIR}/core/*.hpp"
-  "${PROJECT_SOURCE_DIR}/gui/*.h"
-  "${PROJECT_SOURCE_DIR}/gui/*.hpp"
-  "${PROJECT_SOURCE_DIR}/server/*.h"
-  "${PROJECT_SOURCE_DIR}/server/*.hpp"
-  "${PROJECT_SOURCE_DIR}/utils/*.h"
-  "${PROJECT_SOURCE_DIR}/utils/*.hpp")
 include("${PROJECT_SOURCE_DIR}/cmake/open_lmm-legacy-installed-headers-1.x.cmake")
+include("${PROJECT_SOURCE_DIR}/cmake/open_lmm-legacy-installed-headers-pre-src-layout.cmake")
 set(_open_lmm_owned_stale_headers
-  ${_open_lmm_source_headers}
-  ${_open_lmm_legacy_installed_headers_1_x})
+  ${_open_lmm_legacy_installed_headers_1_x}
+  ${_open_lmm_legacy_installed_headers_pre_src_layout})
 list(REMOVE_ITEM _open_lmm_owned_stale_headers
   ${_open_lmm_public_headers}
   common/plugin_api.h
@@ -255,7 +227,7 @@ install(FILES "${PROJECT_BINARY_DIR}/open_lmm-public-headers.txt"
   DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
   COMPONENT Development)
 install(FILES
-  ${PROJECT_SOURCE_DIR}/common/plugin_api.h
+  ${PROJECT_SOURCE_DIR}/include/open_lmm/common/plugin_api.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/open_lmm/common
   COMPONENT PluginSDK)
 install(DIRECTORY ${nlohmann_json_SOURCE_DIR}/include/nlohmann
@@ -303,7 +275,7 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/thirdparty/
   FILES_MATCHING PATTERN "LICENSE"
 )
 install(FILES
-  ${PROJECT_SOURCE_DIR}/core/dynamic_remover/remover_factory/offline/erasor/LICENCE
+  ${PROJECT_SOURCE_DIR}/src/plugins/remover/erasor/LICENCE
   DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/licenses/erasor
   COMPONENT Runtime
 )

@@ -1,7 +1,7 @@
-#include <open_lmm/server/execution/data_load_executor.hpp>
-#include <open_lmm/server/execution/map_update_executor.hpp>
-#include <open_lmm/server/bootstrap/algorithm_factory.hpp>
-#include <open_lmm/core/data_loader/data_loader_base.hpp>
+#include <runtime/execution/stages/data_load_executor.hpp>
+#include <runtime/execution/stages/map_update_executor.hpp>
+#include <plugins/host/algorithm_factory.hpp>
+#include <domain/data_loader/data_loader_base.hpp>
 
 #include <cstdlib>
 #include <iostream>

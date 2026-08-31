@@ -1,5 +1,5 @@
 #include <open_lmm/server/runtime_client.hpp>
-#include <open_lmm/server/runtime_service.hpp>
+#include <runtime/service/runtime_service.hpp>
 
 #include "test_runtime_port.hpp"
 

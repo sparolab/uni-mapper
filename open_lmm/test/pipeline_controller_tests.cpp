@@ -1,5 +1,5 @@
-#include <open_lmm/server/pipeline_controller.hpp>
-#include <open_lmm/core/loop_detector/map_alignment_coordinator.hpp>
+#include <runtime/control/pipeline_controller.hpp>
+#include <domain/loop_detection/map_alignment_coordinator.hpp>
 #include "test_runtime_port.hpp"
 
 #include <algorithm>

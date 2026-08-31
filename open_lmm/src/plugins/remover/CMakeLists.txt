@@ -1,0 +1,35 @@
+if(OPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS)
+  add_subdirectory(hmm_mos)
+endif()
+if(OPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP)
+  add_subdirectory(dufomap)
+endif()
+if(OPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD)
+  add_subdirectory(otd)
+endif()
+if(OPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR)
+  add_subdirectory(erasor)
+endif()
+if(OPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM)
+  add_subdirectory(free_dom)
+endif()
+
+add_library(remover_online INTERFACE)
+foreach(remover_target IN ITEMS hmm_mos dufomap otd)
+  if(TARGET ${remover_target})
+    target_link_libraries(remover_online INTERFACE ${remover_target})
+  endif()
+endforeach()
+
+add_library(remover_offline INTERFACE)
+foreach(remover_target IN ITEMS erasor free_dom)
+  if(TARGET ${remover_target})
+    target_link_libraries(remover_offline INTERFACE ${remover_target})
+  endif()
+endforeach()
+
+add_library(dynamic_removal_factory INTERFACE)
+target_link_libraries(dynamic_removal_factory INTERFACE
+  remover_online
+  remover_offline
+)

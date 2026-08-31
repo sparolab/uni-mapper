@@ -214,15 +214,9 @@ openlmm_set_global_target_properties(open_lmm_replay_verify)
 
 add_executable(open_lmm_controller_concurrency_tests
   controller_concurrency_tests.cpp
-  ../server/pipeline_controller.cpp
-  ../server/artifact_repository.cpp
-  ../server/stage_runner.cpp
 )
 target_link_libraries(open_lmm_controller_concurrency_tests PRIVATE
-  open_lmm_common
-  open_lmm_utils
-  open_lmm_profiling
-  Eigen3::Eigen
+  open_lmm_map_server
 )
 openlmm_set_global_target_properties(open_lmm_controller_concurrency_tests)
 add_test(NAME open_lmm_controller_concurrency_tests
@@ -438,6 +432,7 @@ add_test(
   NAME open_lmm_architecture_boundary_tests
   COMMAND ${CMAKE_COMMAND}
           -DOPEN_LMM_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -DOPEN_LMM_BUILD_DIR=${PROJECT_BINARY_DIR}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/architecture_boundary_tests.cmake
 )
 

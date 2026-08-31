@@ -1,7 +1,7 @@
 #pragma once
 
-#include <open_lmm/server/artifact_repository.hpp>
-#include <open_lmm/server/stage_ports.hpp>
+#include <runtime/state/artifact_repository.hpp>
+#include <runtime/execution/stage_ports.hpp>
 
 #include <functional>
 #include <mutex>

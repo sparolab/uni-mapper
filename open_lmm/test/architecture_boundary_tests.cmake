@@ -13,12 +13,207 @@ function(assert_file_excludes relative_path)
   endforeach()
 endfunction()
 
+function(assert_exact_matches description root pattern)
+  set(expected ${ARGN})
+  file(GLOB_RECURSE candidates
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cpp"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.hpp"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.h")
+  set(actual)
+  foreach(candidate IN LISTS candidates)
+    file(READ "${candidate}" contents)
+    string(FIND "${contents}" "${pattern}" found)
+    if(NOT found EQUAL -1)
+      file(RELATIVE_PATH relative_candidate
+        "${OPEN_LMM_SOURCE_DIR}" "${candidate}")
+      list(APPEND actual "${relative_candidate}")
+    endif()
+  endforeach()
+  list(SORT actual)
+  list(SORT expected)
+  if(NOT "${actual}" STREQUAL "${expected}")
+    message(FATAL_ERROR
+      "${description} changed. expected=[${expected}] actual=[${actual}]")
+  endif()
+endfunction()
+
+# Goal 4 starts by freezing the exact known reverse edges. Later dependency
+# correction commits shrink these lists to zero; new callers fail immediately.
+assert_exact_matches(
+  "GUI controller-internal include baseline"
+  "gui" "runtime/control/pipeline_controller.hpp")
+assert_exact_matches(
+  "execution concrete AlgorithmFactory include baseline"
+  "src/runtime/execution" "plugins/host/algorithm_factory.hpp")
+assert_exact_matches(
+  "reconfigure concrete AlgorithmFactory include baseline"
+  "src/config/application" "plugins/host/algorithm_factory.hpp")
+assert_exact_matches(
+  "projection whole RuntimeState dependency baseline"
+  "src/visualization/projection" "runtime/state/runtime_state.hpp")
+
+# Production sources compiled directly into a test executable bypass canonical
+# target ownership. Keep the current exception list exact until Goal 5 assigns
+# every production translation unit one owner.
+file(READ "${OPEN_LMM_SOURCE_DIR}/test/CMakeLists.txt" test_cmake)
+set(known_test_compiled_production_sources)
+string(REGEX MATCHALL "\\.\\./[A-Za-z0-9_./-]+\\.cpp"
+  test_compiled_production_sources "${test_cmake}")
+list(REMOVE_DUPLICATES test_compiled_production_sources)
+list(SORT test_compiled_production_sources)
+list(SORT known_test_compiled_production_sources)
+if(NOT "${test_compiled_production_sources}" STREQUAL
+       "${known_test_compiled_production_sources}")
+  message(FATAL_ERROR
+    "test-owned production source baseline changed. expected="
+    "[${known_test_compiled_production_sources}] actual="
+    "[${test_compiled_production_sources}]")
+endif()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/CMakeLists.txt"
+  batch_compat_cmake)
+string(FIND "${batch_compat_cmake}"
+  "add_library(open_lmm_batch_compat_objects OBJECT" batch_compat_owner)
+if(batch_compat_owner EQUAL -1)
+  message(FATAL_ERROR
+    "canonical batch compatibility owner is missing: open_lmm_batch_compat_objects")
+endif()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/plugins/host/CMakeLists.txt"
+  plugin_host_cmake)
+string(FIND "${plugin_host_cmake}"
+  "add_library(open_lmm_plugin_host_objects OBJECT" plugin_host_owner)
+if(plugin_host_owner EQUAL -1)
+  message(FATAL_ERROR
+    "canonical plugin host owner is missing: open_lmm_plugin_host_objects")
+endif()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/visualization/CMakeLists.txt"
+  visualization_cmake)
+string(FIND "${visualization_cmake}"
+  "add_library(open_lmm_visualization_projection_objects OBJECT"
+  visualization_owner)
+if(visualization_owner EQUAL -1)
+  message(FATAL_ERROR
+    "canonical visualization owner is missing")
+endif()
+
+foreach(runtime_owner IN ITEMS
+    open_lmm_runtime_state_objects
+    open_lmm_runtime_resources_objects
+    open_lmm_runtime_execution_objects
+    open_lmm_runtime_control_objects
+    open_lmm_runtime_service_objects
+    open_lmm_runtime_composition_objects)
+  file(GLOB_RECURSE runtime_cmake_files
+    "${OPEN_LMM_SOURCE_DIR}/src/runtime/*/CMakeLists.txt")
+  set(runtime_owner_found FALSE)
+  foreach(runtime_cmake_path IN LISTS runtime_cmake_files)
+    file(READ "${runtime_cmake_path}" runtime_cmake)
+    string(FIND "${runtime_cmake}"
+      "add_library(${runtime_owner} OBJECT" found)
+    if(NOT found EQUAL -1)
+      set(runtime_owner_found TRUE)
+    endif()
+  endforeach()
+  if(NOT runtime_owner_found)
+    message(FATAL_ERROR "canonical runtime owner is missing: ${runtime_owner}")
+  endif()
+endforeach()
+
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/storage/CMakeLists.txt" storage_cmake)
+string(FIND "${storage_cmake}"
+  "add_library(open_lmm_storage_objects OBJECT" storage_owner)
+if(storage_owner EQUAL -1)
+  message(FATAL_ERROR
+    "canonical storage owner is missing: open_lmm_storage_objects")
+endif()
+
+foreach(owner IN ITEMS
+    open_lmm_config_document_objects
+    open_lmm_config_schema_objects
+    open_lmm_config_domain_objects
+    open_lmm_config_application_objects)
+  string(FIND "${test_cmake}" "${owner}" unexpected_test_owner)
+  if(NOT unexpected_test_owner EQUAL -1)
+    message(FATAL_ERROR "tests must not own production target: ${owner}")
+  endif()
+  file(READ "${OPEN_LMM_SOURCE_DIR}/src/config/CMakeLists.txt" config_cmake)
+  string(FIND "${config_cmake}" "add_library(${owner} OBJECT" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "canonical config owner is missing: ${owner}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/foundation/CMakeLists.txt"
+  foundation_cmake)
+foreach(owner IN ITEMS
+    open_lmm_foundation_concurrency_objects
+    open_lmm_foundation_logging_objects)
+  string(FIND "${foundation_cmake}" "add_library(${owner} OBJECT" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "canonical foundation owner is missing: ${owner}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/domain/support/CMakeLists.txt"
+  domain_support_cmake)
+string(FIND "${domain_support_cmake}"
+  "add_library(open_lmm_domain_support_objects OBJECT" found_domain_support)
+if(found_domain_support EQUAL -1)
+  message(FATAL_ERROR "canonical domain support owner is missing")
+endif()
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/client/CMakeLists.txt"
+  runtime_client_cmake)
+string(FIND "${runtime_client_cmake}"
+  "add_library(open_lmm_runtime_client_objects OBJECT" found_runtime_client)
+if(found_runtime_client EQUAL -1)
+  message(FATAL_ERROR "canonical runtime client owner is missing")
+endif()
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/gui/CMakeLists.txt" gui_cmake)
+foreach(owner IN ITEMS
+    open_lmm_gui_model_objects
+    open_lmm_gui_adapter_objects
+    open_lmm_gui_presentation_objects)
+  string(FIND "${gui_cmake}"
+    "openlmm_add_gui_object_owner(${owner}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "canonical GUI owner is missing: ${owner}")
+  endif()
+endforeach()
+
+# A production translation unit may be absent when its feature is disabled,
+# but no configured build may compile the same source into multiple owners.
+# Tests have their own sources and consume production code only through the
+# canonical targets checked above.
+if(OPEN_LMM_BUILD_DIR AND
+   EXISTS "${OPEN_LMM_BUILD_DIR}/compile_commands.json")
+  file(READ "${OPEN_LMM_BUILD_DIR}/compile_commands.json" compile_commands)
+  foreach(root IN ITEMS common core gui server utils src)
+    file(GLOB_RECURSE production_sources
+      "${OPEN_LMM_SOURCE_DIR}/${root}/*.cpp")
+    foreach(source IN LISTS production_sources)
+      string(REPLACE "\\" "\\\\" source_pattern "${source}")
+      string(REPLACE "." "\\." source_pattern "${source_pattern}")
+      string(REGEX MATCHALL
+        "\"file\"[ \t]*:[ \t]*\"${source_pattern}\""
+        source_compile_entries "${compile_commands}")
+      list(LENGTH source_compile_entries source_compile_count)
+      if(source_compile_count GREATER 1)
+        file(RELATIVE_PATH relative_source
+          "${OPEN_LMM_SOURCE_DIR}" "${source}")
+        message(FATAL_ERROR
+          "production source has multiple compile owners: "
+          "${relative_source} (${source_compile_count})")
+      endif()
+    endforeach()
+  endforeach()
+endif()
+
 # The contracts/common layer may depend on third-party value types, but must
 # never reach upward into a concrete core implementation.
 file(GLOB_RECURSE common_sources
-  "${OPEN_LMM_SOURCE_DIR}/common/*.cpp"
-  "${OPEN_LMM_SOURCE_DIR}/common/*.hpp"
-  "${OPEN_LMM_SOURCE_DIR}/common/*.h")
+  "${OPEN_LMM_SOURCE_DIR}/include/open_lmm/common/*.hpp"
+  "${OPEN_LMM_SOURCE_DIR}/include/open_lmm/common/*.h"
+  "${OPEN_LMM_SOURCE_DIR}/src/foundation/contracts/*.cpp")
 foreach(source IN LISTS common_sources)
   file(READ "${source}" contents)
   string(FIND "${contents}" "open_lmm/core/" found_core_include)
@@ -29,11 +224,38 @@ foreach(source IN LISTS common_sources)
   endif()
 endforeach()
 
+# Domain support still consumes the foundation logger through its private
+# canonical include path; the façade DSO dependency remains explicit.
+assert_exact_matches(
+  "legacy pipeline to foundation logging include baseline"
+  "src/runtime/execution/legacy_pipeline" "foundation/logging/logging.hpp"
+  "src/runtime/execution/legacy_pipeline/pipeline.cpp")
+assert_exact_matches(
+  "domain support to foundation logging include baseline"
+  "src/domain/support" "foundation/logging/logging.hpp"
+  "src/domain/support/registration_log.cpp")
+assert_exact_matches(
+  "plugin host public-contract include baseline"
+  "src/plugins/host" "open_lmm/common/"
+  "src/plugins/host/algorithm_provider.hpp"
+  "src/plugins/host/load_module.hpp"
+  "src/plugins/host/plugin_support.hpp")
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/domain/support/CMakeLists.txt"
+  common_target_cmake)
+string(FIND "${common_target_cmake}" "open_lmm_utils" common_logging_link)
+if(common_logging_link EQUAL -1)
+  message(FATAL_ERROR
+    "open_lmm_common must declare its foundation logging dependency")
+endif()
+
 # Core algorithms and built-in plugins consume validated snapshots only.
 file(GLOB_RECURSE core_sources
-  "${OPEN_LMM_SOURCE_DIR}/core/*.cpp"
-  "${OPEN_LMM_SOURCE_DIR}/core/*.hpp"
-  "${OPEN_LMM_SOURCE_DIR}/core/*.h")
+  "${OPEN_LMM_SOURCE_DIR}/src/domain/*.cpp"
+  "${OPEN_LMM_SOURCE_DIR}/src/domain/*.hpp"
+  "${OPEN_LMM_SOURCE_DIR}/src/domain/*.h"
+  "${OPEN_LMM_SOURCE_DIR}/src/plugins/*.cpp"
+  "${OPEN_LMM_SOURCE_DIR}/src/plugins/*.hpp"
+  "${OPEN_LMM_SOURCE_DIR}/src/plugins/*.h")
 foreach(source IN LISTS core_sources)
   file(READ "${source}" contents)
   foreach(pattern
@@ -55,7 +277,7 @@ foreach(source IN LISTS core_sources)
 endforeach()
 
 assert_file_excludes(
-  "common/pipeline.hpp"
+  "src/runtime/execution/legacy_pipeline/pipeline.hpp"
   "spdlog/"
   "fmt/"
   "common/profiling.hpp"
@@ -64,7 +286,7 @@ assert_file_excludes(
 )
 
 assert_file_excludes(
-  "server/nodes/map_update_node.hpp"
+  "src/runtime/execution/nodes/map_update_node.hpp"
   "spdlog/"
   "fmt/"
   "pcl/io/"
@@ -73,12 +295,12 @@ assert_file_excludes(
 )
 
 assert_file_excludes(
-  "common/data_types.hpp"
+  "include/open_lmm/common/data_types.hpp"
   "scan_context.h"
 )
 
 assert_file_excludes(
-  "common/registration.cpp"
+  "src/domain/support/registration.cpp"
   "spdlog/"
   "fmt/"
   "pcl/common/transforms.h"
@@ -86,14 +308,15 @@ assert_file_excludes(
 )
 
 # Keep template-heavy fmt/spdlog implementation details behind the lightweight
-# utils/logging.hpp API. A direct include in a large translation unit has
+# foundation logging API. A direct include in a large translation unit has
 # previously triggered GCC optimizer ICEs at Release optimization levels.
 file(GLOB_RECURSE open_lmm_sources
   "${OPEN_LMM_SOURCE_DIR}/*.cpp"
   "${OPEN_LMM_SOURCE_DIR}/*.hpp"
   "${OPEN_LMM_SOURCE_DIR}/*.h")
 foreach(source IN LISTS open_lmm_sources)
-  if(source STREQUAL "${OPEN_LMM_SOURCE_DIR}/utils/logging.cpp")
+  if(source STREQUAL
+     "${OPEN_LMM_SOURCE_DIR}/src/foundation/logging/logging.cpp")
     continue()
   endif()
   file(READ "${source}" contents)
@@ -112,7 +335,8 @@ assert_file_excludes(
   "add_compile_options($<$<CONFIG:Release>:-O3>)"
   "install(DIRECTORY \${PROJECT_SOURCE_DIR}/\${public_header_dir}/")
 
-file(READ "${OPEN_LMM_SOURCE_DIR}/common/CMakeLists.txt" common_cmake)
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/foundation/contracts/CMakeLists.txt"
+  common_cmake)
 string(REGEX MATCH
   "add_library\\(open_lmm_contracts SHARED[^)]*\\)" contracts_sources
   "${common_cmake}")
@@ -137,7 +361,8 @@ foreach(forbidden
     "plugin_support.hpp"
     "stage_executor.hpp"
     "runtime_state.hpp"
-    "server/execution/")
+    "server/execution/"
+    "runtime/execution/")
   string(FIND "${public_header_allowlist}" "${forbidden}" found)
   if(NOT found EQUAL -1)
     message(FATAL_ERROR
@@ -147,7 +372,8 @@ endforeach()
 
 # MapServer is the stable command/query port façade only; mutable
 # session/runtime responsibilities belong to StageExecutor and RuntimeStateStore.
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/map_server.hpp" map_server_header)
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/map_server.hpp"
+  map_server_header)
 foreach(expected
     "std::unique_ptr<StageExecutor> executor_"
     "class MapServer final : public StageRuntimePort")
@@ -167,26 +393,26 @@ endforeach()
 # Session execution owns an injected immutable bootstrap configuration. No
 # process-global configuration singleton is allowed in production code.
 assert_file_excludes(
-  "utils/config.hpp"
+  "src/config/document/config.hpp"
   "GlobalConfig")
 assert_file_excludes(
-  "utils/config.cpp"
+  "src/config/document/config.cpp"
   "GlobalConfig")
 assert_file_excludes(
-  "server/stage_executor.hpp"
+  "src/runtime/execution/stage_executor.hpp"
   "GlobalConfig")
 assert_file_excludes(
-  "server/stage_executor.cpp"
+  "src/runtime/execution/stage_executor.cpp"
   "GlobalConfig")
 assert_file_excludes(
-  "server/runtime_service.hpp"
+  "src/runtime/service/runtime_service.hpp"
   "GlobalConfig"
   "open_lmm/core/")
 assert_file_excludes(
-  "server/runtime_service.cpp"
+  "src/runtime/service/runtime_service.cpp"
   "GlobalConfig"
   "open_lmm/core/")
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/runtime_service.hpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/service/runtime_service.hpp"
   runtime_service_header)
 foreach(expected
     "class RuntimeService"
@@ -209,7 +435,7 @@ foreach(removed_internal_path
       "single-runtime migration must remove ${removed_internal_path}")
   endif()
 endforeach()
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/runtime_state_store.hpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/state/runtime_state_store.hpp"
   runtime_state_store_header)
 foreach(expected "class RuntimeStateStore" "std::shared_ptr<const RuntimeState>")
   string(FIND "${runtime_state_store_header}" "${expected}" found)
@@ -218,7 +444,7 @@ foreach(expected "class RuntimeStateStore" "std::shared_ptr<const RuntimeState>"
   endif()
 endforeach()
 
-file(READ "${OPEN_LMM_SOURCE_DIR}/common/runtime_contracts.hpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/include/open_lmm/common/runtime_contracts.hpp"
   runtime_contracts_header)
 string(FIND "${runtime_contracts_header}" "SessionId" found_session_id)
 if(NOT found_session_id EQUAL -1)
@@ -229,13 +455,15 @@ if(found_job_handle EQUAL -1)
   message(FATAL_ERROR "Single-runtime contracts must expose JobHandle")
 endif()
 foreach(lightweight_header IN ITEMS
-    common/agent_id.hpp common/result.hpp common/runtime_contracts.hpp
-    server/runtime_client.hpp)
+    include/open_lmm/common/agent_id.hpp
+    include/open_lmm/common/result.hpp
+    include/open_lmm/common/runtime_contracts.hpp
+    include/open_lmm/server/runtime_client.hpp)
   assert_file_excludes("${lightweight_header}"
     "Eigen/" "pcl/" "gtsam/" "rclcpp/" "open_lmm/core/")
 endforeach()
 
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/resource_governor.hpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/resources/resource_governor.hpp"
   resource_governor_header)
 foreach(expected
     "struct ResourceBudget"
@@ -249,10 +477,10 @@ foreach(expected
     message(FATAL_ERROR "ResourceGovernor contract must contain: ${expected}")
   endif()
 endforeach()
-assert_file_excludes("server/resource_governor.hpp"
+assert_file_excludes("src/runtime/resources/resource_governor.hpp"
   "max_active_sessions" "TryAcquireSession" "ReleaseSession")
 assert_file_excludes(
-  "utils/bounded_executor.cpp"
+  "src/foundation/concurrency/bounded_executor.cpp"
   "std::async"
   ".detach(")
 
@@ -260,13 +488,13 @@ assert_file_excludes(
 # A GUI event handler may request a new snapshot, but must not globally clear the
 # last valid presentation before the replacement is ready.
 assert_file_excludes(
-  "gui/iridescence_gui.cpp"
+  "src/adapters/gui/iridescence/iridescence_gui.cpp"
   "ClearVisualizationLayers")
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/stage_executor.cpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stage_executor.cpp"
   stage_executor_source)
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/data_load_executor.cpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stages/data_load_executor.cpp"
   data_load_executor_source)
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/map_update_executor.cpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stages/map_update_executor.cpp"
   map_update_executor_source)
 foreach(expected "AgentExecutor" "MemoryClass::kResidentPayload")
   string(FIND "${data_load_executor_source}" "${expected}" found)
@@ -289,13 +517,13 @@ foreach(forbidden "runParallelDataLoad" "runParallelMapUpdate"
       "thin StageExecutor must not retain responsibility: ${forbidden}")
   endif()
 endforeach()
-file(READ "${OPEN_LMM_SOURCE_DIR}/core/data_loader/data_loader_base.hpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/domain/data_loader/data_loader_base.hpp"
   data_loader_header)
 string(FIND "${data_loader_header}" "VisitRawScanData" raw_scan_streaming)
 if(raw_scan_streaming EQUAL -1)
   message(FATAL_ERROR "MapUpdate raw scans must expose bounded streaming")
 endif()
-file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/alignment_executor.cpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stages/alignment_executor.cpp"
   alignment_executor_source)
 string(FIND "${alignment_executor_source}" "AgentExecutor" parallel_alignment)
 if(NOT parallel_alignment EQUAL -1)
@@ -321,7 +549,7 @@ endforeach()
 
 file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/CMakeLists.txt" ros_cmake)
 string(FIND "${ros_cmake}"
-  "find_package(open_lmm CONFIG REQUIRED COMPONENTS client gui)"
+  "find_package(open_lmm CONFIG REQUIRED COMPONENTS client)"
   found_open_lmm_package)
 if(found_open_lmm_package EQUAL -1)
   message(FATAL_ERROR "ROS must consume the installed open_lmm package")
@@ -357,7 +585,6 @@ file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
   ros_adapter)
 foreach(expected
     "RuntimeClient"
-    "GuiRuntimeHost"
     "create_server<ExecutePipeline>"
     "\"~/execute\""
     "\"~/status\""
@@ -370,13 +597,31 @@ foreach(expected
   endif()
 endforeach()
 assert_file_excludes(
+  "../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
+  "GuiRuntimeHost"
+  "gui_plugin_path"
+  "open_lmm/gui/")
+file(READ
+  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros_gui.cpp"
+  ros_gui_composition)
+foreach(expected "GuiRuntimeHost" "open_lmm/gui/gui_runtime_host.hpp")
+  string(FIND "${ros_gui_composition}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR
+      "optional ROS GUI composition must contain: ${expected}")
+  endif()
+endforeach()
+assert_file_excludes(
   "../ros/ros2/open_lmm_ros/open_lmm_ros.hpp"
   "server/runtime_service.hpp"
+  "runtime/service/runtime_service.hpp"
   "gui_controller_bridge.hpp"
   "gui_plugin_host.hpp"
+  "gui_runtime_host.hpp"
   "RuntimeSessionClient")
-file(READ "${OPEN_LMM_SOURCE_DIR}/CMakeLists.txt" core_cmake)
-string(FIND "${core_cmake}" "add_executable(open_lmm_batch main.cpp)"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/CMakeLists.txt"
+  batch_cmake)
+string(FIND "${batch_cmake}" "add_executable(open_lmm_batch main.cpp)"
   found_batch_launcher)
 if(found_batch_launcher EQUAL -1)
   message(FATAL_ERROR "standalone open_lmm_batch launcher must be built")

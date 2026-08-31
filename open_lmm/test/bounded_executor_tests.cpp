@@ -1,5 +1,5 @@
-#include <open_lmm/server/resource_governor.hpp>
-#include <open_lmm/utils/bounded_executor.hpp>
+#include <runtime/resources/resource_governor.hpp>
+#include <foundation/concurrency/bounded_executor.hpp>
 
 #include <algorithm>
 #include <atomic>

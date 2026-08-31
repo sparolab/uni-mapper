@@ -1,4 +1,4 @@
-#include <open_lmm/server/pipeline_controller.hpp>
+#include <runtime/control/pipeline_controller.hpp>
 #include "test_runtime_port.hpp"
 
 #include <atomic>

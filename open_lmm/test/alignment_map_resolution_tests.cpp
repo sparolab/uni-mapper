@@ -1,5 +1,5 @@
-#include <open_lmm/core/loop_detector/alignment_map_builder.hpp>
-#include <open_lmm/core/loop_detector/kiss_alignment_proposer.hpp>
+#include <domain/loop_detection/alignment_map_builder.hpp>
+#include <domain/loop_detection/kiss_alignment_proposer.hpp>
 
 #include <cstdlib>
 #include <iostream>

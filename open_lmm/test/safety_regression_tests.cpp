@@ -10,19 +10,19 @@
 #include <vector>
 
 #include <open_lmm/common/agent_context.hpp>
-#include <open_lmm/common/pipeline.hpp>
-#include <open_lmm/common/pointcloud_utils.hpp>
+#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <domain/support/pointcloud_utils.hpp>
 #include <open_lmm/common/rigid_transform.hpp>
-#include <open_lmm/core/data_loader/data_loader_file.hpp>
-#include <open_lmm/core/backend_optimizer/backend_optimizer_incremental.hpp>
-#include <open_lmm/core/algorithm_invariants.hpp>
-#include <open_lmm/core/dynamic_remover/dynamic_remover_online.hpp>
-#include <open_lmm/core/dynamic_remover/dynamic_remover_offline.hpp>
-#include <open_lmm/common/validation.hpp>
-#include <open_lmm/utils/load_module.hpp>
-#include <open_lmm/utils/config.hpp>
-#include <open_lmm/utils/logging.hpp>
-#include <open_lmm/server/file_set_transaction.hpp>
+#include <domain/data_loader/data_loader_file.hpp>
+#include <domain/optimization/backend_optimizer_incremental.hpp>
+#include <domain/support/algorithm_invariants.hpp>
+#include <domain/dynamic_removal/dynamic_remover_online.hpp>
+#include <domain/dynamic_removal/dynamic_remover_offline.hpp>
+#include <domain/support/validation.hpp>
+#include <plugins/host/load_module.hpp>
+#include <config/document/config.hpp>
+#include <foundation/logging/logging.hpp>
+#include <storage/transactions/file_set_transaction.hpp>
 
 namespace {
 

@@ -15,10 +15,10 @@
 #include <nlohmann/json.hpp>
 #include <unistd.h>
 
-#include <open_lmm/common/pipeline.hpp>
-#include <open_lmm/server/map_server.hpp>
-#include <open_lmm/server/resource_governor.hpp>
-#include <open_lmm/utils/config.hpp>
+#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <adapters/batch/compat/map_server.hpp>
+#include <runtime/resources/resource_governor.hpp>
+#include <config/document/config.hpp>
 
 namespace fs = std::filesystem;
 

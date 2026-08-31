@@ -1,7 +1,6 @@
 #pragma once
 
 #include "goal_admission.hpp"
-#include <open_lmm/gui/gui_runtime_host.hpp>
 #include <open_lmm/server/runtime_client.hpp>
 #include <open_lmm_ros/action/execute_pipeline.hpp>
 #include <open_lmm_ros/msg/execution_event.hpp>
@@ -9,6 +8,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,8 +25,15 @@ class OpenLMMROS : public rclcpp::Node {
 
   explicit OpenLMMROS(const rclcpp::NodeOptions& options);
   ~OpenLMMROS() override;
-  [[nodiscard]] bool GuiEnabled() const { return gui_host_ != nullptr; }
   [[nodiscard]] PipelineSnapshot Snapshot() const;
+
+ protected:
+  [[nodiscard]] const std::shared_ptr<RuntimeClient>& Runtime() const {
+    return runtime_;
+  }
+  [[nodiscard]] const std::filesystem::path& ConfigPath() const {
+    return config_path_;
+  }
 
  private:
   rclcpp_action::GoalResponse HandleGoal(
@@ -43,7 +50,7 @@ class OpenLMMROS : public rclcpp::Node {
   void PublishEvent(const ExecutionEvent& event);
 
   std::shared_ptr<RuntimeClient> runtime_;
-  std::unique_ptr<GuiRuntimeHost> gui_host_;
+  std::filesystem::path config_path_;
   ExecutionEventSubscription event_subscription_;
   rclcpp::Publisher<open_lmm_ros::msg::ExecutionEvent>::SharedPtr
       event_publisher_;

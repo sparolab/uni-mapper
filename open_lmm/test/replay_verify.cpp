@@ -1,6 +1,6 @@
-#include <open_lmm/server/map_server.hpp>
-#include <open_lmm/utils/config.hpp>
-#include <open_lmm/utils/logging.hpp>
+#include <adapters/batch/compat/map_server.hpp>
+#include <config/document/config.hpp>
+#include <foundation/logging/logging.hpp>
 
 #include <Eigen/Geometry>
 

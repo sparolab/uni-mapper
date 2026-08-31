@@ -1,6 +1,6 @@
-#include <open_lmm/server/execution/alignment_executor.hpp>
-#include <open_lmm/server/execution/alignment_artifact_store.hpp>
-#include <open_lmm/server/execution/optimize_executor.hpp>
+#include <runtime/execution/stages/alignment_executor.hpp>
+#include <runtime/execution/stages/alignment_artifact_store.hpp>
+#include <runtime/execution/stages/optimize_executor.hpp>
 
 #include <cstdlib>
 #include <iostream>

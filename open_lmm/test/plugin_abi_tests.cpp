@@ -2,10 +2,10 @@
 
 #include <open_lmm/common/descriptor_index.hpp>
 #include <open_lmm/common/plugin_api.h>
-#include <open_lmm/core/dynamic_remover/remover_factory/offline/interface_offline_plugin.hpp>
-#include <open_lmm/core/dynamic_remover/remover_factory/online/interface_online_plugin.hpp>
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
-#include <open_lmm/utils/load_module.hpp>
+#include <domain/dynamic_removal/plugin/offline_plugin.hpp>
+#include <domain/dynamic_removal/plugin/online_plugin.hpp>
+#include <domain/loop_detection/database/database_kdtree.h>
+#include <plugins/host/load_module.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
 #include <cstdlib>

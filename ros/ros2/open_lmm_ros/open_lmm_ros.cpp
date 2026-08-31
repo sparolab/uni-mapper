@@ -1,6 +1,5 @@
 #include "open_lmm_ros.hpp"
 
-#include <ament_index_cpp/get_package_prefix.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 
@@ -103,8 +102,8 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
             .string();
   }
 
-  auto opened = runtime_->Open(
-      BootstrapRequest{std::filesystem::path(config_path), "ros"});
+  config_path_ = std::filesystem::path(config_path);
+  auto opened = runtime_->Open(BootstrapRequest{config_path_, "ros"});
   if (!opened) {
     throw std::runtime_error("Runtime initialization failed: " +
                              opened.GetError().Message());
@@ -134,34 +133,6 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
   }
   event_subscription_ = std::move(subscribed).Value();
 
-  this->declare_parameter<std::string>("gui_plugin_path", "");
-  this->declare_parameter<bool>("gui_enabled", false);
-  auto gui_plugin_path = this->get_parameter("gui_plugin_path").as_string();
-  const bool gui_enabled = this->get_parameter("gui_enabled").as_bool() ||
-                           !gui_plugin_path.empty();
-  if (!gui_enabled) {
-    RCLCPP_INFO(get_logger(), "ready; send goals to ~/execute");
-    return;
-  }
-
-  if (gui_plugin_path.empty()) {
-    gui_plugin_path =
-        (std::filesystem::path(
-             ament_index_cpp::get_package_prefix("open_lmm")) /
-         "lib" / "libopen_lmm_iridescence_gui.so")
-            .string();
-  }
-  if (!std::filesystem::is_regular_file(gui_plugin_path)) {
-    throw std::runtime_error("GUI plugin was not found at " + gui_plugin_path);
-  }
-  auto loaded = GuiRuntimeHost::LoadAndStart(
-      gui_plugin_path, runtime_,
-      (std::filesystem::path(config_path) / "config.json").string());
-  if (!loaded) {
-    throw std::runtime_error("GUI load failed: " +
-                             loaded.GetError().Message());
-  }
-  gui_host_ = std::move(loaded).Value();
   RCLCPP_INFO(get_logger(), "ready; send goals to ~/execute");
 }
 

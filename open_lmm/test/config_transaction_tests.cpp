@@ -1,10 +1,10 @@
-#include <open_lmm/server/artifact_repository.hpp>
-#include <open_lmm/server/bootstrap/algorithm_factory.hpp>
-#include <open_lmm/server/bootstrap/bootstrap_config.hpp>
-#include <open_lmm/server/execution/stage_coordinator.hpp>
-#include <open_lmm/server/output_repository.hpp>
+#include <runtime/state/artifact_repository.hpp>
+#include <plugins/host/algorithm_factory.hpp>
+#include <config/bootstrap/bootstrap_config.hpp>
+#include <runtime/execution/stages/stage_coordinator.hpp>
+#include <storage/transactions/output_repository.hpp>
 #include <open_lmm/utils/config_schema.hpp>
-#include <open_lmm/utils/logging.hpp>
+#include <foundation/logging/logging.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -156,7 +156,8 @@ int main() {
   RuntimeStateStore sessions(initial);
   OutputRepository outputs;
   auto governor = std::make_shared<ResourceGovernor>(ResourceBudget{});
-  StageCoordinator coordinator(sessions, outputs, governor);
+  StageCoordinator coordinator(sessions, outputs, governor,
+                               std::make_shared<AlgorithmFactory>());
   auto cancellation = std::make_shared<CancellationToken>();
 
   const auto first = Candidate("server/selected-a.json", 0.45);

@@ -1,15 +1,15 @@
 #include "plugin_fixture_interface.hpp"
 
-#include <open_lmm/gui/config_editor.hpp>
-#include <open_lmm/gui/gui_controller_bridge.hpp>
-#include <open_lmm/gui/gui_event_queue.hpp>
-#include <open_lmm/gui/gui_model.hpp>
-#include <open_lmm/gui/gui_plugin_host.hpp>
-#include <open_lmm/gui/map_presentation_state.hpp>
-#include <open_lmm/gui/visualization_repository.hpp>
-#include <open_lmm/gui/visualization_snapshot_worker.hpp>
-#include <open_lmm/gui/visualization_style.hpp>
-#include <open_lmm/utils/load_module.hpp>
+#include <adapters/gui/config_editor.hpp>
+#include <adapters/gui/gui_controller_bridge.hpp>
+#include <adapters/gui/model/gui_event_queue.hpp>
+#include <adapters/gui/model/gui_model.hpp>
+#include <adapters/gui/gui_plugin_host.hpp>
+#include <adapters/gui/presentation/map_presentation_state.hpp>
+#include <adapters/gui/presentation/visualization_repository.hpp>
+#include <adapters/gui/presentation/visualization_snapshot_worker.hpp>
+#include <adapters/gui/presentation/visualization_style.hpp>
+#include <plugins/host/load_module.hpp>
 
 #include <atomic>
 #include <chrono>

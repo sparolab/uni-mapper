@@ -30,7 +30,13 @@ endif()
 
 ### ROS2 ###
 find_package(ament_cmake_auto REQUIRED)
-find_package(open_lmm CONFIG REQUIRED COMPONENTS client gui)
+option(OPEN_LMM_ROS_BUILD_GUI
+  "Build the optional in-process OpenLMM GUI composition" ON)
+
+find_package(open_lmm CONFIG REQUIRED COMPONENTS client)
+if(OPEN_LMM_ROS_BUILD_GUI)
+  find_package(open_lmm CONFIG REQUIRED COMPONENTS gui)
+endif()
 ament_auto_find_build_dependencies()
 find_package(rosidl_default_generators REQUIRED)
 
@@ -51,12 +57,29 @@ set_target_properties(open_lmm_ros_component PROPERTIES
 )
 target_link_libraries(open_lmm_ros_component
   open_lmm::client
-  open_lmm::gui
 )
 rosidl_get_typesupport_target(open_lmm_ros_typesupport_target
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(open_lmm_ros_component "${open_lmm_ros_typesupport_target}")
 rclcpp_components_register_nodes(open_lmm_ros_component "open_lmm::OpenLMMROS")
+
+if(OPEN_LMM_ROS_BUILD_GUI)
+  ament_auto_add_library(open_lmm_ros_gui_component SHARED
+    ${ros_version}/open_lmm_ros/open_lmm_ros_gui.cpp
+  )
+  set_target_properties(open_lmm_ros_gui_component PROPERTIES
+    OUTPUT_NAME open_lmm_ros_gui
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+  )
+  target_link_libraries(open_lmm_ros_gui_component
+    open_lmm_ros_component
+    open_lmm::gui
+    "${open_lmm_ros_typesupport_target}"
+  )
+  rclcpp_components_register_nodes(open_lmm_ros_gui_component
+    "open_lmm::OpenLMMROSGui")
+endif()
 
 if(BUILD_TESTING)
   find_package(Threads REQUIRED)
@@ -72,8 +95,12 @@ ament_auto_add_executable(open_lmm_rosnode
   ${ros_version}/open_lmm_ros/open_lmm_rosnode.cpp
 )
 target_link_libraries(open_lmm_rosnode
-  open_lmm_ros_component
+  $<IF:$<BOOL:${OPEN_LMM_ROS_BUILD_GUI}>,open_lmm_ros_gui_component,open_lmm_ros_component>
 )
+if(OPEN_LMM_ROS_BUILD_GUI)
+  target_compile_definitions(open_lmm_rosnode PRIVATE
+    OPEN_LMM_ROS_GUI_COMPOSITION=1)
+endif()
 
 # Install launch files.
 install(DIRECTORY

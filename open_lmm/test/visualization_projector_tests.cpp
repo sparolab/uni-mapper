@@ -1,4 +1,5 @@
-#include <open_lmm/server/query/visualization_projector.hpp>
+#include <visualization/projection/visualization_projector.hpp>
+#include <runtime/state/runtime_state.hpp>
 
 #include <pcl/io/pcd_io.h>
 
@@ -55,10 +56,32 @@ std::shared_ptr<RuntimeState> MakeState(const fs::path& output,
   return state;
 }
 
+VisualizationSource MakeSource(const std::shared_ptr<RuntimeState>& state) {
+  VisualizationSource source;
+  source.revision = state->revision;
+  source.output_directory = state->config->root.output_directory;
+  for (const auto& [agent, raw] : state->payload->database->raw_data) {
+    const auto optimized = state->payload->database->optimized_data.find(agent);
+    const auto context = std::find_if(
+        state->payload->contexts.begin(), state->payload->contexts.end(),
+        [&agent](const AgentPipelineCtx& item) {
+          return item.agent.id == agent;
+        });
+    source.agents.push_back(
+        {agent, raw,
+         optimized == state->payload->database->optimized_data.end()
+             ? nullptr
+             : optimized->second,
+         context == state->payload->contexts.end() ? nullptr
+                                                   : context->loop_output});
+  }
+  return source;
+}
+
 void TestDataLoadIsLazyAndBounded() {
   VisualizationProjector projector;
   auto state = MakeState({});
-  projector.Publish(state, VisualizationPhase::kDataLoad, false);
+  projector.Publish(MakeSource(state), VisualizationPhase::kDataLoad, false);
   auto metadata = projector.Project({Id("agent"), false, 0.4F, 2});
   Check(metadata && metadata.Value().phase == VisualizationPhase::kDataLoad &&
             metadata.Value().pose_kind == VisualizationPoseKind::kOdometry &&
@@ -80,7 +103,8 @@ void TestDataLoadIsLazyAndBounded() {
 
 void TestCancelledProjectionCannotPopulateCache() {
   VisualizationProjector projector;
-  projector.Publish(MakeState({}), VisualizationPhase::kDataLoad, false);
+  projector.Publish(MakeSource(MakeState({})), VisualizationPhase::kDataLoad,
+                    false);
   auto cancellation = std::make_shared<CancellationToken>();
   cancellation->Request();
   {
@@ -97,7 +121,8 @@ void TestCancelledProjectionCannotPopulateCache() {
 
 void TestQueryShapeCacheIsBounded() {
   VisualizationProjector projector;
-  projector.Publish(MakeState({}), VisualizationPhase::kDataLoad, false);
+  projector.Publish(MakeSource(MakeState({})), VisualizationPhase::kDataLoad,
+                    false);
   for (std::size_t shape = 1; shape <= 40; ++shape) {
     auto result = projector.Project(
         {Id("agent"), true, static_cast<float>(shape) / 1000.0F,
@@ -132,7 +157,8 @@ void TestLoopCandidatesAndCandidateFrameSurvive() {
   state->payload = payload;
 
   VisualizationProjector projector;
-  projector.Publish(state, VisualizationPhase::kLoopDetection, false);
+  projector.Publish(MakeSource(state), VisualizationPhase::kLoopDetection,
+                    false);
   auto result = projector.Project({agent, false});
   Check(result && result.Value().phase ==
                       VisualizationPhase::kLoopDetection &&
@@ -151,7 +177,8 @@ void TestLoopCandidatesAndCandidateFrameSurvive() {
 void TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks() {
   VisualizationProjector projector;
   auto state = MakeState({}, 7);
-  projector.Publish(state, VisualizationPhase::kOptimization, false);
+  projector.Publish(MakeSource(state), VisualizationPhase::kOptimization,
+                    false);
   const auto first_raw = state->payload->database->raw_data.at(Id("agent"));
   projector.PublishDataLoadCandidate(7, Id("agent"), first_raw);
 
@@ -173,8 +200,8 @@ void TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks() {
         "failed DataLoad restores the previous committed read model");
   projector.PublishDataLoadCandidate(7, Id("second"), second_raw);
 
-  projector.Publish(MakeState({}, 8), VisualizationPhase::kOptimization,
-                    false);
+  projector.Publish(MakeSource(MakeState({}, 8)),
+                    VisualizationPhase::kOptimization, false);
   projector.PublishDataLoadCandidate(7, Id("second"), second_raw);
   auto committed = projector.Project({Id("agent"), false});
   Check(committed && committed.Value().revision == 8 &&
@@ -196,7 +223,8 @@ void TestFinalMapIntensityAndCache() {
         "write final map fixture");
 
   VisualizationProjector projector;
-  projector.Publish(MakeState(root, 9), VisualizationPhase::kMapUpdate, true);
+  projector.Publish(MakeSource(MakeState(root, 9)),
+                    VisualizationPhase::kMapUpdate, true);
   auto metadata = projector.Project({Id("agent"), false});
   Check(metadata && metadata.Value().points.empty() &&
             metadata.Value().point_kind ==
@@ -236,7 +264,7 @@ void TestFinalMapBoundIsDeterministic() {
         "write bounded final map fixture");
 
   VisualizationProjector first_projector;
-  first_projector.Publish(MakeState(root, 11),
+  first_projector.Publish(MakeSource(MakeState(root, 11)),
                           VisualizationPhase::kMapUpdate, true);
   const VisualizationQuery query{Id("agent"), true, 0.1F, 17};
   auto first = first_projector.Project(query);
@@ -246,7 +274,7 @@ void TestFinalMapBoundIsDeterministic() {
         "final map never exceeds the requested point bound");
 
   VisualizationProjector second_projector;
-  second_projector.Publish(MakeState(root, 11),
+  second_projector.Publish(MakeSource(MakeState(root, 11)),
                            VisualizationPhase::kMapUpdate, true);
   auto second = second_projector.Project(query);
   Check(second && second.Value().points.size() == first.Value().points.size(),
@@ -293,7 +321,7 @@ void TestFinalMapsRemainAvailableForEveryAgent() {
         "write multi-agent final map fixtures");
 
   VisualizationProjector projector;
-  projector.Publish(state, VisualizationPhase::kMapUpdate, true);
+  projector.Publish(MakeSource(state), VisualizationPhase::kMapUpdate, true);
   auto first = projector.Project({Id("agent"), true});
   auto second = projector.Project({Id("second"), true});
   Check(first && second && first.Value().points.size() == 1 &&

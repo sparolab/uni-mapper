@@ -1,4 +1,4 @@
-#include <open_lmm/core/algorithm_config.hpp>
+#include <config/domain/algorithm_config.hpp>
 
 #include <cstdlib>
 #include <cmath>

@@ -1,6 +1,6 @@
 #include <open_lmm/common/agent_data.hpp>
-#include <open_lmm/server/artifact_repository.hpp>
-#include <open_lmm/server/stage_runner.hpp>
+#include <runtime/state/artifact_repository.hpp>
+#include <runtime/execution/stage_runner.hpp>
 
 #include <algorithm>
 #include <cstdlib>

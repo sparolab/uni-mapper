@@ -1,8 +1,8 @@
 #include <open_lmm/common/algorithm_execution_context.hpp>
-#include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
-#include <open_lmm/core/data_loader/data_loader_base.hpp>
-#include <open_lmm/core/dynamic_remover/dynamic_remover_base.hpp>
-#include <open_lmm/core/loop_detector/loop_detector_base.hpp>
+#include <domain/optimization/backend_optimizer_base.hpp>
+#include <domain/data_loader/data_loader_base.hpp>
+#include <domain/dynamic_removal/dynamic_remover_base.hpp>
+#include <domain/loop_detection/loop_detector_base.hpp>
 
 #include <cstdlib>
 #include <iostream>

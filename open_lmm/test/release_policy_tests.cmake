@@ -38,13 +38,13 @@ assert_file_contains(
   "VERSION \${PROJECT_VERSION}"
   "SOVERSION \${PROJECT_VERSION_MAJOR}")
 assert_file_contains(
-  "${core_dir}/gui/gui_plugin_host.cpp"
+  "${core_dir}/src/adapters/gui/gui_plugin_host.cpp"
   "gui:services-v3")
 assert_file_contains(
-  "${core_dir}/gui/iridescence_gui.cpp"
+  "${core_dir}/src/adapters/gui/iridescence/iridescence_gui.cpp"
   "gui:services-v3")
 assert_file_contains(
-  "${core_dir}/common/plugin_api.h"
+  "${core_dir}/include/open_lmm/common/plugin_api.h"
   "kind-specific capability contract")
 
 foreach(package_manifest IN ITEMS

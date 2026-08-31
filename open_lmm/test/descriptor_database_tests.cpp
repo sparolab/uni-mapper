@@ -1,4 +1,4 @@
-#include <open_lmm/core/loop_detector/descriptor_factory/kdtree/database_kdtree.h>
+#include <domain/loop_detection/database/database_kdtree.h>
 
 #include <cstdlib>
 #include <cmath>

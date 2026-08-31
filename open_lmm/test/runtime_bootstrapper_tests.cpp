@@ -1,10 +1,10 @@
-#include <open_lmm/server/bootstrap/algorithm_factory.hpp>
-#include <open_lmm/server/bootstrap/runtime_bootstrapper.hpp>
-#include <open_lmm/server/execution/algorithm_context.hpp>
-#include <open_lmm/server/transaction/runtime_reconfigurer.hpp>
+#include <plugins/host/algorithm_factory.hpp>
+#include <runtime/composition/runtime_bootstrapper.hpp>
+#include <runtime/execution/stages/algorithm_context.hpp>
+#include <config/application/runtime_reconfigurer.hpp>
 
-#include <open_lmm/core/backend_optimizer/backend_optimizer_base.hpp>
-#include <open_lmm/core/data_loader/data_loader_base.hpp>
+#include <domain/optimization/backend_optimizer_base.hpp>
+#include <domain/data_loader/data_loader_base.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
 #include <nlohmann/json.hpp>

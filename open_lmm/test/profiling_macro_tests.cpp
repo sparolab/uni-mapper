@@ -1,4 +1,4 @@
-#include <open_lmm/common/profiling.hpp>
+#include <foundation/diagnostics/profiling.hpp>
 
 #include <iostream>
 #include <string>

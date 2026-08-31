@@ -1,6 +1,6 @@
-#include <open_lmm/core/loop_detector/map_alignment_coordinator.hpp>
-#include <open_lmm/core/loop_detector/descriptor_alignment_proposer.hpp>
-#include <open_lmm/core/loop_detector/map_alignment_refiner.hpp>
+#include <domain/loop_detection/map_alignment_coordinator.hpp>
+#include <domain/loop_detection/descriptor_alignment_proposer.hpp>
+#include <domain/loop_detection/map_alignment_refiner.hpp>
 
 #include <atomic>
 #include <chrono>
