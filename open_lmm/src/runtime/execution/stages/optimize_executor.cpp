@@ -40,19 +40,23 @@ Result<ExecutionCandidate> OptimizeExecutor::ReplayThrough(
   }
   auto prefix = OrderedAgentPrefix(committed->ordered_agents, target_agent);
   if (!prefix) return Result<ExecutionCandidate>::Failure(prefix.GetError());
-  auto optimizer = optimizer_factory_(*committed->config->optimizer);
+  auto optimizer = optimize_step_
+                       ? optimizer_factory_(*committed->config->optimizer)
+                       : committed->payload->optimizer->ForkCandidate();
   if (!optimizer) {
     if (committed->config->documents) {
       auto context = MakeAlgorithmExecutionContext(
           *committed, runtime, {}, committed->config->documents->optimizer,
-          "open_lmm.backend_optimizer", "optimize_factory",
+          "open_lmm.backend_optimizer",
+          optimize_step_ ? "optimize_factory" : "optimize_fork",
           committed->config->optimizer->type);
       return Result<ExecutionCandidate>::Failure(
           WithAlgorithmContext(optimizer.GetError(), context));
     }
     Error error = optimizer.GetError();
     error.WithRuntimeRevision(committed->revision)
-        .WithExecution("algorithm", "optimize_factory");
+        .WithExecution("algorithm",
+                       optimize_step_ ? "optimize_factory" : "optimize_fork");
     return Result<ExecutionCandidate>::Failure(std::move(error));
   }
 
@@ -81,7 +85,6 @@ Result<ExecutionCandidate> OptimizeExecutor::ReplayThrough(
     }
   }
 
-  std::unique_ptr<OptimizeNode> optimize_node;
   if (!optimize_step_) {
     if (!committed->config->documents) {
       return Result<ExecutionCandidate>::Failure(
@@ -89,27 +92,110 @@ Result<ExecutionCandidate> OptimizeExecutor::ReplayThrough(
     }
     auto optimize_context = MakeAlgorithmExecutionContext(
         *committed, runtime, {}, committed->config->documents->optimizer,
-        "open_lmm.backend_optimizer", "optimize",
+        "open_lmm.backend_optimizer", "optimize_prefix",
         committed->config->optimizer->type);
-    optimize_node = std::make_unique<OptimizeNode>(
-        optimizer.Value(), std::move(optimize_context));
-  }
-  for (const AgentId& id : prefix.Value()) {
-    auto item = std::find_if(contexts.begin(), contexts.end(),
-                             [&id](const auto& value) {
-                               return value.agent.id == id;
-                             });
-    item->cancellation = runtime.cancellation;
-    item->flow = ControlFlow::kContinue;
-    Result<void> optimized = Result<void>::Ok();
-    if (optimize_step_) {
-      optimized = optimize_step_(*item, *database, optimizer.Value());
-    } else {
-      auto processed = optimize_node->Process(*item, *database);
-      if (!processed) optimized = Result<void>::Failure(processed.GetError());
+    const auto representative = std::find_if(
+        contexts.begin(), contexts.end(), [&prefix](const auto& value) {
+          return value.agent.id == prefix.Value().front();
+        });
+    if (representative == contexts.end()) {
+      return Result<ExecutionCandidate>::Failure(
+          Error::InvalidArgument("optimizer prefix context is unavailable"));
     }
-    if (!optimized) {
-      return Result<ExecutionCandidate>::Failure(optimized.GetError());
+    optimize_context.agent = representative->agent;
+    const std::size_t processed_count = optimizer.Value()->ProcessedAgentCount();
+    if (processed_count > committed->ordered_agents.size()) {
+      return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+          "committed optimizer processed-agent count is invalid"));
+    }
+    for (std::size_t index = 0; index < processed_count; ++index) {
+      if (!optimizer.Value()->HasProcessedAgent(
+              committed->ordered_agents[index])) {
+        return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+            "committed optimizer agents are not an ordered runtime prefix"));
+      }
+    }
+
+    if (processed_count < prefix.Value().size()) {
+      // LoopDetect Through intentionally leaves its target unoptimized. Append
+      // only that pending tail to the fork; never replay already-owned factors.
+      OptimizeNode optimize_node(optimizer.Value(), optimize_context);
+      for (std::size_t index = processed_count;
+           index < prefix.Value().size(); ++index) {
+        const AgentId& id = prefix.Value()[index];
+        auto item = std::find_if(contexts.begin(), contexts.end(),
+                                 [&id](const auto& value) {
+                                   return value.agent.id == id;
+                                 });
+        if (item == contexts.end()) {
+          return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+              "optimizer pending prefix context is unavailable"));
+        }
+        item->cancellation = runtime.cancellation;
+        item->flow = ControlFlow::kContinue;
+        auto optimized = optimize_node.Process(*item, *database);
+        if (!optimized) {
+          return Result<ExecutionCandidate>::Failure(optimized.GetError());
+        }
+      }
+    } else {
+      auto optimized = optimizer.Value()->OptimizePrefix(
+          optimize_context, prefix.Value(), database->raw_data);
+      if (!optimized) {
+        return Result<ExecutionCandidate>::Failure(optimized.GetError());
+      }
+
+      std::map<AgentId, Eigen::Isometry3d> optimized_map_transforms;
+      for (auto& [id, output] : optimized.Value()) {
+        const auto raw = database->raw_data.find(id);
+        if (raw != database->raw_data.end() &&
+            !output.optimized_poses.empty()) {
+          const auto& [index, global_pose] = output.optimized_poses.front();
+          if (index >= 0 &&
+              static_cast<std::size_t>(index) < raw->second->odom_poses.size()) {
+            optimized_map_transforms[id] =
+                global_pose * raw->second->odom_poses[index].inverse();
+          }
+        }
+        database->optimized_data[id] =
+            std::make_shared<const AgentOptimizedData>(std::move(output));
+      }
+      for (const AgentId& id : prefix.Value()) {
+        const auto item = std::find_if(contexts.begin(), contexts.end(),
+                                       [&id](const auto& value) {
+                                         return value.agent.id == id;
+                                       });
+        if (!item->loop_output->accepted_global_T_agent ||
+            !item->loop_output->accepted_alignment_method ||
+            !item->loop_output->accepted_alignment_approval) {
+          return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+              "alignment output is missing its accepted global transform"));
+        }
+        auto stored = database->descriptor_store.set_agent_map(
+            id, item->loop_output->alignment_map,
+            *item->loop_output->accepted_global_T_agent,
+            *item->loop_output->accepted_alignment_method,
+            *item->loop_output->accepted_alignment_approval,
+            item->loop_output->accepted_target_agent,
+            item->loop_output->accepted_at_unix_ms);
+        if (!stored) {
+          return Result<ExecutionCandidate>::Failure(stored.GetError());
+        }
+      }
+      database->descriptor_store.update_transforms(optimized_map_transforms);
+    }
+  } else {
+    for (const AgentId& id : prefix.Value()) {
+      auto item = std::find_if(contexts.begin(), contexts.end(),
+                               [&id](const auto& value) {
+                                 return value.agent.id == id;
+                               });
+      item->cancellation = runtime.cancellation;
+      item->flow = ControlFlow::kContinue;
+      auto optimized = optimize_step_(*item, *database, optimizer.Value());
+      if (!optimized) {
+        return Result<ExecutionCandidate>::Failure(optimized.GetError());
+      }
     }
   }
   if (runtime.cancellation &&

@@ -74,7 +74,7 @@ struct OptimizerStateMetadata {
 struct RuntimePayload {
   std::vector<AgentPipelineCtx> contexts;
   std::shared_ptr<const SharedDatabase> database;
-  std::shared_ptr<BackendOptimizerBase> optimizer;
+  std::shared_ptr<const BackendOptimizerBase> optimizer;
   std::map<AgentId, std::shared_ptr<MemoryReservation>>
       resident_memory_reservations;
 };

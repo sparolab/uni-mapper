@@ -31,6 +31,71 @@ class FakeOptimizer final : public BackendOptimizerBase {
   std::size_t ProcessedAgentCount() const override { return 0; }
 };
 
+struct PrefixTrace {
+  int forks = 0;
+  int prefix_calls = 0;
+  int process_calls = 0;
+  std::vector<AgentId> retained;
+  std::vector<AgentId> appended;
+};
+
+class PrefixOptimizer final : public BackendOptimizerBase {
+ public:
+  PrefixOptimizer(std::shared_ptr<PrefixTrace> trace,
+                  std::vector<AgentId> processed)
+      : trace_(std::move(trace)), processed_(std::move(processed)) {}
+
+  Result<BackendOptimizerOutput> Process(
+      const AlgorithmExecutionContext&,
+      const BackendOptimizerInput& input) override {
+    ++trace_->process_calls;
+    if (!HasProcessedAgent(input.raw_data.agent_id)) {
+      processed_.push_back(input.raw_data.agent_id);
+      trace_->appended.push_back(input.raw_data.agent_id);
+    }
+    BackendOptimizerOutput output;
+    for (const AgentId& id : processed_) {
+      AgentOptimizedData optimized;
+      optimized.agent_id = id;
+      optimized.optimized_poses.emplace_back(0, Eigen::Isometry3d::Identity());
+      optimized.kdtree_poses.emplace_back(0.0F, 0.0F, 0.0F);
+      output.emplace(id, std::move(optimized));
+    }
+    return Result<BackendOptimizerOutput>::Ok(std::move(output));
+  }
+  void Reset() override { processed_.clear(); }
+  bool HasProcessedAgent(const AgentId& id) const override {
+    return std::find(processed_.begin(), processed_.end(), id) !=
+           processed_.end();
+  }
+  std::size_t ProcessedAgentCount() const override { return processed_.size(); }
+  Result<std::shared_ptr<BackendOptimizerBase>> ForkCandidate() const override {
+    ++trace_->forks;
+    return Result<std::shared_ptr<BackendOptimizerBase>>::Ok(
+        std::make_shared<PrefixOptimizer>(trace_, processed_));
+  }
+  Result<BackendOptimizerOutput> OptimizePrefix(
+      const AlgorithmExecutionContext&, const std::vector<AgentId>& retained,
+      const AgentRawDataMap&) override {
+    ++trace_->prefix_calls;
+    trace_->retained = retained;
+    processed_ = retained;
+    BackendOptimizerOutput output;
+    for (const AgentId& id : retained) {
+      AgentOptimizedData optimized;
+      optimized.agent_id = id;
+      optimized.optimized_poses.emplace_back(0, Eigen::Isometry3d::Identity());
+      optimized.kdtree_poses.emplace_back(0.0F, 0.0F, 0.0F);
+      output.emplace(id, std::move(optimized));
+    }
+    return Result<BackendOptimizerOutput>::Ok(std::move(output));
+  }
+
+ private:
+  std::shared_ptr<PrefixTrace> trace_;
+  std::vector<AgentId> processed_;
+};
+
 class EmptyIndex final : public DescriptorIndex {
  public:
   std::size_t getSize() const override { return 0; }
@@ -52,11 +117,16 @@ class EmptyIndex final : public DescriptorIndex {
   }
 };
 
-std::shared_ptr<const RuntimeState> State() {
+std::shared_ptr<const RuntimeState> State(
+    std::shared_ptr<const BackendOptimizerBase> optimizer = {}) {
   const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
   auto config = std::make_shared<RuntimeConfig>();
   config->loop_detector = std::make_shared<const LoopDetectorConfig>();
   config->optimizer = std::make_shared<const OptimizerConfig>();
+  auto documents = std::make_shared<RuntimeConfigDocuments>();
+  documents->optimizer.path = "optimizer.json";
+  documents->optimizer.canonical_json = "{}";
+  config->documents = std::move(documents);
   auto database = std::make_shared<SharedDatabase>();
   auto payload = std::make_shared<RuntimePayload>();
   for (std::size_t index = 0; index < agents.size(); ++index) {
@@ -71,13 +141,20 @@ std::shared_ptr<const RuntimeState> State() {
     context.raw_data = raw;
     auto loop = std::make_shared<LoopDetectorOutput>();
     loop->agent_descriptors = std::make_shared<EmptyIndex>();
+    loop->alignment_map.voxel_size_m = 0.4F;
+    loop->alignment_map.points.emplace_back(0.0F, 0.0F, 0.0F);
+    loop->accepted_global_T_agent = Eigen::Isometry3d::Identity();
+    loop->accepted_alignment_method = AlignmentMethod::kKissMatcher;
+    loop->accepted_alignment_approval = AlignmentApproval::kAutomatic;
+    loop->accepted_target_agent = agents.front();
     context.loop_output = std::move(loop);
     payload->contexts.push_back(std::move(context));
     payload->resident_memory_reservations[agents[index]] =
         std::make_shared<MemoryReservation>();
   }
   payload->database = database;
-  payload->optimizer = std::make_shared<FakeOptimizer>();
+  payload->optimizer = optimizer ? std::move(optimizer)
+                                 : std::make_shared<FakeOptimizer>();
   auto state = std::make_shared<RuntimeState>();
   state->revision = 41;
   state->config = std::move(config);
@@ -233,6 +310,49 @@ void TestOptimizeReplayClearsSuffixAndHonorsCancellation() {
         "optimizer candidate is not published after cancellation");
 }
 
+void TestOptimizeThroughForksAndPrunesCommittedSolver() {
+  auto trace = std::make_shared<PrefixTrace>();
+  auto state = State(std::make_shared<PrefixOptimizer>(
+      trace, std::vector<AgentId>{Id("A"), Id("B"), Id("C")}));
+  OptimizeExecutor executor(
+      [](const OptimizerConfig&) {
+        return Result<std::shared_ptr<BackendOptimizerBase>>::Failure(
+            Error::InvalidArgument("fresh optimizer must not be created"));
+      }, {});
+  auto result = executor.ReplayThrough(
+      state, Id("B"), {.base_revision = state->revision});
+  Check(result && trace->forks == 1 && trace->prefix_calls == 1 &&
+            trace->process_calls == 0 &&
+            trace->retained == std::vector<AgentId>({Id("A"), Id("B")}),
+        "Optimize Through forks committed state and refines the prefix once");
+  Check(result.Value().payload->database->optimized_data.size() == 2 &&
+            result.Value().payload->database->optimized_data.contains(Id("A")) &&
+            result.Value().payload->database->optimized_data.contains(Id("B")) &&
+            !result.Value().payload->contexts[2].loop_output &&
+            result.Value().payload->optimizer->ProcessedAgentCount() == 2,
+        "Optimize Through publishes only the retained prefix and clears suffix artifacts");
+}
+
+void TestOptimizeThroughAppendsOnlyPendingLoopTarget() {
+  auto trace = std::make_shared<PrefixTrace>();
+  auto state = State(std::make_shared<PrefixOptimizer>(
+      trace, std::vector<AgentId>{Id("A")}));
+  OptimizeExecutor executor(
+      [](const OptimizerConfig&) {
+        return Result<std::shared_ptr<BackendOptimizerBase>>::Failure(
+            Error::InvalidArgument("fresh optimizer must not be created"));
+      }, {});
+  auto result = executor.ReplayThrough(
+      state, Id("B"), {.base_revision = state->revision});
+  Check(result && trace->forks == 1 && trace->prefix_calls == 0 &&
+            trace->process_calls == 1 &&
+            trace->appended == std::vector<AgentId>({Id("B")}),
+        "Optimize Through appends only the pending LoopDetect target");
+  Check(result.Value().payload->optimizer->ProcessedAgentCount() == 2 &&
+            state->payload->optimizer->ProcessedAgentCount() == 1,
+        "pending target update mutates only the command candidate");
+}
+
 void TestExcludedArtifactsSelectOnlySuccessfulDownstreamAgents() {
   ArtifactRepository artifacts;
   const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
@@ -306,6 +426,8 @@ int main() {
   open_lmm::TestLoopReplayStopsAfterTargetLoop();
   open_lmm::TestAlignmentStageSkipsExplicitlyExcludedFollower();
   open_lmm::TestOptimizeReplayClearsSuffixAndHonorsCancellation();
+  open_lmm::TestOptimizeThroughForksAndPrunesCommittedSolver();
+  open_lmm::TestOptimizeThroughAppendsOnlyPendingLoopTarget();
   open_lmm::TestExcludedArtifactsSelectOnlySuccessfulDownstreamAgents();
   open_lmm::TestArtifactStoreRehydratesOnlyFromCommittedAuthority();
   std::cout << "orchestration executor fixture tests passed\n";

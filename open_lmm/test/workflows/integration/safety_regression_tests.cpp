@@ -60,6 +60,20 @@ open_lmm::ScanVec::value_type OnePointScan(float x = 0.0F) {
   return scan;
 }
 
+open_lmm::ScanVec::value_type RegistrationScan() {
+  auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  for (int x = 0; x < 5; ++x) {
+    for (int y = 0; y < 5; ++y) {
+      for (int z = 0; z < 5; ++z) {
+        scan->emplace_back(static_cast<float>(x) * 0.2F,
+                           static_cast<float>(y) * 0.2F,
+                           static_cast<float>(z) * 0.2F, 1.0F);
+      }
+    }
+  }
+  return scan;
+}
+
 class RecordingOnlineRemover final : public IOnlineRemoverPlugin {
  public:
   pcl::PointCloud<pcl::PointXYZI>::Ptr run(
@@ -521,7 +535,7 @@ void TestOptimizerLifecycle() {
   open_lmm::AgentRawData raw_a;
   raw_a.agent_id = Id("A");
   raw_a.odom_poses.push_back(Eigen::Isometry3d::Identity());
-  raw_a.filtered_scans.push_back(OnePointScan());
+  raw_a.filtered_scans.push_back(RegistrationScan());
   auto context = open_lmm::AlgorithmExecutionContext{};
   context.agent = anchor;
   context.cancellation = std::make_shared<open_lmm::CancellationToken>();
@@ -544,6 +558,14 @@ void TestOptimizerLifecycle() {
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              optimizer.HasProcessedAgent(Id("A")),
          "successful optimizer call must commit its agent");
+  const auto first_diagnostics = optimizer.GetDiagnostics();
+  Expect(first_diagnostics.solver_constructions == 1 &&
+             first_diagnostics.nonempty_updates == 1 &&
+             first_diagnostics.submitted_factors == 2 &&
+             first_diagnostics.factor_count == 2 &&
+             first_diagnostics.value_count == 2 &&
+             !first_diagnostics.poisoned,
+         "optimizer must submit only the anchor delta to one persistent solver");
   const auto has_progress = [&](open_lmm::AlgorithmProgressPhase phase,
                                 uint64_t current,
                                 std::optional<uint64_t> total) {
@@ -573,6 +595,11 @@ void TestOptimizerLifecycle() {
          "duplicate optimizer agent must return failure");
   Expect(optimizer.ProcessedAgentCount() == 1,
          "duplicate failure must not mutate optimizer lifecycle");
+  const auto duplicate_diagnostics = optimizer.GetDiagnostics();
+  Expect(duplicate_diagnostics.nonempty_updates == 1 &&
+             duplicate_diagnostics.submitted_factors == 2 &&
+             duplicate_diagnostics.factor_count == 2,
+         "pre-update rejection must not resubmit the accumulated graph");
 
   open_lmm::AgentContext follower{
       .id = Id("B"), .symbol = catalog->SymbolFor(Id("B")).Value(),
@@ -580,7 +607,7 @@ void TestOptimizerLifecycle() {
   open_lmm::AgentRawData raw_b;
   raw_b.agent_id = Id("B");
   raw_b.odom_poses.push_back(Eigen::Isometry3d::Identity());
-  raw_b.filtered_scans.push_back(OnePointScan());
+  raw_b.filtered_scans.push_back(RegistrationScan());
   open_lmm::LoopPair inter_loop{
       .to = {Id("A"), 0},
       .from = {Id("B"), 0},
@@ -601,6 +628,41 @@ void TestOptimizerLifecycle() {
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              !optimizer.HasProcessedAgent(Id("B")),
          "zero-factor rejection must preserve optimizer transaction");
+
+  open_lmm::AgentRawDataMap all_raw_data{
+      {Id("A"), std::make_shared<const open_lmm::AgentRawData>(raw_a)},
+      {Id("B"), std::make_shared<const open_lmm::AgentRawData>(raw_b)}};
+  auto second = optimizer.Process(
+      context, {raw_b, no_intra, inter_loops, all_raw_data});
+  Expect(second.IsOk() && optimizer.ProcessedAgentCount() == 2,
+         "follower must append to the persistent solver");
+  const auto second_diagnostics = optimizer.GetDiagnostics();
+  Expect(second_diagnostics.solver_constructions == 1 &&
+             second_diagnostics.nonempty_updates == 2 &&
+             second_diagnostics.submitted_factors == 5 &&
+             second_diagnostics.factor_count == 5 &&
+             second_diagnostics.value_count == 4,
+         "second agent must submit only its three-factor delta");
+
+  auto forked = optimizer.ForkCandidate();
+  Expect(forked.IsOk(), "committed optimizer state must support candidate fork");
+  if (forked) {
+    context.agent = anchor;
+    auto prefix = forked.Value()->OptimizePrefix(
+        context, std::vector<open_lmm::AgentId>{Id("A")}, all_raw_data);
+    Expect(prefix.IsOk() && forked.Value()->ProcessedAgentCount() == 1 &&
+               optimizer.ProcessedAgentCount() == 2,
+           "prefix optimization must remove only the forked suffix");
+    const auto concrete = std::dynamic_pointer_cast<
+        open_lmm::BackendOptimizerIncremental>(forked.Value());
+    const auto original = optimizer.GetDiagnostics();
+    const auto candidate = concrete->GetDiagnostics();
+    Expect(original.factor_count == 5 && original.value_count == 4 &&
+               candidate.factor_count == 2 && candidate.value_count == 2 &&
+               candidate.removed_factors == 3 &&
+               candidate.candidate_forks == 1,
+           "forked prefix removal must preserve the committed Bayes tree");
+  }
   optimizer.Reset();
   Expect(optimizer.ProcessedAgentCount() == 0 &&
              !optimizer.HasProcessedAgent(Id("A")),

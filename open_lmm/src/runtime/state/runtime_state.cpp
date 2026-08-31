@@ -48,6 +48,10 @@ Result<void> RuntimeTransaction::Validate() const {
     return Result<void>::Failure(
         Error::InvalidArgument("runtime transaction has incomplete ownership"));
   }
+  if (!working_->payload->optimizer->IsUsable()) {
+    return Result<void>::Failure(Error::OptimizationFailed(
+        "runtime transaction cannot commit an unusable optimizer candidate"));
+  }
   auto resident_memory = ValidateResidentMemoryOwnership(
       *working_->payload, base_ ? base_->payload.get() : nullptr);
   if (!resident_memory) return resident_memory;

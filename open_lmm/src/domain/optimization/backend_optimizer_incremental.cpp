@@ -29,10 +29,16 @@ gtsam::Symbol GraphSymbol(const AgentContext& context, const AgentId& agent,
   return gtsam::Symbol(symbol.Value().Byte(), index);
 }
 
+bool ContainsAgent(const std::vector<AgentId>& agents, const AgentId& agent) {
+  return std::find(agents.begin(), agents.end(), agent) != agents.end();
+}
+
 }  // namespace
 
 BackendOptimizerIncremental::BackendOptimizerIncremental(OptimizerConfig config)
-    : param_(std::move(config)), lifecycle_(std::make_unique<Lifecycle>()) {
+    : param_(std::move(config)),
+      lifecycle_(std::make_unique<Lifecycle>(IsamParams())) {
+  lifecycle_->diagnostics.solver_constructions = 1;
   initNoise();
 }
 
@@ -40,17 +46,168 @@ BackendOptimizerIncremental::~BackendOptimizerIncremental() {}
 
 void BackendOptimizerIncremental::Reset() {
   std::lock_guard lock(execution_mutex_);
-  lifecycle_ = std::make_unique<Lifecycle>();
+  lifecycle_ = std::make_unique<Lifecycle>(IsamParams());
+  lifecycle_->diagnostics.solver_constructions = 1;
 }
 
 bool BackendOptimizerIncremental::HasProcessedAgent(const AgentId& agent_id) const {
   std::lock_guard lock(execution_mutex_);
-  return lifecycle_->processed_agents.contains(agent_id);
+  return ContainsAgent(lifecycle_->processed_agents, agent_id);
 }
 
 std::size_t BackendOptimizerIncremental::ProcessedAgentCount() const {
   std::lock_guard lock(execution_mutex_);
   return lifecycle_->processed_agents.size();
+}
+
+bool BackendOptimizerIncremental::IsUsable() const {
+  std::lock_guard lock(execution_mutex_);
+  return !lifecycle_->poisoned;
+}
+
+BackendOptimizerIncremental::Diagnostics
+BackendOptimizerIncremental::GetDiagnostics() const {
+  std::lock_guard lock(execution_mutex_);
+  Diagnostics diagnostics = lifecycle_->diagnostics;
+  diagnostics.factor_count = lifecycle_->solver.getFactorsUnsafe().nrFactors();
+  diagnostics.value_count = lifecycle_->solver.getLinearizationPoint().size();
+  diagnostics.poisoned = lifecycle_->poisoned;
+  return diagnostics;
+}
+
+Result<std::shared_ptr<BackendOptimizerBase>>
+BackendOptimizerIncremental::ForkCandidate() const {
+  std::lock_guard lock(execution_mutex_);
+  if (lifecycle_->poisoned) {
+    return Result<std::shared_ptr<BackendOptimizerBase>>::Failure(
+        Error::OptimizationFailed("cannot fork an unusable optimizer"));
+  }
+  try {
+    auto candidate = std::make_shared<BackendOptimizerIncremental>(param_);
+    candidate->lifecycle_ = std::make_unique<Lifecycle>(*lifecycle_);
+    ++candidate->lifecycle_->diagnostics.solver_constructions;
+    ++candidate->lifecycle_->diagnostics.candidate_forks;
+    return Result<std::shared_ptr<BackendOptimizerBase>>::Ok(
+        std::move(candidate));
+  } catch (const std::exception& error) {
+    return Result<std::shared_ptr<BackendOptimizerBase>>::Failure(
+        Error::OptimizationFailed(std::string("optimizer fork failed: ") +
+                                  error.what()));
+  } catch (...) {
+    return Result<std::shared_ptr<BackendOptimizerBase>>::Failure(
+        Error::OptimizationFailed("optimizer fork failed"));
+  }
+}
+
+Result<BackendOptimizerOutput> BackendOptimizerIncremental::OptimizePrefix(
+    const AlgorithmExecutionContext& context,
+    const std::vector<AgentId>& retained_agents,
+    const AgentRawDataMap& all_raw_data) {
+  AlgorithmExecutionTimer timer(context);
+  auto cancellation =
+      CheckAlgorithmCancellation(context, "before optimizer prefix refinement");
+  if (!cancellation) {
+    return Result<BackendOptimizerOutput>::Failure(cancellation.GetError());
+  }
+  std::lock_guard lock(execution_mutex_);
+  if (lifecycle_->poisoned) {
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::OptimizationFailed("optimizer candidate is unusable"), context));
+  }
+  if (retained_agents.empty() ||
+      retained_agents.size() > lifecycle_->processed_agents.size() ||
+      !std::equal(retained_agents.begin(), retained_agents.end(),
+                  lifecycle_->processed_agents.begin())) {
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument(
+            "optimizer retained agents must be an exact processed prefix"),
+        context));
+  }
+
+  gtsam::FactorIndices removals;
+  gtsam::KeyVector removed_keys;
+  for (std::size_t index = retained_agents.size();
+       index < lifecycle_->processed_agents.size(); ++index) {
+    const AgentId& agent = lifecycle_->processed_agents[index];
+    const auto factors = lifecycle_->factor_indices.find(agent);
+    const auto keys = lifecycle_->agent_keys.find(agent);
+    if (factors == lifecycle_->factor_indices.end() ||
+        keys == lifecycle_->agent_keys.end()) {
+      return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+          Error::OptimizationFailed("optimizer factor ledger is incomplete"),
+          context));
+    }
+    removals.insert(removals.end(), factors->second.begin(),
+                    factors->second.end());
+    removed_keys.insert(removed_keys.end(), keys->second.begin(),
+                        keys->second.end());
+  }
+  std::sort(removals.begin(), removals.end());
+  removals.erase(std::unique(removals.begin(), removals.end()), removals.end());
+
+  bool mutation_started = false;
+  try {
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 0);
+    if (!removals.empty()) {
+      mutation_started = true;
+      const auto update = lifecycle_->solver.update(
+          gtsam::NonlinearFactorGraph{}, gtsam::Values{}, removals);
+      lifecycle_->diagnostics.variables_relinearized +=
+          update.variablesRelinearized;
+      lifecycle_->diagnostics.variables_reeliminated +=
+          update.variablesReeliminated;
+    }
+    for (int i = 0; i < param_.isam_extra_updates; ++i) {
+      ThrowIfCancellationRequested(context.cancellation,
+                                   "optimizer prefix update");
+      mutation_started = true;
+      const auto update = lifecycle_->solver.update();
+      lifecycle_->diagnostics.variables_relinearized +=
+          update.variablesRelinearized;
+      lifecycle_->diagnostics.variables_reeliminated +=
+          update.variablesReeliminated;
+    }
+    const auto values = lifecycle_->solver.calculateBestEstimate();
+    for (gtsam::Key key : removed_keys) {
+      if (lifecycle_->solver.valueExists(key)) {
+        throw std::runtime_error(
+            "optimizer suffix variable survived factor removal");
+      }
+    }
+    auto output = BuildOutput(context, values, all_raw_data, nullptr);
+    ThrowIfCancellationRequested(context.cancellation,
+                                 "optimizer prefix commit");
+    for (std::size_t index = retained_agents.size();
+         index < lifecycle_->processed_agents.size(); ++index) {
+      const AgentId& agent = lifecycle_->processed_agents[index];
+      lifecycle_->factor_indices.erase(agent);
+      lifecycle_->agent_keys.erase(agent);
+    }
+    lifecycle_->processed_agents.resize(retained_agents.size());
+    lifecycle_->diagnostics.removed_factors += removals.size();
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 1, 1);
+    return Result<BackendOptimizerOutput>::Ok(std::move(output));
+  } catch (const CancellationException& error) {
+    if (mutation_started) lifecycle_->poisoned = true;
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::Cancelled(error.what()), context));
+  } catch (const std::exception& error) {
+    if (mutation_started) lifecycle_->poisoned = true;
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::OptimizationFailed(error.what()), context));
+  } catch (...) {
+    if (mutation_started) lifecycle_->poisoned = true;
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::OptimizationFailed("unknown optimizer prefix exception"),
+        context));
+  }
+}
+
+gtsam::ISAM2Params BackendOptimizerIncremental::IsamParams() const {
+  gtsam::ISAM2Params params;
+  params.relinearizeThreshold = param_.relinearize_threshold;
+  params.relinearizeSkip = param_.relinearize_skip;
+  return params;
 }
 
 Result<BackendOptimizerOutput> BackendOptimizerIncremental::Process(
@@ -62,20 +219,30 @@ Result<BackendOptimizerOutput> BackendOptimizerIncremental::Process(
     return Result<BackendOptimizerOutput>::Failure(cancellation.GetError());
   }
   std::lock_guard execution(execution_mutex_);
+  if (lifecycle_->poisoned) {
+    return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
+        Error::OptimizationFailed(
+            "optimizer candidate is unusable after a mutating failure"),
+        context));
+  }
   cancellation = CheckAlgorithmCancellation(context, "after optimizer lock");
   if (!cancellation) {
     return Result<BackendOptimizerOutput>::Failure(cancellation.GetError());
   }
+  bool mutation_started = false;
   try {
     return Result<BackendOptimizerOutput>::Ok(
-        processTransactional(context, input));
+        processTransactional(context, input, mutation_started));
   } catch (const CancellationException& error) {
+    if (mutation_started) lifecycle_->poisoned = true;
     return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
         Error::Cancelled(error.what()), context));
   } catch (const std::exception& error) {
+    if (mutation_started) lifecycle_->poisoned = true;
     return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
         Error::OptimizationFailed(error.what()), context));
   } catch (...) {
+    if (mutation_started) lifecycle_->poisoned = true;
     return Result<BackendOptimizerOutput>::Failure(WithAlgorithmContext(
         Error::OptimizationFailed("unknown optimizer exception"), context));
   }
@@ -83,7 +250,7 @@ Result<BackendOptimizerOutput> BackendOptimizerIncremental::Process(
 
 BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
     const AlgorithmExecutionContext& context,
-    const BackendOptimizerInput& input) {
+    const BackendOptimizerInput& input, bool& mutation_started) {
   const auto& ctx = context.agent;
   const auto& raw_data = input.raw_data;
   const auto& intra_loops = input.intra_loops;
@@ -105,7 +272,7 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
   if (!valid_loops) {
     throw std::invalid_argument(valid_loops.GetError().Message());
   }
-  if (lifecycle_->processed_agents.contains(ctx.id)) {
+  if (ContainsAgent(lifecycle_->processed_agents, ctx.id)) {
     throw std::invalid_argument("optimizer agent " + ctx.id.Value() +
                                 " was already processed; call Reset before retry");
   }
@@ -116,40 +283,42 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
     throw std::invalid_argument("optimizer anchor can only be processed first");
   }
   for (const auto& loop : inter_loops) {
-    if (!lifecycle_->processed_agents.contains(loop.to.first)) {
+    if (!ContainsAgent(lifecycle_->processed_agents, loop.to.first)) {
       throw std::invalid_argument(
           "inter-loop target agent must be optimized before the source agent");
     }
   }
 
-  // Transactional working state: failures leave the committed lifecycle intact.
-  auto working_graph = lifecycle_->graph;
-  auto working_values = lifecycle_->values;
-  auto working_processed_agents = lifecycle_->processed_agents;
-  working_processed_agents.insert(ctx.id);
+  // Prepare every fallible registration result before mutating the
+  // command-private solver. Only this agent's graph delta is submitted.
+  gtsam::NonlinearFactorGraph new_factors;
+  gtsam::Values new_values;
+  gtsam::KeyVector new_keys;
 
   gtsam::Pose3 anchor_node = gtsam::Pose3(Eigen::Matrix4d::Identity());
   const auto& anchor_prior = ctx.is_anchor() ? prior_noise_ : large_noise_;
 
   //! 1. anchor prior
   gtsam::Symbol anchor_symbol = GraphSymbol(ctx, ctx.id, ANCHOR_IDX);
-  working_graph.add(gtsam::PriorFactor<gtsam::Pose3>(
+  new_factors.add(gtsam::PriorFactor<gtsam::Pose3>(
       anchor_symbol, anchor_node, anchor_prior));
-  working_values.insert(anchor_symbol, anchor_node);
+  new_values.insert(anchor_symbol, anchor_node);
+  new_keys.push_back(anchor_symbol);
 
   //! 2. odometry
   for (size_t i = 0; i < raw_data.odom_poses.size(); i++) {
     ThrowIfCancellationRequested(context.cancellation, "optimizer odometry");
     gtsam::Symbol node_current = GraphSymbol(ctx, ctx.id, i);
-    working_values.insert(node_current,
-                               gtsam::Pose3(raw_data.odom_poses[i].matrix()));
+    new_values.insert(node_current,
+                      gtsam::Pose3(raw_data.odom_poses[i].matrix()));
+    new_keys.push_back(node_current);
     if (i == 0) {
-      working_graph.add(gtsam::PriorFactor<gtsam::Pose3>(
+      new_factors.add(gtsam::PriorFactor<gtsam::Pose3>(
           node_current, gtsam::Pose3(raw_data.odom_poses[i].matrix()), anchor_prior));
     } else {
       gtsam::Symbol node_prev = GraphSymbol(ctx, ctx.id, i - 1);
       Eigen::Isometry3d rel = raw_data.odom_poses[i - 1].inverse() * raw_data.odom_poses[i];
-      working_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
+      new_factors.add(gtsam::BetweenFactor<gtsam::Pose3>(
           node_prev, node_current, gtsam::Pose3(rel.matrix()), odometry_noise_));
     }
   }
@@ -175,7 +344,7 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
         raw_data.filtered_scans, raw_data.odom_poses,
         raw_data.filtered_scans[loop.from.second], loop, param_.icp_search_num);
     if (refined) {
-      working_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
+      new_factors.add(gtsam::BetweenFactor<gtsam::Pose3>(
           node_from, node_to, gtsam::Pose3(refined.value().matrix()),
           robust_loop_noise_));
     }
@@ -204,7 +373,7 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
           raw_data.filtered_scans[loop.from.second], loop, param_.icp_search_num);
       if (refined) {
         // TODO(gil) : use BetweenFactorWithAnchoring?
-        working_graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
+        new_factors.add(gtsam::BetweenFactor<gtsam::Pose3>(
             node_from, node_to, gtsam::Pose3(refined.value().matrix()),
             robust_loop_noise_));
         ++valid_inter_loop_count;
@@ -220,28 +389,52 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
     }
   }
 
-  //! 5. ISAM2 최적화 (누적된 전체 그래프로 배치 최적화)
-  // 진짜 증분화는 BackendOptimizer를 MapServer 레벨에서 공유할 때 가능 (Step 05 이후)
+  //! 5. Persistent ISAM2 update with this agent's graph delta.
   ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 0);
+  gtsam::Values working_values;
+  gtsam::FactorIndices added_factor_indices;
   {
-    OPEN_LMM_ZONE_N("Optimizer.ISAM2.BatchUpdate");
-  gtsam::ISAM2Params isam_param;
-  isam_param.relinearizeThreshold = param_.relinearize_threshold;
-  isam_param.relinearizeSkip      = param_.relinearize_skip;
-  gtsam::ISAM2 isam_(isam_param);
-  isam_.update(working_graph, working_values);
-  for (int i = 0; i < param_.isam_extra_updates; ++i) {
-    ThrowIfCancellationRequested(context.cancellation, "optimizer update");
-    isam_.update();
+    OPEN_LMM_ZONE_N("Optimizer.ISAM2.IncrementalUpdate");
+    mutation_started = true;
+    const auto update = lifecycle_->solver.update(new_factors, new_values);
+    added_factor_indices = update.newFactorsIndices;
+    ++lifecycle_->diagnostics.nonempty_updates;
+    lifecycle_->diagnostics.submitted_factors += new_factors.size();
+    lifecycle_->diagnostics.variables_relinearized +=
+        update.variablesRelinearized;
+    lifecycle_->diagnostics.variables_reeliminated +=
+        update.variablesReeliminated;
+    for (int i = 0; i < param_.isam_extra_updates; ++i) {
+      ThrowIfCancellationRequested(context.cancellation, "optimizer update");
+      const auto extra = lifecycle_->solver.update();
+      lifecycle_->diagnostics.variables_relinearized +=
+          extra.variablesRelinearized;
+      lifecycle_->diagnostics.variables_reeliminated +=
+          extra.variablesReeliminated;
+    }
+    working_values = lifecycle_->solver.calculateBestEstimate();
   }
-  working_values = isam_.calculateBestEstimate();
-  }
-  OPEN_LMM_PLOT("optimizer.factor_count", working_graph.size());
+  OPEN_LMM_PLOT("optimizer.delta_factor_count", new_factors.size());
+  OPEN_LMM_PLOT("optimizer.factor_count",
+                lifecycle_->solver.getFactorsUnsafe().nrFactors());
   OPEN_LMM_PLOT("optimizer.value_count", working_values.size());
 
-  //! 6. 모든 에이전트 포즈 추출
+  auto all_results = BuildOutput(context, working_values, all_raw_data,
+                                 &raw_data);
+  ThrowIfCancellationRequested(context.cancellation, "optimizer commit");
+  lifecycle_->processed_agents.push_back(ctx.id);
+  lifecycle_->factor_indices.emplace(ctx.id, std::move(added_factor_indices));
+  lifecycle_->agent_keys.emplace(ctx.id, std::move(new_keys));
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 1, 1);
+  return all_results;
+}
+
+BackendOptimizerOutput BackendOptimizerIncremental::BuildOutput(
+    const AlgorithmExecutionContext& context, const gtsam::Values& values,
+    const AgentRawDataMap& all_raw_data,
+    const AgentRawData* current_raw_data) const {
   std::map<AgentId, std::vector<std::pair<int, Eigen::Isometry3d>>> all_poses;
-  for (const auto& key_value : working_values) {
+  for (const auto& key_value : values) {
     gtsam::Key key = key_value.key;
     gtsam::Symbol symbol(key);
     if (symbol.index() == ANCHOR_IDX) continue;
@@ -250,17 +443,17 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
     if (!graph_symbol) {
       throw std::runtime_error(graph_symbol.GetError().Message());
     }
-    if (!ctx.catalog) {
+    if (!context.agent.catalog) {
       throw std::runtime_error("optimizer agent symbol catalog is missing");
     }
-    auto agent = ctx.catalog->AgentFor(graph_symbol.Value());
+    auto agent = context.agent.catalog->AgentFor(graph_symbol.Value());
     if (!agent) throw std::runtime_error(agent.GetError().Message());
     gtsam::Symbol anchor_sym(symbol.chr(), ANCHOR_IDX);
-    if (!working_values.exists(anchor_sym)) continue;
+    if (!values.exists(anchor_sym)) continue;
 
     Eigen::Matrix4d anchor_pose =
-        working_values.at<gtsam::Pose3>(anchor_sym).matrix();
-    Eigen::Matrix4d pose = working_values.at<gtsam::Pose3>(key).matrix();
+        values.at<gtsam::Pose3>(anchor_sym).matrix();
+    Eigen::Matrix4d pose = values.at<gtsam::Pose3>(key).matrix();
     Eigen::Isometry3d global_pose(anchor_pose * pose);
     all_poses[agent.Value()].push_back(
         {static_cast<int>(symbol.index()), global_pose});
@@ -282,8 +475,8 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
   }
   for (const auto& [agent, optimized] : all_results) {
     const AgentRawData* corresponding_raw = nullptr;
-    if (agent == raw_data.agent_id) {
-      corresponding_raw = &raw_data;
+    if (current_raw_data && agent == current_raw_data->agent_id) {
+      corresponding_raw = current_raw_data;
     } else {
       const auto found = all_raw_data.find(agent);
       if (found != all_raw_data.end() && found->second) {
@@ -300,15 +493,6 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
         "optimizer output agent '" + agent.Value() + "'");
     if (!valid) throw std::invalid_argument(valid.GetError().Message());
   }
-  ThrowIfCancellationRequested(context.cancellation, "optimizer commit");
-  // Construct the complete next lifecycle before publication. Pointer swap is
-  // non-throwing, so no failure can expose a partially updated optimizer.
-  auto next = std::make_unique<Lifecycle>();
-  next->graph = std::move(working_graph);
-  next->values = std::move(working_values);
-  next->processed_agents = std::move(working_processed_agents);
-  lifecycle_.swap(next);
-  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 1, 1);
   return all_results;
 }
 

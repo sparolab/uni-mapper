@@ -95,7 +95,7 @@ RuntimePayloadBuilder& RuntimePayloadBuilder::SetDatabase(
 }
 
 RuntimePayloadBuilder& RuntimePayloadBuilder::SetOptimizer(
-    std::shared_ptr<BackendOptimizerBase> optimizer) {
+    std::shared_ptr<const BackendOptimizerBase> optimizer) {
   optimizer_ = std::move(optimizer);
   return *this;
 }
@@ -116,6 +116,11 @@ Result<std::shared_ptr<const RuntimePayload>> RuntimePayloadBuilder::Build() {
   if (!database_ || !optimizer_) {
     return Result<std::shared_ptr<const RuntimePayload>>::Failure(
         Error::InvalidArgument("runtime payload candidate is incomplete"));
+  }
+  if (!optimizer_->IsUsable()) {
+    return Result<std::shared_ptr<const RuntimePayload>>::Failure(
+        Error::OptimizationFailed(
+            "unusable optimizer candidate cannot be published"));
   }
   auto candidate = std::make_shared<RuntimePayload>();
   candidate->contexts = std::move(contexts_);

@@ -20,7 +20,7 @@ class RuntimePayloadBuilder {
   RuntimePayloadBuilder& SetDatabase(
       std::shared_ptr<const SharedDatabase> database);
   RuntimePayloadBuilder& SetOptimizer(
-      std::shared_ptr<BackendOptimizerBase> optimizer);
+      std::shared_ptr<const BackendOptimizerBase> optimizer);
   RuntimePayloadBuilder& ReplaceResidentReservations(
       std::map<AgentId, std::shared_ptr<MemoryReservation>> reservations);
   RuntimePayloadBuilder& SetResidentReservation(
@@ -32,7 +32,7 @@ class RuntimePayloadBuilder {
   std::shared_ptr<const RuntimePayload> base_;
   std::vector<AgentPipelineCtx> contexts_;
   std::shared_ptr<const SharedDatabase> database_;
-  std::shared_ptr<BackendOptimizerBase> optimizer_;
+  std::shared_ptr<const BackendOptimizerBase> optimizer_;
   std::map<AgentId, std::shared_ptr<MemoryReservation>> reservations_;
 };
 
