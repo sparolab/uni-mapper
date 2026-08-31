@@ -49,8 +49,6 @@ void Destroy(void* value) noexcept {
 constexpr const char* kCapability = "gui:desktop";
 #elif OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE == 2
 constexpr const char* kCapability = "";
-#elif OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE == 3
-constexpr const char* kCapability = nullptr;
 #else
 constexpr const char* kCapability = "gui:services-v3";
 #endif

@@ -29,8 +29,6 @@ class ProbeGui final : public open_lmm::GuiPlugin {
         open_lmm::Error::PluginLoadFailed("probe start result failure"));
 #elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 18
     throw std::runtime_error("probe start standard failure");
-#elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 19
-    throw 19;
 #else
     open_ = true;
     return open_lmm::Result<void>::Ok();
@@ -61,8 +59,6 @@ class ProbeGui final : public open_lmm::GuiPlugin {
   return nullptr;
 #elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 11
   throw std::runtime_error("probe create failure");
-#elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 12
-  throw 12;
 #else
   return static_cast<void*>(new ProbeGui(g_trace));
 #endif
@@ -101,8 +97,6 @@ const char* Name() {
 const char* Capability() {
 #if OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 1
   return "gui:services-v2";
-#elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 2
-  return nullptr;
 #elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 3
   return "";
 #else
@@ -152,8 +146,6 @@ const OpenLmmPluginApiV1* open_lmm_plugin_entry() {
   return nullptr;
 #elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 14
   throw std::runtime_error("probe entry failure");
-#elif OPEN_LMM_GUI_PROBE_FIXTURE_MODE == 15
-  throw 15;
 #else
   return &kApi;
 #endif

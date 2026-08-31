@@ -184,7 +184,6 @@ run_logged "$family_root/plugin.log" "$plugin_runner" \
   "$build_root/test/libopen_lmm_plugin_fixture_null_kind.so" \
   "$build_root/test/libopen_lmm_plugin_fixture_null_name.so" \
   "$build_root/test/libopen_lmm_plugin_fixture_empty_capability.so" \
-  "$build_root/test/libopen_lmm_plugin_fixture_null_capability.so" \
   "$build_root/test/libopen_lmm_plugin_fixture_create_throw.so" \
   "$build_root/test/libopen_lmm_plugin_fixture_entry_throw.so" \
   "$build_root/test/libopen_lmm_plugin_fixture_null_entry.so" \

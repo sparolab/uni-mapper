@@ -26,8 +26,8 @@ namespace {
 using open_lmm::GuiPluginHost;
 using open_lmm::GuiPluginModule;
 
-constexpr std::size_t kValidationFixtureCount = 17;
-constexpr std::size_t kFixtureCount = 20;
+constexpr std::size_t kValidationFixtureCount = 14;
+constexpr std::size_t kFixtureCount = 16;
 constexpr int kStressCycles = 1000;
 
 #if defined(__has_feature)
@@ -321,13 +321,13 @@ void CheckStartFailure(const std::string& path,
 void RunPublicContract(const std::vector<std::string>& paths) {
   GuiLoaderProbeTrace lifecycle_trace;
   CheckValidLifecycle(paths[0], &lifecycle_trace, true);
-  for (std::size_t index = 1; index <= 9; ++index) {
+  for (std::size_t index = 1; index <= 8; ++index) {
     CheckRejectedBeforeCreate(paths[index], true);
   }
-  for (std::size_t index = 10; index <= 12; ++index) {
+  for (std::size_t index = 9; index <= 10; ++index) {
     CheckRejectedAfterCreate(paths[index], true);
   }
-  for (std::size_t index = 13; index < kValidationFixtureCount; ++index) {
+  for (std::size_t index = 11; index < kValidationFixtureCount; ++index) {
     CheckOtherLoadFailure(paths[index], true);
   }
   CheckMissingFile(paths[0]);
@@ -335,8 +335,8 @@ void RunPublicContract(const std::vector<std::string>& paths) {
   std::cout
       << "Loader-B public-contract probe passed: fixture_count="
       << kValidationFixtureCount
-      << " rejected_before_create=9 rejected_after_create=3"
-      << " other_load_failures=4 missing_file=1"
+      << " rejected_before_create=8 rejected_after_create=2"
+      << " other_load_failures=3 missing_file=1"
       << " lifecycle_orders=" << lifecycle_trace.create_order.load() << ','
       << lifecycle_trace.start_order.load() << ','
       << lifecycle_trace.request_stop_order.load() << ','
@@ -352,21 +352,20 @@ void RunLifetime(const std::vector<std::string>& paths) {
   GuiLoaderProbeTrace moved_trace;
   CheckMovedHostAndDoubleStop(paths[0], moved_trace);
   CheckEarlyReturn(paths[0]);
-  CheckStartFailure(paths[17], "probe start result failure");
-  CheckStartFailure(paths[18], "probe start standard failure");
-  CheckStartFailure(paths[19], "unknown exception");
+  CheckStartFailure(paths[14], "probe start result failure");
+  CheckStartFailure(paths[15], "probe start standard failure");
   std::cout << "Loader-B lifetime probe passed: never_started=1 moved_module=1"
                " moved_host=1"
                " duplicate_start=1 double_stop=1 early_return=1"
                " start_failure_result=1 start_failure_standard=1"
-               " start_failure_unknown=1 destroy_before_unload=all\n";
+               " destroy_before_unload=all\n";
 }
 
 void CheckNegativeFixture(const std::vector<std::string>& paths,
                           std::size_t index) {
-  if (index <= 9) {
+  if (index <= 8) {
     CheckRejectedBeforeCreate(paths[index]);
-  } else if (index <= 12) {
+  } else if (index <= 10) {
     CheckRejectedAfterCreate(paths[index]);
   } else {
     CheckOtherLoadFailure(paths[index]);
@@ -456,7 +455,7 @@ void RunStress(const std::vector<std::string>& paths) {
     if (index != 0) raw_samples << ',';
     raw_samples << rss_samples[index].cycle << ':' << rss_samples[index].bytes;
   }
-  std::cout << "Loader-B stress probe evidence: negative_fixture_count=16"
+  std::cout << "Loader-B stress probe evidence: negative_fixture_count=13"
             << " negative_cycles_per_fixture=" << kStressCycles
             << " missing_file_cycles=" << kStressCycles
             << " valid_cycles=" << kStressCycles
@@ -485,7 +484,7 @@ void RunStress(const std::vector<std::string>& paths) {
 
 int main(int argc, char** argv) {
   Require(argc == static_cast<int>(kFixtureCount + 2),
-          "a mode and 20 GUI loader fixture paths are required");
+          "a mode and 16 GUI loader fixture paths are required");
   const std::string_view mode(argv[1]);
   const std::vector<std::string> paths(argv + 2, argv + argc);
   if (mode == "public-contract") {

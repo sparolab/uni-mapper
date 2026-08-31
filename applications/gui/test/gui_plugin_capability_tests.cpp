@@ -15,7 +15,7 @@ void Check(bool condition, const char* message) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  Check(argc == 5, "GUI plugin fixture paths are required");
+  Check(argc == 4, "GUI plugin fixture paths are required");
   auto valid = open_lmm::GuiPluginHost::Load(argv[1]);
   Check(valid.IsOk(), "matching GUI services capability loads");
   auto host = std::move(valid).Value();

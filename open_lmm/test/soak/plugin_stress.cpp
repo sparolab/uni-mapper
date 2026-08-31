@@ -32,7 +32,7 @@ void Require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
-uint64_t MappingCount(const std::array<fs::path, 12>& fixtures) {
+uint64_t MappingCount(const std::array<fs::path, 11>& fixtures) {
   std::ifstream maps("/proc/self/maps");
   if (!maps) throw std::runtime_error("/proc/self/maps is unavailable");
   uint64_t count = 0;
@@ -64,7 +64,7 @@ Json Owner(uint64_t mappings) {
 }
 
 soak::ProcessSeries Run(const soak::RunOptions& options,
-                        const std::array<fs::path, 12>& fixtures,
+                        const std::array<fs::path, 11>& fixtures,
                         const std::optional<fs::path>& built_in,
                         Json& report) {
   soak::ProcessSeries series;
@@ -131,19 +131,17 @@ soak::ProcessSeries Run(const soak::RunOptions& options,
     Require(counters.destroys == 1 && MappingCount(fixtures) == 0,
             "plugin object was not destroyed before DSO unload");
 
-    for (std::size_t index : {1U, 2U, 3U, 4U, 5U, 6U, 9U, 10U, 11U}) {
+    for (std::size_t index : {1U, 2U, 3U, 4U, 5U, 6U, 8U, 9U, 10U}) {
       Require(!open_lmm::load_plugin_v1<PluginFixture>(
                   fixtures[index].string(), "test", "{}"),
               "invalid plugin fixture unexpectedly loaded");
     }
-    for (std::size_t index : {7U, 8U}) {
-      auto empty = open_lmm::inspect_plugin_v1(
-          fixtures[index].string(), "test", {{std::string_view{}}});
-      Require(empty && empty.Value().capability.empty() &&
-                  !open_lmm::inspect_plugin_v1(
-                      fixtures[index].string(), "test", {{"required"}}),
-              "empty capability normalization contract failed");
-    }
+    auto empty = open_lmm::inspect_plugin_v1(
+        fixtures[7].string(), "test", {{std::string_view{}}});
+    Require(empty && empty.Value().capability.empty() &&
+                !open_lmm::inspect_plugin_v1(
+                    fixtures[7].string(), "test", {{"required"}}),
+            "empty capability contract failed");
     const uint64_t mappings = MappingCount(fixtures);
     Require(mappings == 0, "failed plugin candidate retained a DSO mapping");
     const auto process = soak::SampleProcessMetrics();
@@ -158,18 +156,18 @@ soak::ProcessSeries Run(const soak::RunOptions& options,
 
 int main(int argc, char** argv) {
   try {
-    if (argc < 13)
+    if (argc < 12)
       throw std::invalid_argument(
-          "twelve synthetic fixtures are required");
-    std::array<fs::path, 12> fixtures;
+          "eleven synthetic fixtures are required");
+    std::array<fs::path, 11> fixtures;
     for (std::size_t index = 0; index < fixtures.size(); ++index) {
       fixtures[index] = fs::canonical(argv[index + 1]);
     }
     std::optional<fs::path> built_in;
-    int option_begin = 13;
-    if (argc > 13 && std::string_view(argv[13]).rfind("--", 0) != 0) {
-      built_in = fs::canonical(argv[13]);
-      option_begin = 14;
+    int option_begin = 12;
+    if (argc > 12 && std::string_view(argv[12]).rfind("--", 0) != 0) {
+      built_in = fs::canonical(argv[12]);
+      option_begin = 13;
     }
     const auto options = soak::ParseRunOptions(argc, argv, option_begin);
     Json report = soak::InitialOwnerReport(

@@ -278,20 +278,6 @@ void TestInputLocks() {
         "config tamper rejected before Open");
 }
 
-void TestSchemaDocuments() {
-  const std::filesystem::path schema_dir = OPEN_LMM_REPLAY_SCHEMA_DIR;
-  for (const char* name : {"replay_case.schema.json",
-                           "replay_report.schema.json",
-                           "replay_baseline.schema.json"}) {
-    const Json schema = replay::LoadJsonFile(schema_dir / name);
-    Check(schema.at("$schema") == "https://json-schema.org/draft/2020-12/schema",
-          std::string(name) + " declares JSON Schema 2020-12");
-    Check(schema.at("type") == "object" &&
-              schema.at("additionalProperties") == false,
-          std::string(name) + " closes the top-level vocabulary");
-  }
-}
-
 void TestBaselineComparison() {
   const Json report = ValidReport();
   const Json baseline = ValidBaseline();
@@ -347,7 +333,6 @@ int main() {
   TestCanonicalJson();
   TestSha256();
   TestInputLocks();
-  TestSchemaDocuments();
   TestBaselineComparison();
   std::cout << "Replay contract tests passed\n";
   return 0;

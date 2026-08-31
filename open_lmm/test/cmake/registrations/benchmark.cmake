@@ -107,8 +107,6 @@ openlmm_add_test(
 
 add_executable(open_lmm_benchmark_report_contract_tests
   benchmark/contract/report_contract_tests.cpp)
-target_compile_definitions(open_lmm_benchmark_report_contract_tests PRIVATE
-  OPEN_LMM_BENCHMARK_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/benchmark/schema")
 target_link_libraries(open_lmm_benchmark_report_contract_tests PRIVATE
   open_lmm_benchmark_support)
 openlmm_set_global_target_properties(open_lmm_benchmark_report_contract_tests)

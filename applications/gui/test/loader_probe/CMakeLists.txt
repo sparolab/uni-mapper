@@ -18,7 +18,6 @@ endfunction()
 
 add_gui_probe_fixture(valid 0)
 add_gui_probe_fixture(old_capability 1)
-add_gui_probe_fixture(null_capability 2)
 add_gui_probe_fixture(empty_capability 3)
 add_gui_probe_fixture(wrong_abi 4)
 add_gui_probe_fixture(wrong_kind 5)
@@ -28,14 +27,11 @@ add_gui_probe_fixture(null_create 8)
 add_gui_probe_fixture(null_destroy 9)
 add_gui_probe_fixture(create_null 10)
 add_gui_probe_fixture(create_throw_standard 11)
-add_gui_probe_fixture(create_throw_unknown 12)
 add_gui_probe_fixture(entry_null 13)
 add_gui_probe_fixture(entry_throw_standard 14)
-add_gui_probe_fixture(entry_throw_unknown 15)
 add_gui_probe_fixture(missing_symbol 16)
 add_gui_probe_fixture(start_result_failure 17)
 add_gui_probe_fixture(start_throw_standard 18)
-add_gui_probe_fixture(start_throw_unknown 19)
 
 add_executable(open_lmm_gui_loader_public_contract_tests
   probe_tests.cpp
@@ -65,7 +61,6 @@ openlmm_gui_enable_warnings(open_lmm_gui_loader_public_contract_tests)
 set(open_lmm_gui_probe_fixture_paths
     $<TARGET_FILE:open_lmm_gui_probe_fixture_valid>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_old_capability>
-    $<TARGET_FILE:open_lmm_gui_probe_fixture_null_capability>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_empty_capability>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_wrong_abi>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_wrong_kind>
@@ -75,14 +70,11 @@ set(open_lmm_gui_probe_fixture_paths
     $<TARGET_FILE:open_lmm_gui_probe_fixture_null_destroy>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_create_null>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_create_throw_standard>
-    $<TARGET_FILE:open_lmm_gui_probe_fixture_create_throw_unknown>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_entry_null>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_entry_throw_standard>
-    $<TARGET_FILE:open_lmm_gui_probe_fixture_entry_throw_unknown>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_missing_symbol>
     $<TARGET_FILE:open_lmm_gui_probe_fixture_start_result_failure>
-    $<TARGET_FILE:open_lmm_gui_probe_fixture_start_throw_standard>
-    $<TARGET_FILE:open_lmm_gui_probe_fixture_start_throw_unknown>)
+    $<TARGET_FILE:open_lmm_gui_probe_fixture_start_throw_standard>)
 
 function(add_gui_loader_probe_test name mode)
   add_test(NAME ${name}

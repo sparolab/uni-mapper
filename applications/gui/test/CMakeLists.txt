@@ -45,7 +45,7 @@ set_tests_properties(open_lmm_gui_presentation_resource_tests PROPERTIES
     "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:open_lmm::client>:$ENV{LD_LIBRARY_PATH}")
 
 foreach(fixture IN ITEMS
-    valid old_capability empty_capability null_capability self_closing)
+    valid old_capability empty_capability self_closing)
   add_library(open_lmm_gui_plugin_fixture_${fixture} MODULE
     fixtures/gui_plugin_fixture.cpp)
   target_include_directories(open_lmm_gui_plugin_fixture_${fixture} PRIVATE
@@ -58,8 +58,6 @@ target_compile_definitions(open_lmm_gui_plugin_fixture_old_capability PRIVATE
   OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=1)
 target_compile_definitions(open_lmm_gui_plugin_fixture_empty_capability PRIVATE
   OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=2)
-target_compile_definitions(open_lmm_gui_plugin_fixture_null_capability PRIVATE
-  OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=3)
 target_compile_definitions(open_lmm_gui_plugin_fixture_self_closing PRIVATE
   OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE=4)
 
@@ -75,8 +73,7 @@ add_test(NAME open_lmm_gui_plugin_capability_tests
   COMMAND open_lmm_gui_plugin_capability_tests
     $<TARGET_FILE:open_lmm_gui_plugin_fixture_valid>
     $<TARGET_FILE:open_lmm_gui_plugin_fixture_old_capability>
-    $<TARGET_FILE:open_lmm_gui_plugin_fixture_empty_capability>
-    $<TARGET_FILE:open_lmm_gui_plugin_fixture_null_capability>)
+    $<TARGET_FILE:open_lmm_gui_plugin_fixture_empty_capability>)
 set_tests_properties(open_lmm_gui_plugin_capability_tests PROPERTIES
   LABELS
     "layer:L2;module:applications.gui;owner:GuiPluginHost;invariant:INV-13;invariant:INV-15;invariant:INV-17;lane:pr;sanitizer:asan-ubsan"

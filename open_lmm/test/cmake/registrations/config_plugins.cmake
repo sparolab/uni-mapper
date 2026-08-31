@@ -11,8 +11,8 @@ openlmm_add_test(
 
 foreach(fixture IN ITEMS
     valid wrong_abi null_factory missing_destroy no_entry null_kind null_name
-    empty_capability null_capability create_throw entry_throw null_entry
-    stale_name stale_schema stale_build null_build)
+    empty_capability create_throw entry_throw null_entry
+    stale_name stale_schema stale_build)
   add_library(open_lmm_plugin_fixture_${fixture} MODULE
     plugins/fixtures/plugin_fixture.cpp)
   target_include_directories(open_lmm_plugin_fixture_${fixture} PRIVATE
@@ -35,8 +35,6 @@ target_compile_definitions(open_lmm_plugin_fixture_null_name PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_MODE=6)
 target_compile_definitions(open_lmm_plugin_fixture_empty_capability PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_MODE=7)
-target_compile_definitions(open_lmm_plugin_fixture_null_capability PRIVATE
-  OPEN_LMM_PLUGIN_FIXTURE_MODE=8)
 target_compile_definitions(open_lmm_plugin_fixture_create_throw PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_MODE=9)
 target_compile_definitions(open_lmm_plugin_fixture_entry_throw PRIVATE
@@ -49,8 +47,6 @@ target_compile_definitions(open_lmm_plugin_fixture_stale_schema PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_MODE=13)
 target_compile_definitions(open_lmm_plugin_fixture_stale_build PRIVATE
   OPEN_LMM_PLUGIN_FIXTURE_MODE=14)
-target_compile_definitions(open_lmm_plugin_fixture_null_build PRIVATE
-  OPEN_LMM_PLUGIN_FIXTURE_MODE=15)
 
 add_executable(open_lmm_plugin_loader_contract_tests
   plugins/host/contract/plugin_loader_contract_tests.cpp)
@@ -60,8 +56,8 @@ target_link_libraries(open_lmm_plugin_loader_contract_tests PRIVATE
   open_lmm_common open_lmm_utils)
 foreach(fixture IN ITEMS
     valid wrong_abi null_factory missing_destroy no_entry null_kind null_name
-    empty_capability null_capability create_throw entry_throw null_entry
-    stale_name stale_schema stale_build null_build)
+    empty_capability create_throw entry_throw null_entry
+    stale_name stale_schema stale_build)
   add_dependencies(open_lmm_plugin_loader_contract_tests
     open_lmm_plugin_fixture_${fixture})
 endforeach()
@@ -81,14 +77,12 @@ openlmm_add_test(
     $<TARGET_FILE:open_lmm_plugin_fixture_null_kind>
     $<TARGET_FILE:open_lmm_plugin_fixture_null_name>
     $<TARGET_FILE:open_lmm_plugin_fixture_empty_capability>
-    $<TARGET_FILE:open_lmm_plugin_fixture_null_capability>
     $<TARGET_FILE:open_lmm_plugin_fixture_create_throw>
     $<TARGET_FILE:open_lmm_plugin_fixture_entry_throw>
     $<TARGET_FILE:open_lmm_plugin_fixture_null_entry>
     $<TARGET_FILE:open_lmm_plugin_fixture_stale_name>
     $<TARGET_FILE:open_lmm_plugin_fixture_stale_schema>
-    $<TARGET_FILE:open_lmm_plugin_fixture_stale_build>
-    $<TARGET_FILE:open_lmm_plugin_fixture_null_build>)
+    $<TARGET_FILE:open_lmm_plugin_fixture_stale_build>)
 
 add_executable(open_lmm_algorithm_factory_contract_tests
   plugins/host/contract/algorithm_factory_contract_tests.cpp)

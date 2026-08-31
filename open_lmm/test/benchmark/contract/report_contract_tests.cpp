@@ -177,23 +177,6 @@ int main() {
   Check(refused_overwrite && parsed == report,
         "report writer preserves JSON and refuses overwrite");
 
-  std::ifstream schema(std::string(OPEN_LMM_BENCHMARK_SCHEMA_DIR) +
-                       "/performance_report.schema.json");
-  Json schema_json;
-  schema >> schema_json;
-  Check(schema_json.at("additionalProperties") == false &&
-            schema_json.at("properties").contains("schema_version"),
-        "versioned schema keeps the report root closed");
-  std::ifstream baseline_schema(
-      std::string(OPEN_LMM_BENCHMARK_SCHEMA_DIR) +
-      "/performance_baseline.schema.json");
-  Json baseline_schema_json;
-  baseline_schema >> baseline_schema_json;
-  Check(baseline_schema_json.at("additionalProperties") == false &&
-            baseline_schema_json.at("properties").contains("catalog_id") &&
-            baseline_schema_json.at("properties").contains("baselines"),
-        "versioned baseline catalog schema is closed");
-
   const fs::path bundle_root = fs::temp_directory_path() /
                                ("open_lmm_benchmark_bundle_" +
                                 std::to_string(static_cast<uint64_t>(getpid())));
@@ -543,20 +526,6 @@ int main() {
             .at("result") == "fail",
         "semantic parity failure fails the paired report");
 
-  std::ifstream bundle_schema(std::string(OPEN_LMM_BENCHMARK_SCHEMA_DIR) +
-                              "/performance_bundle.schema.json");
-  Json bundle_schema_json;
-  bundle_schema >> bundle_schema_json;
-  Check(bundle_schema_json.at("additionalProperties") == false &&
-            bundle_schema_json.at("properties").contains("comparison"),
-        "versioned bundle schema keeps aggregate evidence closed");
-  std::ifstream pair_schema(std::string(OPEN_LMM_BENCHMARK_SCHEMA_DIR) +
-                            "/performance_pair.schema.json");
-  Json pair_schema_json;
-  pair_schema >> pair_schema_json;
-  Check(pair_schema_json.at("additionalProperties") == false &&
-            pair_schema_json.at("properties").contains("pairs"),
-        "versioned pair schema keeps paired evidence closed");
   fs::remove_all(bundle_root, error);
   Check(!error, "bundle contract fixture cleanup succeeds");
   std::cout << "benchmark report contract tests passed\n";

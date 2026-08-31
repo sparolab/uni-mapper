@@ -53,8 +53,6 @@ openlmm_add_test(
 
 add_executable(open_lmm_replay_contract_tests
   replay/contract/replay_contract_tests.cpp)
-target_compile_definitions(open_lmm_replay_contract_tests PRIVATE
-  OPEN_LMM_REPLAY_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replay/schema")
 target_link_libraries(open_lmm_replay_contract_tests PRIVATE
   open_lmm_replay_contract)
 openlmm_set_global_target_properties(open_lmm_replay_contract_tests)

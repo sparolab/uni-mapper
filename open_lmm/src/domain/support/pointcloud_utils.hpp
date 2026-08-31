@@ -86,22 +86,10 @@ class IncrementalVoxelAccumulator {
   std::unordered_map<VOXEL_LOC, M_POINT> voxels_;
 };
 
-// Helper methods for transformations
-std::vector<Eigen::Isometry3f> transformEigenPoses(
-    const std::vector<Eigen::Isometry3d>& poses,
-    const Eigen::Matrix4f& transform_matrix);
-
-std::vector<Eigen::Vector3f> transformEigenPoints(
-    const std::vector<Eigen::Vector3f>& map_points,
-    const Eigen::Matrix4f& transform_matrix);
-
 pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
     pcl::PointCloud<pcl::PointXYZI>::Ptr p_cloud, const float voxel_size,
     const float min_range = 2.0, const float max_range = 100.0,
     const bool use_range_filter = true);
-
-void pclToEigen(const pcl::PointCloud<pcl::PointXYZI>& cloud,
-                std::vector<Eigen::Vector3f>& points);
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromPCD(std::string scan_file);
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromBin(std::string scan_file);

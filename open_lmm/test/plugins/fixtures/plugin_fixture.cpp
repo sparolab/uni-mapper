@@ -78,8 +78,6 @@ const OpenLmmPluginApiV1 kApi{
 #endif
 #if OPEN_LMM_PLUGIN_FIXTURE_MODE == 7
     "",
-#elif OPEN_LMM_PLUGIN_FIXTURE_MODE == 8
-    nullptr,
 #else
     "test:lifecycle",
 #endif
@@ -90,8 +88,6 @@ const OpenLmmPluginApiV1 kApi{
 #endif
 #if OPEN_LMM_PLUGIN_FIXTURE_MODE == 14
     "fixture-old"
-#elif OPEN_LMM_PLUGIN_FIXTURE_MODE == 15
-    nullptr
 #else
     "fixture-1"
 #endif

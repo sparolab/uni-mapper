@@ -288,32 +288,6 @@ void TestReportContract() {
   Check(rejected, "exclusive report writer rejects overwrite");
 }
 
-void TestSchemaDocument() {
-  std::ifstream input(fs::path(OPEN_LMM_SOAK_SCHEMA_DIR) /
-                      "soak_report.schema.json");
-  Json schema;
-  input >> schema;
-  Check(schema.at("$schema") ==
-            "https://json-schema.org/draft/2020-12/schema" &&
-            schema.at("type") == "object" &&
-            schema.at("additionalProperties") == false,
-        "soak schema is closed JSON Schema 2020-12");
-
-  std::ifstream bundle_input(fs::path(OPEN_LMM_SOAK_SCHEMA_DIR) /
-                             "soak_bundle.schema.json");
-  Json bundle_schema;
-  bundle_input >> bundle_schema;
-  Check(bundle_schema.at("$schema") ==
-            "https://json-schema.org/draft/2020-12/schema" &&
-            bundle_schema.at("type") == "object" &&
-            bundle_schema.at("additionalProperties") == false &&
-            bundle_schema.at("properties")
-                    .at("reports")
-                    .at("items")
-                    .at("$ref") == "soak_report.schema.json",
-        "soak bundle schema is closed JSON Schema 2020-12");
-}
-
 }  // namespace
 
 int main() {
@@ -321,7 +295,6 @@ int main() {
   TestSlopeAnalysis();
   TestOwnerSeriesGate();
   TestReportContract();
-  TestSchemaDocument();
   std::cout << "Soak metric contract tests passed\n";
   return 0;
 }

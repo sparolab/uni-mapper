@@ -1,7 +1,6 @@
 #include "pointcloud_utils.hpp"
 
 #include <Eigen/Dense>
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -67,37 +66,6 @@ void IncrementalVoxelAccumulator::Add(const pcl::PointXYZI& point) {
   voxels_.emplace(voxel, accumulated);
 }
 
-std::vector<Eigen::Isometry3f> transformEigenPoses(
-    const std::vector<Eigen::Isometry3d>& poses,
-    const Eigen::Matrix4f& transform_matrix) {
-  std::vector<Eigen::Isometry3f> transformed_poses;
-  transformed_poses.reserve(poses.size());
-
-  std::transform(poses.begin(), poses.end(),
-                 std::back_inserter(transformed_poses),
-                 [&](const Eigen::Isometry3d& pose) {
-                   return Eigen::Isometry3f(transform_matrix *
-                                            pose.cast<float>().matrix());
-                 });
-
-  return transformed_poses;
-}
-
-std::vector<Eigen::Vector3f> transformEigenPoints(
-    const std::vector<Eigen::Vector3f>& map_points,
-    const Eigen::Matrix4f& transform_matrix) {
-  std::vector<Eigen::Vector3f> transformed_points;
-  transformed_points.reserve(map_points.size());
-
-  std::transform(map_points.begin(), map_points.end(),
-                 std::back_inserter(transformed_points),
-                 [&](const Eigen::Vector3f& point) {
-                   return (transform_matrix * point.homogeneous()).head<3>();
-                 });
-
-  return transformed_points;
-}
-
 pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
     pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan, const float voxel_size,
     const float min_range, const float max_range, const bool use_range_filter) {
@@ -122,14 +90,6 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
       });
 
   return p_scan_filtered;
-}
-
-void pclToEigen(const pcl::PointCloud<pcl::PointXYZI>& cloud,
-                std::vector<Eigen::Vector3f>& points) {
-  points.resize(cloud.size());
-  std::transform(
-      cloud.begin(), cloud.end(), points.begin(),
-      [](const pcl::PointXYZI& p) { return Eigen::Vector3f(p.x, p.y, p.z); });
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr readPointsFromPCD(std::string scan_file) {

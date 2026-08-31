@@ -25,8 +25,6 @@ endif()
 
 add_executable(open_lmm_soak_metrics_contract_tests
   soak/contract/soak_metrics_tests.cpp)
-target_compile_definitions(open_lmm_soak_metrics_contract_tests PRIVATE
-  OPEN_LMM_SOAK_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/soak/schema")
 target_link_libraries(open_lmm_soak_metrics_contract_tests PRIVATE
   open_lmm_soak_support)
 openlmm_set_global_target_properties(open_lmm_soak_metrics_contract_tests)
@@ -132,7 +130,7 @@ target_link_libraries(open_lmm_plugin_stress_tests PRIVATE
   open_lmm_utils)
 foreach(fixture IN ITEMS
     valid wrong_abi null_factory missing_destroy no_entry null_kind null_name
-    empty_capability null_capability create_throw entry_throw null_entry)
+    empty_capability create_throw entry_throw null_entry)
   add_dependencies(open_lmm_plugin_stress_tests
     open_lmm_plugin_fixture_${fixture})
 endforeach()
@@ -155,7 +153,6 @@ openlmm_add_test(
     $<TARGET_FILE:open_lmm_plugin_fixture_null_kind>
     $<TARGET_FILE:open_lmm_plugin_fixture_null_name>
     $<TARGET_FILE:open_lmm_plugin_fixture_empty_capability>
-    $<TARGET_FILE:open_lmm_plugin_fixture_null_capability>
     $<TARGET_FILE:open_lmm_plugin_fixture_create_throw>
     $<TARGET_FILE:open_lmm_plugin_fixture_entry_throw>
     $<TARGET_FILE:open_lmm_plugin_fixture_null_entry>

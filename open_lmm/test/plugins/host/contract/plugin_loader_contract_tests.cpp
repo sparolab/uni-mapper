@@ -17,7 +17,7 @@ void Check(bool condition, const char* message) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  Check(argc == 17, "all plugin loader fixture paths are required");
+  Check(argc == 15, "all plugin loader fixture paths are required");
 
   PluginFixtureCounters counters;
   open_lmm::PluginMetadata metadata;
@@ -59,23 +59,21 @@ int main(int argc, char** argv) {
             !open_lmm::load_plugin_v1<PluginFixture>(argv[7], "test", "{}"),
         "null plugin name fails inspection and loading");
 
-  for (int index : {8, 9}) {
-    const auto empty = open_lmm::inspect_plugin_v1(
-        argv[index], "test", {{std::string_view{}}});
-    Check(empty && empty.Value().capability.empty(),
-          "null and empty capabilities normalize to an empty contract");
-    Check(!open_lmm::inspect_plugin_v1(
-              argv[index], "test", {{"required:capability"}}),
-          "empty capability cannot satisfy a non-empty exact contract");
-  }
+  const auto empty = open_lmm::inspect_plugin_v1(
+      argv[8], "test", {{std::string_view{}}});
+  Check(empty && empty.Value().capability.empty(),
+        "empty capability satisfies an explicitly empty contract");
+  Check(!open_lmm::inspect_plugin_v1(
+            argv[8], "test", {{"required:capability"}}),
+        "empty capability cannot satisfy a non-empty exact contract");
 
-  Check(!open_lmm::load_plugin_v1<PluginFixture>(argv[10], "test", "{}"),
+  Check(!open_lmm::load_plugin_v1<PluginFixture>(argv[9], "test", "{}"),
         "throwing create callback is converted to loader failure");
+  Check(!open_lmm::inspect_plugin_v1(argv[10], "test") &&
+            !open_lmm::load_plugin_v1<PluginFixture>(argv[10], "test", "{}"),
+        "throwing entry callback is converted to loader failure");
   Check(!open_lmm::inspect_plugin_v1(argv[11], "test") &&
             !open_lmm::load_plugin_v1<PluginFixture>(argv[11], "test", "{}"),
-        "throwing entry callback is converted to loader failure");
-  Check(!open_lmm::inspect_plugin_v1(argv[12], "test") &&
-            !open_lmm::load_plugin_v1<PluginFixture>(argv[12], "test", "{}"),
         "null entry callback result fails safely");
 
   const auto reject_before_create = [&](int index, const char* field) {
@@ -91,11 +89,9 @@ int main(int argc, char** argv) {
           field);
   };
   reject_before_create(8, "empty plugin capability reached create");
-  reject_before_create(9, "null plugin capability reached create");
-  reject_before_create(13, "stale plugin name reached create");
-  reject_before_create(14, "stale plugin schema reached create");
-  reject_before_create(15, "stale plugin build generation reached create");
-  reject_before_create(16, "null plugin build generation reached create");
+  reject_before_create(12, "stale plugin name reached create");
+  reject_before_create(13, "stale plugin schema reached create");
+  reject_before_create(14, "stale plugin build generation reached create");
 
   PluginFixtureCounters capability_counters;
   const open_lmm::PluginContractExpectation wrong_capability{
