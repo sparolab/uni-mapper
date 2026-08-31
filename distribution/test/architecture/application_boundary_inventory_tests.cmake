@@ -299,14 +299,6 @@ assert_excludes(
   "open_lmm_runtime_service_objects"
   "open_lmm_runtime_composition_objects")
 
-foreach(legacy_batch_owner IN ITEMS
-    "open_lmm/src/adapters/batch/main.cpp"
-    "open_lmm/src/adapters/batch/CMakeLists.txt")
-  if(EXISTS "${OPEN_LMM_REPOSITORY_ROOT}/${legacy_batch_owner}")
-    message(FATAL_ERROR
-      "legacy core Batch owner must not remain: ${legacy_batch_owner}")
-  endif()
-endforeach()
 assert_excludes(
   "open_lmm/CMakeLists.txt"
   "applications/cli"

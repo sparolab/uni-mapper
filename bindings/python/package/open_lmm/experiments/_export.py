@@ -7,14 +7,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
-from ._canonical import canonical_json_bytes, plain_value
+from ._canonical import canonical_json_bytes
 from ._models import (
     ExperimentResult,
-    ExperimentStatus,
     MetricAvailability,
     MetricRecord,
     MetricSource,
-    MetricSummary,
     TrialResult,
 )
 

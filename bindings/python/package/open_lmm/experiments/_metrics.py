@@ -8,7 +8,7 @@ import time
 from collections import Counter, deque
 from pathlib import Path
 from threading import Lock
-from typing import Any, Iterable
+from typing import Iterable
 
 import numpy as np
 from open_lmm import ArtifactState, EventType, ExecutionEvent, RuntimeSnapshot, VisualizationSnapshot

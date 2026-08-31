@@ -79,11 +79,6 @@ std::pair<double, Eigen::Isometry3d> ScanContext::distance(
 }
 
 /*********************************************************************************************************************/
-double ScanContext::ringKeyDistance(const ScanContext& other) const {
-  return (ring_key_ - other.ring_key_).norm();
-}
-
-/*********************************************************************************************************************/
 double ScanContext::shiftedDistance(
     const size_t& sector_offset,
     const std::shared_ptr<IDescriptorKdtree>& other) const {

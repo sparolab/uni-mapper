@@ -1,8 +1,5 @@
 #include "Map.hpp"
 
-#include <pcl/io/pcd_io.h>
-
-#include "pcl_eigen_converter.hpp"
 #include "params.hpp"
 
 // TODO(gil) : refactor parameters

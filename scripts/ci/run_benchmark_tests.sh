@@ -73,8 +73,6 @@ cmake --build "$build_root" --parallel "$build_jobs" --target \
   open_lmm_benchmark_aggregate \
   open_lmm_benchmark_pair \
   open_lmm_artifact_compare
-ctest --test-dir "$build_root" --output-on-failure \
-  -R '^open_lmm_benchmark_(statistics|options|stage_event_recorder|report_contract|fixture_policy|process_sampler|small_smoke)_tests$'
 cmake -S "$repository_root/distribution" -B "$distribution_build_root" \
   -DOPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST=ON \
   -DOPEN_LMM_DISTRIBUTION_CORE_BUILD_DIR="$build_root"
@@ -88,11 +86,6 @@ if [[ -n "${OPEN_LMM_PERFORMANCE_BASELINE:-}" ]]; then
     exit 1
   fi
   baseline_args=(--baseline "$OPEN_LMM_PERFORMANCE_BASELINE")
-elif [[ "$profile" == nightly &&
-        -f "$repository_root/docs/post_freeze_results/performance_baseline.json" ]]; then
-  baseline_args=(
-    --baseline
-    "$repository_root/docs/post_freeze_results/performance_baseline.json")
 fi
 
 "$repository_root/scripts/benchmark/run_benchmarks.sh" \

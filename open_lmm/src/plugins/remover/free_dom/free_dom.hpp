@@ -45,7 +45,6 @@ class FreeDom : public IOfflineRemoverPlugin {
   ScanMap scan_;
   DepthImage depth_image_;
   MRMap map_;
-  // Timer timer_;
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr dynamic_map_;

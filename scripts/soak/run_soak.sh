@@ -115,10 +115,6 @@ if [[ "$scenario" == "gpu-real-driver" ]]; then
 fi
 
 runner="$build_root/test/open_lmm_runtime_lifecycle_stress_tests"
-if [[ "$profile" == "nightly" &&
-      -x "$build_root/test/open_lmm_runtime_nightly_soak_tests" ]]; then
-  runner="$build_root/test/open_lmm_runtime_nightly_soak_tests"
-fi
 if [[ ! -x "$runner" ]]; then
   echo "soak runner is unavailable: $runner" >&2
   exit 77

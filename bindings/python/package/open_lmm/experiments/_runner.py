@@ -19,7 +19,6 @@ from ._models import (
     ExperimentStatus,
     ExecutionMode,
     FailurePolicy,
-    MetricPolicy,
     TrialResult,
 )
 from ._planner import PlannedTrial, plan_trials

@@ -17,7 +17,6 @@ class ArtifactRepository {
   void Reset(const std::vector<AgentId>& agents);
   void BeginStage(StageId stage);
   void CompleteStage(StageId stage);
-  void FailStage(StageId stage, std::string detail);
   void CompleteOptimizeThrough(const AgentId& target_agent,
                                const std::vector<AgentId>& ordered_agents);
   void CompleteLoopDetectThrough(const AgentId& target_agent,
@@ -29,7 +28,6 @@ class ArtifactRepository {
   void BeginNode(NodeId node, const std::vector<AgentId>& affected_agents);
   void CompleteNode(NodeId node, std::optional<AgentId> agent);
   void CompleteNode(NodeId node, const std::vector<AgentId>& affected_agents);
-  void FailNode(NodeId node, std::optional<AgentId> agent, std::string detail);
   void FailNode(NodeId node, const std::vector<AgentId>& affected_agents,
                 std::string detail);
   void ApplyConfig(ConfigDomain domain, uint64_t config_revision);

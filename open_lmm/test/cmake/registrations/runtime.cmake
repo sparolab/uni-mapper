@@ -1,14 +1,14 @@
+add_executable(open_lmm_pipeline_controller_suite
+  runtime/control/contract/pipeline_controller_tests.cpp)
+target_link_libraries(open_lmm_pipeline_controller_suite PRIVATE
+  open_lmm_map_server open_lmm_loop_detector)
+openlmm_set_global_target_properties(open_lmm_pipeline_controller_suite)
+
 function(openlmm_add_pipeline_controller_suite
     target selector layer module invariants)
-  add_executable(${target}
-    runtime/control/contract/pipeline_controller_tests.cpp)
-  target_compile_definitions(${target} PRIVATE
-    OPEN_LMM_PIPELINE_CONTROLLER_SUITE=${selector})
-  target_link_libraries(${target} PRIVATE
-    open_lmm_map_server open_lmm_loop_detector)
-  openlmm_set_global_target_properties(${target})
   openlmm_add_test(
-    NAME ${target} TARGET ${target}
+    NAME ${target} TARGET open_lmm_pipeline_controller_suite
+    COMMAND_ARGS --suite ${selector}
     LAYER ${layer} MODULE ${module} OWNER PipelineController
     INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan tsan)
 endfunction()
@@ -23,13 +23,13 @@ openlmm_add_pipeline_controller_suite(
   open_lmm_pipeline_controller_alignment_tests 3 L3
   runtime.control.alignment "INV-04;INV-17;INV-18")
 
+add_executable(open_lmm_runtime_service_suite
+  runtime/service/fault_concurrency/runtime_service_tests.cpp)
+target_link_libraries(open_lmm_runtime_service_suite PRIVATE
+  open_lmm_map_server)
+openlmm_set_global_target_properties(open_lmm_runtime_service_suite)
+
 function(openlmm_add_runtime_service_suite target selector layer invariants)
-  add_executable(${target}
-    runtime/service/fault_concurrency/runtime_service_tests.cpp)
-  target_compile_definitions(${target} PRIVATE
-    OPEN_LMM_RUNTIME_SERVICE_SUITE=${selector})
-  target_link_libraries(${target} PRIVATE open_lmm_map_server)
-  openlmm_set_global_target_properties(${target})
   set(runtime_service_timeout 60)
   if(OPEN_LMM_ENABLE_COVERAGE)
     # Clang's branch instrumentation can make the lifecycle-heavy contract
@@ -38,7 +38,8 @@ function(openlmm_add_runtime_service_suite target selector layer invariants)
     set(runtime_service_timeout 120)
   endif()
   openlmm_add_test(
-    NAME ${target} TARGET ${target}
+    NAME ${target} TARGET open_lmm_runtime_service_suite
+    COMMAND_ARGS --suite ${selector}
     LAYER ${layer} MODULE runtime.service OWNER RuntimeService
     INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan tsan
     TIMEOUT ${runtime_service_timeout})
@@ -68,18 +69,19 @@ openlmm_add_test(
   INVARIANTS INV-07 INV-08 INV-13 INV-14 INV-17
   LANES pr SANITIZERS asan-ubsan)
 
+add_executable(open_lmm_resource_suite
+  runtime/resources/fault_concurrency/bounded_executor_tests.cpp)
+target_link_libraries(open_lmm_resource_suite PRIVATE
+  open_lmm_foundation_concurrency_objects open_lmm_runtime_resources_objects
+  open_lmm_common open_lmm_algorithm_config open_lmm_utils
+  open_lmm_profiling Eigen3::Eigen PCL::PCL gtsam
+  nlohmann_json::nlohmann_json)
+openlmm_set_global_target_properties(open_lmm_resource_suite)
+
 function(openlmm_add_resource_suite target selector layer owner invariants)
-  add_executable(${target}
-    runtime/resources/fault_concurrency/bounded_executor_tests.cpp)
-  target_compile_definitions(${target} PRIVATE OPEN_LMM_RESOURCE_SUITE=${selector})
-  target_link_libraries(${target} PRIVATE
-    open_lmm_foundation_concurrency_objects open_lmm_runtime_resources_objects
-    open_lmm_common open_lmm_algorithm_config open_lmm_utils
-    open_lmm_profiling Eigen3::Eigen PCL::PCL gtsam
-    nlohmann_json::nlohmann_json)
-  openlmm_set_global_target_properties(${target})
   openlmm_add_test(
-    NAME ${target} TARGET ${target}
+    NAME ${target} TARGET open_lmm_resource_suite
+    COMMAND_ARGS --suite ${selector}
     LAYER ${layer} MODULE runtime.resources OWNER ${owner}
     INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan tsan)
 endfunction()
@@ -245,18 +247,19 @@ openlmm_add_test(
   LAYER L3 MODULE runtime.composition OWNER RuntimeBootstrapper
   INVARIANTS INV-03 INV-04 INV-07 INV-16
   LANES pr SANITIZERS asan-ubsan)
+add_executable(open_lmm_execution_spec_suite
+  runtime/model/contract/execution_spec_tests.cpp)
+target_link_libraries(open_lmm_execution_spec_suite PRIVATE
+  open_lmm_runtime_model_objects open_lmm_runtime_state_objects
+  open_lmm_common open_lmm_algorithm_config open_lmm_utils
+  open_lmm_profiling Eigen3::Eigen PCL::PCL gtsam
+  nlohmann_json::nlohmann_json)
+openlmm_set_global_target_properties(open_lmm_execution_spec_suite)
+
 function(openlmm_add_execution_spec_suite target selector module owner invariants)
-  add_executable(${target} runtime/model/contract/execution_spec_tests.cpp)
-  target_compile_definitions(${target} PRIVATE
-    OPEN_LMM_EXECUTION_SPEC_SUITE=${selector})
-  target_link_libraries(${target} PRIVATE
-    open_lmm_runtime_model_objects open_lmm_runtime_state_objects
-    open_lmm_common open_lmm_algorithm_config open_lmm_utils
-    open_lmm_profiling Eigen3::Eigen PCL::PCL gtsam
-    nlohmann_json::nlohmann_json)
-  openlmm_set_global_target_properties(${target})
   openlmm_add_test(
-    NAME ${target} TARGET ${target}
+    NAME ${target} TARGET open_lmm_execution_spec_suite
+    COMMAND_ARGS --suite ${selector}
     LAYER L2 MODULE ${module} OWNER ${owner}
     INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan)
 endfunction()
@@ -266,12 +269,6 @@ openlmm_add_execution_spec_suite(
 openlmm_add_execution_spec_suite(
   open_lmm_artifact_repository_tests 2 runtime.state ArtifactRepository
   "INV-01;INV-02;INV-03;INV-11")
-
-# Dataset-backed ordered replay verification. This is intentionally not a
-# CTest because it requires the test1/test2 dataset configured by the caller.
-add_executable(open_lmm_replay_verify tools/replay/replay_verify.cpp)
-target_link_libraries(open_lmm_replay_verify PRIVATE open_lmm_map_server)
-openlmm_set_global_target_properties(open_lmm_replay_verify)
 
 # Case-driven replay runner. It is compiled against the public RuntimeClient
 # façade; dataset-backed CTest registration is added only when a locked replay

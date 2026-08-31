@@ -7,15 +7,7 @@ from enum import Enum, auto
 from types import SimpleNamespace
 
 from open_lmm_viser.control import RuntimeControlPanel
-
-
-def wait_until(predicate, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.005)
-    raise AssertionError("condition was not satisfied")
+from viser_test_support import FakeSubscription, wait_until
 
 
 class Named(Enum):
@@ -71,14 +63,6 @@ class FakeGui:
 
     def button(self, label: str) -> FakeHandle:
         return next(handle for handle in self.handles if handle.label == label)
-
-
-class FakeSubscription:
-    def __init__(self) -> None:
-        self.closed = False
-
-    def close(self) -> None:
-        self.closed = True
 
 
 class FakeJob:

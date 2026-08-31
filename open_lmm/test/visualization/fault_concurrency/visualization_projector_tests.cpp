@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <string_view>
 
 namespace {
 using namespace open_lmm;
@@ -468,25 +469,27 @@ void TestFinalMapsRemainAvailableForEveryAgent() {
 
 }  // namespace
 
-#ifndef OPEN_LMM_VISUALIZATION_SUITE
-#define OPEN_LMM_VISUALIZATION_SUITE 0
-#endif
-
-int main() {
-#if OPEN_LMM_VISUALIZATION_SUITE == 1
-  TestDataLoadIsLazyAndVoxelComplete();
-  TestQueryShapeCacheIsBounded();
-  TestLoopCandidatesAndCandidateFrameSurvive();
-  TestDataLoadCandidateReusesIncrementalPreviewAcrossCommit();
-  TestFinalMapIntensityAndCache();
-  TestFinalMapVoxelizationIsCompleteAndDeterministic();
-  TestFinalMapsRemainAvailableForEveryAgent();
-#elif OPEN_LMM_VISUALIZATION_SUITE == 2
-  TestCancelledProjectionCannotPopulateCache();
-  TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks();
-  TestAlignmentCandidatePublishesIntermediateOptimizedPosesAndRollsBack();
-#else
-#error "OPEN_LMM_VISUALIZATION_SUITE must select a layer suite"
-#endif
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--suite") {
+    std::cerr << "usage: visualization_projector_tests --suite 1..2\n";
+    return 2;
+  }
+  const std::string_view suite(argv[2]);
+  if (suite == "1") {
+    TestDataLoadIsLazyAndVoxelComplete();
+    TestQueryShapeCacheIsBounded();
+    TestLoopCandidatesAndCandidateFrameSurvive();
+    TestDataLoadCandidateReusesIncrementalPreviewAcrossCommit();
+    TestFinalMapIntensityAndCache();
+    TestFinalMapVoxelizationIsCompleteAndDeterministic();
+    TestFinalMapsRemainAvailableForEveryAgent();
+  } else if (suite == "2") {
+    TestCancelledProjectionCannotPopulateCache();
+    TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks();
+    TestAlignmentCandidatePublishesIntermediateOptimizedPosesAndRollsBack();
+  } else {
+    std::cerr << "unknown visualization projector suite: " << suite << '\n';
+    return 2;
+  }
   return 0;
 }

@@ -64,22 +64,12 @@ public:
     inline void getLocalSubVoxelLinearIdxFromSubvoxelIdx(const Index& subvoxel_idx, LinearIndex& local_subvoxel_linear_idx) const;
     inline void getLocalVoxelLinearIdxFromVoxelIdx(const Index& voxel_idx, LinearIndex& local_voxel_linear_idx) const;
 
-    inline double getSubVoxelSize() const {return sub_voxel_size;}
     inline double getVoxelSize() const {return voxel_size;}
     inline double getBlockSize() const {return block_size;}
 
-    inline unsigned int getSubvoxel2voxelMultiples() const {return subvoxel2voxelMultiples_;}
     inline unsigned int getVoxel2blockMultiples() const {return voxel2blockMultiples_;}
     inline unsigned int getSubvoxel2voxelMultiplesCubed() const {return subvoxel2voxelMultiples_cubed_;}
     inline unsigned int getVoxel2blockMultiplesCubed() const {return voxel2blockMultiples_cubed_;}
-
-    inline bool local_map_enabled() const {return enable_local_map;}
-    inline const IndexBias& get_local_map_min_idx() const {return local_map.min_idx;}    // 返回local map最小block idx
-    inline const IndexBias& get_local_map_max_idx() const {return local_map.max_idx;}    // 返回local map最大block idx
-    inline const IndexBias& get_local_map_idx_size() const {return local_map.idx_size;}      // 返回scan map在xyz的block数量
-    inline const PointBias& get_local_map_min() const {return local_map.min;}            // 返回scan map最小点
-    inline const PointBias& get_local_map_max() const {return local_map.max;}            // 返回scan map最小点
-    inline const PointBias& get_local_map_size() const {return local_map.size;}   // 返回scan map在xyz的长度
 
 protected:
     unsigned int voxel_depth;

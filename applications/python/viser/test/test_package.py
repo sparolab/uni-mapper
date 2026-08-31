@@ -16,6 +16,11 @@ from open_lmm_viser.control import RuntimeControlPanel
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class Subscription:
+    def close(self) -> None:
+        pass
+
+
 class PackageTests(unittest.TestCase):
     def test_public_surface_is_application_components_only(self) -> None:
         self.assertEqual(
@@ -48,10 +53,6 @@ class PackageTests(unittest.TestCase):
             import viser
         except ImportError:
             self.skipTest("installed-package smoke requires viser")
-
-        class Subscription:
-            def close(self) -> None:
-                pass
 
         class Runtime:
             def subscribe_events(self, callback):
@@ -98,10 +99,6 @@ class PackageTests(unittest.TestCase):
             import viser
         except ImportError:
             self.skipTest("installed-package smoke requires viser")
-
-        class Subscription:
-            def close(self) -> None:
-                pass
 
         class Runtime:
             def subscribe_events(self, callback):

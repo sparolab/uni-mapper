@@ -140,7 +140,6 @@ CC="$compiler_c" CXX="$compiler_cxx" \
 ctest --test-dir "$build_root/open_lmm" --output-on-failure \
   --output-junit "$configuration_root/ctest-open_lmm.xml"
 ctest --test-dir "$gui_build_root" --output-on-failure \
-  -E '^open_lmm_gui_package_tests$' \
   --output-junit "$configuration_root/ctest-open_lmm-gui.xml"
 ctest --test-dir "$build_root/open_lmm_ros" --output-on-failure \
   --output-junit "$configuration_root/ctest-open_lmm-ros.xml"
@@ -219,24 +218,19 @@ cmake \
   -DOPEN_LMM_PYTHON_CXX_FLAGS="$cxx_compatibility_flags" \
   -P "$repository_root/bindings/python/test/package/python_package_tests.cmake"
 
-cmake \
-  -DOPEN_LMM_GUI_BUILD_DIR="$gui_build_root" \
-  -DOPEN_LMM_GUI_SOURCE_DIR="$gui_source_root" \
-  -DOPEN_LMM_GUI_REPOSITORY_ROOT="$repository_root" \
-  -DOPEN_LMM_GUI_CORE_PREFIX="$configuration_root/package-test/install" \
-  -DOPEN_LMM_GUI_PACKAGE_TEST_ROOT="$configuration_root/gui-package-test" \
-  -DOPEN_LMM_GUI_C_COMPILER="$compiler_c" \
-  -DOPEN_LMM_GUI_CXX_COMPILER="$compiler_cxx" \
-  -DOPEN_LMM_GUI_CXX_FLAGS="$cxx_compatibility_flags" \
-  -P "$gui_source_root/test/package/gui_package_tests.cmake"
-
 distribution_build_root="$configuration_root/distribution-build"
 cmake -S "$repository_root/distribution" -B "$distribution_build_root" \
   -DOPEN_LMM_DISTRIBUTION_CORE_BUILD_DIR="$build_root/open_lmm" \
   -DOPEN_LMM_DISTRIBUTION_CLI_BUILD_DIR="$configuration_root/cli-package-test/build" \
   -DOPEN_LMM_DISTRIBUTION_GUI_BUILD_DIR="$gui_build_root" \
   -DOPEN_LMM_DISTRIBUTION_ROS_BUILD_DIR="$build_root/open_lmm_ros"
+if [[ "$configuration_name" == "gcc12-gui-off" ]]; then
+  distribution_label='source-contract|package-composition'
+else
+  distribution_label='package-composition'
+fi
 ctest --test-dir "$distribution_build_root" --output-on-failure \
+  -L "$distribution_label" \
   --output-junit "$configuration_root/ctest-distribution.xml"
 
 "$repository_root/scripts/ci/inspect_symbol_visibility.sh" \

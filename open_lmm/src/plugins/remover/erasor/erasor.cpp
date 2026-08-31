@@ -9,7 +9,6 @@
 #include <foundation/diagnostics/profiling.hpp>
 
 // TODO(gil) : remove define
-#define NUM_PTS_LARGE_ENOUGH 200000
 #define NUM_PTS_LARGE_ENOUGH_FOR_MAP 20000000
 
 ErasorServer::ErasorServer(const common::Config& params) : cfg_(params) {

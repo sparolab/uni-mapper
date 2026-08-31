@@ -1,17 +1,15 @@
 #include "../../tools/replay/replay_contract.hpp"
 #include "../../tools/replay/replay_input_lock.hpp"
 #include "../../tools/replay/replay_sha256.hpp"
+#include "../../support/replay/test_support.hpp"
 
-#include <chrono>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 
 #include <nlohmann/json.hpp>
-#include <unistd.h>
 
 namespace replay = open_lmm::test::replay;
 using Json = nlohmann::json;
@@ -21,36 +19,8 @@ namespace {
 constexpr const char* kDigest =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 constexpr const char* kCommit = "0123456789abcdef0123456789abcdef01234567";
-
-void Check(bool condition, const std::string& message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
-
-class TemporaryTree {
- public:
-  TemporaryTree() {
-    const auto suffix =
-        std::to_string(::getpid()) + "_" +
-        std::to_string(std::chrono::steady_clock::now()
-                           .time_since_epoch()
-                           .count());
-    path_ = std::filesystem::temp_directory_path() /
-            ("open_lmm_replay_contract_" + suffix);
-    std::filesystem::create_directories(path_);
-  }
-
-  ~TemporaryTree() {
-    std::error_code ignored;
-    std::filesystem::remove_all(path_, ignored);
-  }
-
-  const std::filesystem::path& Path() const { return path_; }
-
- private:
-  std::filesystem::path path_;
-};
+using replay::Check;
+using replay::TemporaryTree;
 
 void WriteText(const std::filesystem::path& path, const std::string& text) {
   std::filesystem::create_directories(path.parent_path());
@@ -244,7 +214,7 @@ void TestSha256() {
 }
 
 void TestInputLocks() {
-  TemporaryTree tree;
+  TemporaryTree tree("open_lmm_replay_contract_");
   const auto data = tree.Path() / "data";
   const auto config = tree.Path() / "config";
   Json manifest = ValidCase();

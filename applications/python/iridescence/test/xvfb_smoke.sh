@@ -2,20 +2,21 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 PACKAGE_PATH" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: $0 PACKAGE_PATH [PYTHON]" >&2
   exit 2
 fi
+python_executable=${2:-python3}
 if ! command -v xvfb-run >/dev/null 2>&1; then
   echo "xvfb-run is unavailable; skipping Python Iridescence smoke test"
   exit 77
 fi
-if ! python3 -c 'import pyridescence' >/dev/null 2>&1; then
+if ! "$python_executable" -c 'import pyridescence' >/dev/null 2>&1; then
   echo "pyridescence is unavailable; skipping Python Iridescence smoke test"
   exit 77
 fi
 
-PYTHONPATH=$1 xvfb-run -a python3 - <<'PY'
+PYTHONPATH=$1 xvfb-run -a "$python_executable" - <<'PY'
 import numpy as np
 from pyridescence import glk, guik, imgui
 
@@ -46,4 +47,5 @@ guik.destroy()
 assert frames >= 3
 PY
 
-PYTHONPATH=$1 xvfb-run -a python3 "$(dirname "$0")/application_smoke.py"
+PYTHONPATH=$1 xvfb-run -a "$python_executable" \
+  "$(dirname "$0")/application_smoke.py"

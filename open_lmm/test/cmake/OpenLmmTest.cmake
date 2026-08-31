@@ -15,7 +15,7 @@ function(_openlmm_require_single_value argument value)
 endfunction()
 
 function(openlmm_add_test)
-  set(options RUN_SERIAL DISABLED ALLOW_AGGREGATE_FACADE)
+  set(options RUN_SERIAL)
   set(one_value_args
     NAME TARGET COMMAND LAYER MODULE OWNER TIMEOUT WORKING_DIRECTORY)
   set(multi_value_args COMMAND_ARGS INVARIANTS LANES SANITIZERS)
@@ -84,8 +84,7 @@ function(openlmm_add_test)
 
     get_target_property(link_targets "${OPENLMM_TEST_TARGET}" LINK_LIBRARIES)
     if(OPENLMM_TEST_LAYER MATCHES "^L[12]$" AND
-       "open_lmm_map_server" IN_LIST link_targets AND
-       NOT OPENLMM_TEST_ALLOW_AGGREGATE_FACADE)
+       "open_lmm_map_server" IN_LIST link_targets)
       message(FATAL_ERROR
         "${OPENLMM_TEST_NAME} is ${OPENLMM_TEST_LAYER} but links the aggregate "
         "open_lmm_map_server; use its direct owner target")
@@ -127,9 +126,6 @@ function(openlmm_add_test)
   if(OPENLMM_TEST_RUN_SERIAL)
     set_tests_properties("${OPENLMM_TEST_NAME}" PROPERTIES RUN_SERIAL TRUE)
   endif()
-  if(OPENLMM_TEST_DISABLED)
-    set_tests_properties("${OPENLMM_TEST_NAME}" PROPERTIES DISABLED TRUE)
-  endif()
 
   string(JOIN "," manifest_invariants ${OPENLMM_TEST_INVARIANTS})
   string(JOIN "," manifest_lanes ${OPENLMM_TEST_LANES})
@@ -141,8 +137,6 @@ function(openlmm_add_test)
 
   set_property(GLOBAL APPEND PROPERTY OPEN_LMM_REGISTERED_TESTS
     "${OPENLMM_TEST_NAME}")
-  set_property(GLOBAL APPEND PROPERTY OPEN_LMM_TEST_TARGETS
-    "${manifest_target}")
 endfunction()
 
 function(openlmm_apply_test_environment environment_value)

@@ -237,8 +237,7 @@ assert_file_contains(
   "name: quality / fuzz-nightly"
   "scripts/ci/run_static_analysis.sh required"
   "scripts/ci/build_fuzz_tests.sh quality-fuzz-smoke"
-  "scripts/ci/run_critical_coverage.sh quality-critical-coverage"
-  "scripts/ci/run_mutation_feasibility.sh quality-mutation-pilot")
+  "scripts/ci/run_critical_coverage.sh quality-critical-coverage")
 assert_file_contains(
   "${nightly_benchmark_workflow}"
   "OPEN_LMM_BENCHMARK_IMAGE"
@@ -259,7 +258,6 @@ assert_file_contains(
   "-DCMAKE_BUILD_TYPE=Release"
   "applications/cli/test/cli_package_tests.cmake"
   "gui_source_root"
-  "test/package/gui_package_tests.cmake"
   "bindings/python/test/package/python_package_tests.cmake"
   "scripts/ci/inspect_symbol_visibility.sh"
   "--output-junit"
@@ -268,6 +266,10 @@ assert_file_contains(
   "ctest-open_lmm-ros.xml"
   "distribution-build"
   "ctest-distribution.xml")
+assert_file_contains(
+  "${gui_dir}/test/CMakeLists.txt"
+  "NAME open_lmm_gui_package_tests"
+  "package/gui_package_tests.cmake")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/run_static_analysis.sh"
   "applications/cli/test/quality/production_sources.tsv"
@@ -357,7 +359,6 @@ assert_file_contains(
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/run_benchmark_tests.sh"
   "OPEN_LMM_PERFORMANCE_BASELINE"
-  "docs/post_freeze_results/performance_baseline.json"
   "baseline_args=(--baseline")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/benchmark/run_benchmarks.sh"
@@ -378,9 +379,7 @@ foreach(quality_script IN ITEMS
     build_fuzz_tests.sh
     run_critical_coverage.sh
     inspect_symbol_visibility.sh
-    run_mutation_feasibility.sh
-    critical_coverage.py
-    mutation_pilot.py)
+    critical_coverage.py)
   if(NOT EXISTS
       "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/${quality_script}")
     message(FATAL_ERROR "Goal 08 script is missing: ${quality_script}")

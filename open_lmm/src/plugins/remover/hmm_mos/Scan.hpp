@@ -8,10 +8,7 @@
 
 #include <Eigen/Core>
 #include <boost/circular_buffer.hpp>
-#include <fstream>
-#include <iomanip>
 #include <set>
-#include <string>
 #include <vector>
 
 #include "ankerl/unordered_dense.h"
@@ -72,15 +69,6 @@ class Scan {
         double getConvScoreOverWindow(Voxel &voxel);
         
         /**
-         * @brief Get the dynamic state of the voxel.
-         * 
-         * @param voxel     The voxel to get the dynamic state of.
-         * @return true     If the voxel is currently dynamic.
-         * @return false    If the voxel is current static.
-         */
-        bool getDynamic(Voxel &voxel);
-        
-        /**
          * @brief Get the high confidence dynamic state of the voxel.
          * 
          * @param voxel     The voxel to get the high confidence dynamic
@@ -89,36 +77,6 @@ class Scan {
          * @return false    If the voxel is not dyanmic with high confidence.
          */
         bool getDynamicHighConfidence(Voxel &voxel);
-
-        /**
-         * @brief Get the original point cloud indicies captured by the voxel.
-         * 
-         * @param voxel                 The voxel to get the indicies of.
-         * @return std::vector<int>     The list of point cloud indicies
-         *                              captured by the voxel.
-         */
-        std::vector<int> getIndicies(Voxel &voxel);
-        
-        /**
-         * @brief Read scan from the .bin file specified in fileName and
-         *        transform it by the current pose. 
-         * 
-         * @param fileName Scan file. Must be in the KITTI .bin format.
-         * @param pose     Pose of the sensor at the current scan, given as a
-         *                 6x1 vector, (roll, pitch, yaw, x, y, z) [rad,m].
-         */
-  void readScan(const std::string& fileName, const std::vector<double>& pose);
-
-  /**
-   * @brief Read scan from the .pcd file specified in fileName and
-   *        transform it by the current pose.
-   *
-   * @param fileName Scan file. Must be in the PCD format.
-   * @param pose     Pose of the sensor at the current scan, given as a
-   *                 6x1 vector, (roll, pitch, yaw, x, y, z) [rad,m].
-   */
-  void readScanPCDFile(const std::string& fileName,
-                       const std::vector<double>& pose);
 
   void readScanPCD(const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
                    const Eigen::Isometry3d& pose);
@@ -150,13 +108,6 @@ class Scan {
   void setConvScoreOverWindow(Voxel& voxel, double convScore);
         
         /**
-         * @brief Set the voxel to be in dynamic state.
-         * 
-         * @param voxel The voxel to be set as dynamic. 
-         */
-        void setDynamic(Voxel &voxel);
-
-        /**
          * @brief Set the voxel to be in a high confidence dynamic state.
          * 
          * @param voxel The voxel to be set as dynamic. 
@@ -171,21 +122,6 @@ class Scan {
          * 
          */
         void voxelizeScan();
-
-        /**
-         * @brief Write the dynamic indicies to the output file. 
-         * 
-         * @param outFile The file handler to write the result to.
-         * @param scanNum The current scan number.
-         */
-        void writeFile(std::ofstream &outFile, unsigned int scanNum);
-
-        /**
-         * @brief Write the .label file for the current scan. 
-         * 
-         * @param scanNum 
-         */
-  void writeLabel(const std::string& outputLabelFolder, unsigned int scanNum);
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr getGlobalStaticScan();
   pcl::PointCloud<pcl::PointXYZI>::Ptr getGlobalDynamicScan();
@@ -236,8 +172,6 @@ class Scan {
         // Configuration.
         int dim_;
         double voxelSize_, minRangeSqr_, maxRange_, maxRangeSqr_, minOtsu_;
-        std::string outputLabelFolder_;
-        
         // Original scan Cartesian points read from the file.
         Eigen::MatrixXd scanPts_;
 

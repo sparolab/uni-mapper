@@ -1,8 +1,8 @@
 #include "support/benchmark/fixture_manifest.hpp"
 #include "support/benchmark/fixture_generator.hpp"
+#include "support/benchmark/test_assert.hpp"
 
 #include <chrono>
-#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -13,12 +13,7 @@
 namespace {
 
 using Json = nlohmann::json;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
+using open_lmm::test::benchmark::Check;
 
 Json ValidSmallManifest() {
   const std::string digest = "sha256:" + std::string(64, 'c');

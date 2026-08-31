@@ -1,13 +1,17 @@
 if(OPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT AND
    OPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM)
+  add_executable(open_lmm_self_contained_e2e_suite
+    workflows/e2e/self_contained_e2e_tests.cpp)
+  target_link_libraries(open_lmm_self_contained_e2e_suite PRIVATE
+    open_lmm_map_server)
+  add_dependencies(open_lmm_self_contained_e2e_suite
+    create_scan_context create_free_dom)
+  openlmm_set_global_target_properties(open_lmm_self_contained_e2e_suite)
+
   function(openlmm_add_e2e_suite target selector layer module invariants)
-    add_executable(${target} workflows/e2e/self_contained_e2e_tests.cpp)
-    target_compile_definitions(${target} PRIVATE OPEN_LMM_E2E_SUITE=${selector})
-    target_link_libraries(${target} PRIVATE open_lmm_map_server)
-    add_dependencies(${target} create_scan_context create_free_dom)
-    openlmm_set_global_target_properties(${target})
     openlmm_add_test(
-      NAME ${target} TARGET ${target}
+      NAME ${target} TARGET open_lmm_self_contained_e2e_suite
+      COMMAND_ARGS --suite ${selector}
       LAYER ${layer} MODULE ${module} OWNER RuntimeWorkflow
       INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan
       TIMEOUT 120)

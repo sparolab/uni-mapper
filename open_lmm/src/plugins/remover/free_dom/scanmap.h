@@ -85,13 +85,6 @@ public:
     // inline const ScanVoxel* have_scan_voxel(const Index& voxel_idx) const;
     inline ScanVoxel* have_scan_voxel(const Index& voxel_idx);
 
-    inline const IndexBias& get_scan_map_min_idx() const {return scan_map.min_idx;}   // 返回scan map最小block idx
-    inline const IndexBias& get_scan_map_max_idx() const {return scan_map.max_idx;}   // 返回scan map最大block idx
-    inline const IndexBias& get_scan_map_idx_size() const {return scan_map.idx_size;} // 返回scan map在xyz的block数量
-    inline const PointBias& get_scan_map_min() const {return scan_map.min;}     // 返回scan map最小点
-    inline const PointBias& get_scan_map_max() const {return scan_map.max;}   // 返回scan map最大点
-    inline const PointBias& get_scan_map_size() const {return scan_map.size;}   // 返回scan map在xyz的长度
-
 private:
     void build_scan_blocks(const pcl::PointCloud<pcl::PointXYZI>& cloud, const Eigen::Isometry3d& transform);
     void build_scan_voxels();

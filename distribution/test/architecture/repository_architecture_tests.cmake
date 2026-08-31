@@ -294,10 +294,6 @@ assert_tree_excludes(
   "src/runtime/state"
   "runtime/execution/"
   "open_lmm_runtime_execution_objects")
-if(EXISTS "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stage_runner.hpp" OR
-   EXISTS "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stage_runner.cpp")
-  message(FATAL_ERROR "legacy stage_runner files must not remain")
-endif()
 file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/runtime_facade.cmake"
   runtime_facade_cmake)
 string(FIND "${runtime_facade_cmake}"
@@ -707,15 +703,6 @@ foreach(expected
   endif()
 endforeach()
 
-foreach(removed_internal_path
-    "server/session_state.hpp"
-    "server/session_manager.hpp"
-    "server/runtime_session_client.hpp")
-  if(EXISTS "${OPEN_LMM_SOURCE_DIR}/${removed_internal_path}")
-    message(FATAL_ERROR
-      "single-runtime migration must remove ${removed_internal_path}")
-  endif()
-endforeach()
 file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/state/runtime_state_store.hpp"
   runtime_state_store_header)
 foreach(expected "class RuntimeStateStore" "std::shared_ptr<const RuntimeState>")

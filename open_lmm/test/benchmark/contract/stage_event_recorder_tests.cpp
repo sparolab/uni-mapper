@@ -1,16 +1,12 @@
 #include "support/benchmark/stage_event_recorder.hpp"
+#include "support/benchmark/test_assert.hpp"
 
-#include <cstdlib>
 #include <iostream>
 #include <string>
 
 namespace {
 
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
+using open_lmm::test::benchmark::Check;
 
 open_lmm::ExecutionEvent Event(uint64_t sequence, open_lmm::EventType type,
                                uint64_t job, open_lmm::StageId stage) {

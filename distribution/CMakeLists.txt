@@ -20,24 +20,6 @@ add_test(NAME open_lmm_release_policy_tests
   COMMAND "${CMAKE_COMMAND}"
     "-DOPEN_LMM_REPOSITORY_ROOT=${OPEN_LMM_REPOSITORY_ROOT}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/test/release/release_policy_tests.cmake")
-add_test(NAME open_lmm_viser_python_unit_tests
-  COMMAND "${CMAKE_COMMAND}" -E env
-    "PYTHONPATH=${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser/package"
-    /usr/bin/python3 -m unittest discover
-    -s "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser/test"
-    -v)
-add_test(NAME open_lmm_iridescence_python_unit_tests
-  COMMAND "${CMAKE_COMMAND}" -E env
-    "PYTHONPATH=${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/package"
-    /usr/bin/python3 -m unittest discover
-    -s "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/test"
-    -v)
-add_test(NAME open_lmm_iridescence_xvfb_smoke_tests
-  COMMAND bash
-    "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/test/xvfb_smoke.sh"
-    "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/package")
-set_tests_properties(open_lmm_iridescence_xvfb_smoke_tests PROPERTIES
-  SKIP_RETURN_CODE 77 TIMEOUT 20)
 add_test(NAME open_lmm_replay_fetch_tests
   COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/replay/replay_fetch_tests.sh"
     "${OPEN_LMM_REPOSITORY_ROOT}/scripts/replay/fetch_replay_data.sh")
@@ -53,6 +35,18 @@ add_test(NAME open_lmm_developer_entrypoint_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/test/developer/gui_entrypoint_tests.sh"
     "${OPEN_LMM_REPOSITORY_ROOT}/Makefile"
     "${OPEN_LMM_REPOSITORY_ROOT}/scripts/dev/remove_install_manifest.sh")
+
+set_tests_properties(
+  open_lmm_repository_architecture_tests
+  open_lmm_application_boundary_inventory_tests
+  open_lmm_release_policy_tests
+  PROPERTIES LABELS "source-policy")
+set_tests_properties(
+  open_lmm_replay_fetch_tests
+  open_lmm_replay_subset_tests
+  open_lmm_critical_coverage_contract_tests
+  open_lmm_developer_entrypoint_tests
+  PROPERTIES LABELS "source-contract")
 
 foreach(required_build IN ITEMS CORE CLI GUI ROS)
   if(NOT DEFINED OPEN_LMM_DISTRIBUTION_${required_build}_BUILD_DIR)
@@ -74,7 +68,7 @@ if(_open_lmm_distribution_builds_complete)
       "-DOPEN_LMM_DISTRIBUTION_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/package-test"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/test/package/combined_distribution_tests.cmake")
   set_tests_properties(open_lmm_combined_distribution_tests PROPERTIES
-    RUN_SERIAL TRUE TIMEOUT 300)
+    LABELS "package-composition" RUN_SERIAL TRUE TIMEOUT 300)
 endif()
 
 if(OPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST)
@@ -89,5 +83,5 @@ if(OPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST)
       "-DOPEN_LMM_BENCHMARK_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/benchmark-contract-test"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/test/benchmark/orchestrator_tests.cmake")
   set_tests_properties(open_lmm_benchmark_orchestrator_tests PROPERTIES
-    RUN_SERIAL TRUE TIMEOUT 180)
+    LABELS "benchmark-contract" RUN_SERIAL TRUE TIMEOUT 180)
 endif()

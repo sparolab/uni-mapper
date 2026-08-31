@@ -4,7 +4,7 @@ import hashlib
 import itertools
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Mapping
 
 from ._canonical import digest_value, plain_value
 from ._config import validate_patch_targets

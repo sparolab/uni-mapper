@@ -92,10 +92,6 @@ void ArtifactRepository::CompleteStage(StageId stage) {
   std::lock_guard lock(mutex_);
   setTypes(ProducedArtifacts(stage), ArtifactState::kReady, StageName(stage));
 }
-void ArtifactRepository::FailStage(StageId stage, std::string detail) {
-  std::lock_guard lock(mutex_);
-  setTypes(ProducedArtifacts(stage), ArtifactState::kFailed, StageName(stage), detail);
-}
 
 void ArtifactRepository::CompleteOptimizeThrough(
     const AgentId& target_agent, const std::vector<AgentId>& ordered_agents) {
@@ -374,21 +370,6 @@ void ArtifactRepository::completeNodeLocked(
       item.detail = detail;
     }
   }
-}
-
-void ArtifactRepository::FailNode(NodeId node, std::optional<AgentId> agent,
-                                  std::string detail) {
-  std::lock_guard lock(mutex_);
-  if (ExecutionSpecFor(node).scope == ExecutionScope::kRuntime) {
-    auto affected_agents = executionAgentsLocked(node, agent);
-    if (!affected_agents) return;
-    completeNodeLocked(node, affected_agents.Value(), ArtifactState::kFailed,
-                       detail);
-    return;
-  }
-  if (!agent) return;
-  completeNodeLocked(node, std::vector<AgentId>{*agent},
-                     ArtifactState::kFailed, detail);
 }
 
 void ArtifactRepository::FailNode(

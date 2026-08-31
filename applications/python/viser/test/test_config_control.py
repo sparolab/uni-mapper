@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,20 +11,12 @@ from open_lmm_viser.config_control import (
     TransactionalConfigPanel,
     _discover_dataset_directories,
 )
+from viser_test_support import wait_until
 
 
 GLOBAL = "global"
 LOOP = "loop"
 REMOVER = "remover"
-
-
-def wait_until(predicate, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.005)
-    raise AssertionError("condition was not satisfied")
 
 
 class FakeHandle:

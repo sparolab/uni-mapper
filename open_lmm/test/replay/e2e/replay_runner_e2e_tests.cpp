@@ -1,8 +1,7 @@
 #include "../../tools/replay/replay_contract.hpp"
 #include "../../tools/replay/replay_sha256.hpp"
+#include "../../support/replay/test_support.hpp"
 
-#include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -13,7 +12,6 @@
 
 #include <nlohmann/json.hpp>
 #include <sys/wait.h>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 namespace replay = open_lmm::test::replay;
@@ -21,34 +19,8 @@ using Json = nlohmann::json;
 
 namespace {
 
-void Check(bool condition, const std::string& message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
-
-class TemporaryTree {
- public:
-  TemporaryTree() {
-    const auto suffix =
-        std::to_string(::getpid()) + "_" +
-        std::to_string(std::chrono::steady_clock::now()
-                           .time_since_epoch()
-                           .count());
-    path_ = fs::temp_directory_path() / ("open_lmm_replay_e2e_" + suffix);
-    fs::create_directories(path_);
-  }
-
-  ~TemporaryTree() {
-    std::error_code ignored;
-    fs::remove_all(path_, ignored);
-  }
-
-  const fs::path& Path() const { return path_; }
-
- private:
-  fs::path path_;
-};
+using replay::Check;
+using replay::TemporaryTree;
 
 void WriteJson(const fs::path& path, const Json& value) {
   fs::create_directories(path.parent_path());
@@ -329,7 +301,7 @@ bool HasSavedOutput(const fs::path& root) {
 }
 
 void TestRunnerEndToEnd() {
-  TemporaryTree fixture;
+  TemporaryTree fixture("open_lmm_replay_e2e_");
   const fs::path data = fixture.Path() / "data";
   const fs::path config = fixture.Path() / "config";
   const fs::path output = fixture.Path() / "output";

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <vector>
@@ -276,21 +277,23 @@ void TestResourceBudget() {
 
 }  // namespace
 
-#ifndef OPEN_LMM_RESOURCE_SUITE
-#define OPEN_LMM_RESOURCE_SUITE 0
-#endif
-
-int main() {
-#if OPEN_LMM_RESOURCE_SUITE == 1
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--suite") {
+    std::cerr << "usage: bounded_executor_tests --suite 1|2\n";
+    return 2;
+  }
+  const std::string_view suite(argv[2]);
+  if (suite == "1") {
   TestResourceBudget();
-#elif OPEN_LMM_RESOURCE_SUITE == 2
+  } else if (suite == "2") {
   TestConcurrencyBoundAndCompletionOrder();
   TestQueuedCancellationAndExceptionConversion();
   TestBackpressuredSubmissionCancellation();
   TestPartialConstructionJoinsEveryWorker();
-#else
-#error "OPEN_LMM_RESOURCE_SUITE must select a layer suite"
-#endif
+  } else {
+    std::cerr << "unknown resource suite: " << suite << '\n';
+    return 2;
+  }
   std::cout << "bounded executor and resource budget tests passed\n";
   return 0;
 }

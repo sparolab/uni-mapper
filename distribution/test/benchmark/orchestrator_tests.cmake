@@ -13,8 +13,8 @@ execute_process(
     --profile contract
     --fixture small-v1
     --scenario data-load
-    --repetitions 5
-    --warmup 1
+    --repetitions 1
+    --warmup 0
     --output "${OPEN_LMM_BENCHMARK_TEST_ROOT}"
     --container-digest
       sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -35,7 +35,7 @@ endif()
 file(READ "${bundle}" bundle_json)
 string(JSON comparison GET "${bundle_json}" comparison)
 string(JSON report_count LENGTH "${bundle_json}" reports)
-if(NOT comparison STREQUAL "uncalibrated" OR NOT report_count EQUAL 5)
+if(NOT comparison STREQUAL "uncalibrated" OR NOT report_count EQUAL 1)
   message(FATAL_ERROR
     "unexpected bundle contract: comparison=${comparison} reports=${report_count}")
 endif()

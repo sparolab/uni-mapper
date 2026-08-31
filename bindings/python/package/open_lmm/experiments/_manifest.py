@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -8,7 +7,6 @@ from open_lmm import Stage
 
 from ._canonical import (
     canonical_json_bytes,
-    digest_file,
     load_closed_json,
     require_keys,
     require_relative_path,

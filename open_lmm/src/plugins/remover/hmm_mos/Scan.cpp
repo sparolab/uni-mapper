@@ -1,7 +1,4 @@
 #include "Scan.hpp"
-#include <stdexcept>
-
-#include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 
 #include "params.hpp"
@@ -15,7 +12,6 @@ void Scan::initializeScanParams(const HmmMosParams& params) {
   minRangeSqr_ = params.min_range * params.min_range;
   maxRange_ = params.max_range;
   minOtsu_ = params.min_otsu;
-  outputLabelFolder_ = "";
     // Compute the dimension of the convolution kernel.
   dim_ = params.max_range / params.voxel_size * 2 + 1;
 
@@ -166,25 +162,10 @@ double Scan::getConvScoreOverWindow(Voxel &voxel)
     return scan_[voxel].convScoreOverWindow;
 }
 
-bool Scan::getDynamic(Voxel &voxel)
-{
-    return scan_[voxel].isDynamic;
-}
-
 bool Scan::getDynamicHighConfidence(Voxel &voxel)
 {
     return scan_[voxel].isDynamic && scan_[voxel].isDynamicHighConfidence;
 }
-
- std::vector<int> Scan::getIndicies(Voxel &voxel)
- {
-    std::vector<int> inds;
-    for (auto x : scan_[voxel].pointIndicies)
-    {
-        inds.push_back(x);
-    }
-    return inds;
- }
 
 void Scan::setConvScore(Voxel voxel, double convScore)
 {
@@ -196,66 +177,10 @@ void Scan::setConvScoreOverWindow(Voxel &voxel, double convScore)
     scan_[voxel].convScoreOverWindow = convScore;
 }
 
-void Scan::setDynamic(Voxel &voxel)
-{
-    scan_[voxel].isDynamic = true;
-}
-
 void Scan::setDynamicHighConfidence(Voxel &voxel)
 {
     scan_[voxel].isDynamic = true;
     scan_[voxel].isDynamicHighConfidence = true;
-}
-
- void Scan::readScan(const std::string &fileName, const std::vector<double> &pose)
-{
-    unsigned int numColumns = 4; // Files expected in the .bin KITTI format.
-    sensorPose << pose[0], pose[1], pose[2] , pose[3],
-                  pose[4], pose[5], pose[6] , pose[7],
-                  pose[8], pose[9], pose[10], pose[11],
-                  0      , 0      , 0       , 1;      
-    
-    // Read the .bin scan file.
-    std::ifstream file(fileName, std::ios::in | std::ios::binary);
-    
-    if (!file)
-    {
-        throw std::runtime_error("hmm-mos scan file could not be opened: " +
-                                 fileName);
-    }
-
-    float item;
-    std::vector<double> ptsFromFile;
-    
-    while (file.read((char*)&item, sizeof(item)))
-    {
-        ptsFromFile.push_back(item);
-    }
-
-    unsigned int numPts = ptsFromFile.size() / numColumns;
-    scanPts_.resize(numPts, numColumns);
-    scanPtsTf_.resize(numPts);
-
-    tbb::parallel_for(
-    tbb::blocked_range<int>(0,numPts),
-    [&](tbb::blocked_range<int> r)
-    {
-        for (unsigned int i = r.begin(); i < r.end(); i++)
-        {
-            int c = i*numColumns;
-
-            // Save the original point.
-            scanPts_.coeffRef(i,0) = ptsFromFile[c];
-            scanPts_.coeffRef(i,1) = ptsFromFile[c+1];
-            scanPts_.coeffRef(i,2) = ptsFromFile[c+2];
-            scanPts_.coeffRef(i,3) = 1;
-
-            // Transform the scan points by the sensor pose.
-            scanPtsTf_[i] = ((sensorPose*scanPts_.row(i).transpose()).topRows(3));
-        }
-    });
-
-    file.close();
 }
 
 void Scan::readScanPCD(const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud,
@@ -334,26 +259,6 @@ void Scan::voxelizeScan()
     removeVoxelsOutsideMaxRange(); 
 }
 
-void Scan::writeFile(std::ofstream &outFile, unsigned int scanNum)
-{
-    std::stringstream outConstructor;
-    std::string out;
-    outConstructor << scanNum+1;
-    for (auto &[vox, state] : scan_)
-    {
-        if (state.isDynamic && dynThreshold > minOtsu_)
-        {
-            for (auto pt : state.pointIndicies)
-            {
-                outConstructor << "," << pt;
-            }
-        }
-    }
-    outConstructor >> out;
-    outFile << out;
-    outFile << std::endl;
-}
-
 pcl::PointCloud<pcl::PointXYZI>::Ptr Scan::getGlobalStaticScan() {
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
       new pcl::PointCloud<pcl::PointXYZI>);
@@ -410,49 +315,4 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr Scan::getGlobalDynamicScan() {
   }
 
   return cloud;
-}
-
-
-void Scan::writeLabel(const std::string& outputLabelFolder,
-                      unsigned int scanNum) {
-    std::set<int> dynInds;
-    if (dynThreshold > minOtsu_)
-    {
-        for (auto &[vox,state] : scan_)
-        {
-            if (state.isDynamic)
-            {
-                for (auto pt : state.pointIndicies)
-                    dynInds.insert(pt);
-            }
-        }
-    }
-
-    // Write the dynamic indicies.
-    int ptCloudSize = 0;
-    ptCloudSize = scanPts_.rows();
-    Eigen::VectorXi outputLabels = Eigen::VectorXi::Ones(ptCloudSize);
-    outputLabels = outputLabels * 9; // Static.
-
-    // Overwrite the static labels.
-    for (auto x : dynInds)
-    {
-        outputLabels(x) = 251; // Dynamic.
-    }
-
-    std::stringstream fNameMaker;
-    fNameMaker << std::setw(6) << std::setfill('0') 
-               << std::to_string(scanNum) << ".label";
-
-    std::string fName;
-    fNameMaker >> fName;
-
-    std::ofstream outFile;
-    outFile.open(outputLabelFolder_ + fName, std::ios::binary | std::ios::out);
-    for (unsigned int j = 0; j < outputLabels.rows(); j++)
-    {
-        uint32_t label = uint32_t(outputLabels(j)) & 0xFFFF;
-        outFile.write(reinterpret_cast<const char*> (&label), sizeof(label));
-    }
-    outFile.close();
 }

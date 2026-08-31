@@ -1,13 +1,16 @@
+add_executable(open_lmm_safety_regression_suite
+  workflows/integration/safety_regression_tests.cpp)
+target_link_libraries(open_lmm_safety_regression_suite PRIVATE
+  open_lmm_map_server open_lmm_data_loader open_lmm_backend_optimizer
+  open_lmm_dynamic_remover)
+target_link_options(open_lmm_safety_regression_suite PRIVATE
+  LINKER:--no-as-needed)
+openlmm_set_global_target_properties(open_lmm_safety_regression_suite)
+
 function(openlmm_add_safety_owner_suite target suite module owner invariants)
-  add_executable(${target} workflows/integration/safety_regression_tests.cpp)
-  target_compile_definitions(${target} PRIVATE OPEN_LMM_SAFETY_SUITE=${suite})
-  target_link_libraries(${target} PRIVATE
-    open_lmm_map_server open_lmm_data_loader open_lmm_backend_optimizer
-    open_lmm_dynamic_remover)
-  target_link_options(${target} PRIVATE LINKER:--no-as-needed)
-  openlmm_set_global_target_properties(${target})
   openlmm_add_test(
-    NAME ${target} TARGET ${target}
+    NAME ${target} TARGET open_lmm_safety_regression_suite
+    COMMAND_ARGS --suite ${suite}
     LAYER L3 MODULE ${module} OWNER ${owner}
     INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan)
 endfunction()

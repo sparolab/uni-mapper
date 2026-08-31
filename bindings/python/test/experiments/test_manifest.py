@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 import unittest
-from pathlib import Path
 
 from experiment_test_fixture import ExperimentFixture, minimum_manifest
 from open_lmm.experiments import validate_manifest
-from open_lmm.experiments._canonical import canonical_json_bytes, digest_file, digest_value
+from open_lmm.experiments._canonical import canonical_json_bytes, digest_value
 from open_lmm.experiments._config import verify_dataset
 from open_lmm.experiments._manifest import load_plan, validate_manifest_document
 

@@ -26,9 +26,6 @@
 #define PI 3.1415926535
 #define ENOUGH_NUM 8000
 
-#define EMPTY 0
-#define MAP 1
-#define PC_CURR 2
 // COLORS:
 // 0 -> BLUE
 #define MAP_IS_HIGHER 0.5
@@ -51,11 +48,6 @@ struct Bin {
   bool is_occupied;
 
   pcl::PointCloud<PointT> points;
-};
-
-struct DynamicBinIdx {
-  int r;
-  int theta;
 };
 
 typedef vector<vector<Bin> > R_POD;

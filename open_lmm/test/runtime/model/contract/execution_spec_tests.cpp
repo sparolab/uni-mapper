@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <string_view>
 
 namespace open_lmm {
 namespace {
@@ -280,15 +281,16 @@ void TestDescriptorStoreRebuildReplacesRepeatedAgent() {
 }  // namespace
 }  // namespace open_lmm
 
-#ifndef OPEN_LMM_EXECUTION_SPEC_SUITE
-#define OPEN_LMM_EXECUTION_SPEC_SUITE 0
-#endif
-
-int main() {
-#if OPEN_LMM_EXECUTION_SPEC_SUITE == 1
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--suite") {
+    std::cerr << "usage: execution_spec_tests --suite 1|2\n";
+    return 2;
+  }
+  const std::string_view suite(argv[2]);
+  if (suite == "1") {
   open_lmm::TestExecutionSpecIsSingleOrderedSource();
   std::cout << "execution spec registry passed\n";
-#elif OPEN_LMM_EXECUTION_SPEC_SUITE == 2
+  } else if (suite == "2") {
   open_lmm::TestOrderedValidationUsesRawAndLoopPrefix();
   std::cout << "ordered artifact validation passed\n";
   open_lmm::TestPoseSaveUsesAllAndOnlyReadyAgents();
@@ -299,8 +301,9 @@ int main() {
   std::cout << "unordered per-agent invalidation passed\n";
   open_lmm::TestDescriptorStoreRebuildReplacesRepeatedAgent();
   std::cout << "artifact repository tests passed\n";
-#else
-#error "OPEN_LMM_EXECUTION_SPEC_SUITE must select an owner suite"
-#endif
+  } else {
+    std::cerr << "unknown execution spec suite: " << suite << '\n';
+    return 2;
+  }
   return 0;
 }

@@ -1,9 +1,9 @@
 #include "support/benchmark/benchmark_report.hpp"
 #include "support/benchmark/benchmark_bundle.hpp"
 #include "support/benchmark/benchmark_pair.hpp"
+#include "support/benchmark/test_assert.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -18,12 +18,7 @@ namespace {
 
 using Json = nlohmann::json;
 namespace fs = std::filesystem;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
+using open_lmm::test::benchmark::Check;
 
 Json Metrics(std::initializer_list<const char*> fields) {
   Json value = Json::object();

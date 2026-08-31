@@ -87,62 +87,23 @@ void FreeDom::run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
   map_.freespace_estimation(scan_, depth_image_, freespace_incremental);
   // timer_["raycast"].stop();
 
-  // map clearing
-  // timer_["map removal"].start();
   map_.map_removal(freespace_incremental);
-  // timer_["map removal"].stop();
 
-  // map integration
-  // timer_["staticspace integration"].start();
   map_.staticspace_integration(scan_, scan_num_);
-  // timer_["staticspace integration"].stop();
 
-  // timer_["remove map out of bound"].start();
   map_.remove_map_out_of_bound();
-  // timer_["remove map out of bound"].stop();
 
-  // TODO
-  // 集成地图后立即触发回调
-  // if (map_removal_callback) map_removal_callback(map);
-
-  // timer_["reset"].start();
   scan_.reset();
   map_.reset();
-  // timer_["reset"].stop();
-  // ++scan_num_; // 아래에 있음
-
-  // scan_.writeLabel("/home/gil/labels/", scan_num_);
-
-  // *static_map_ += *scan_.getGlobalStaticScan();
-  // if (params_.replace_intensity) {
-  //   *static_map_ += *scan_.getGlobalDynamicScan();
-  // }
-
-  // TODO(gil) : save label
 
   scan_num_++;
-  // return scan_.getGlobalStaticScan();
-  // return scan;
 }
 
 void FreeDom::setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr& raw_map) {
-  // // copy raw map to map_arranged
-  // map_arranged_.reset(new pcl::PointCloud<pcl::PointXYZI>());
-  // // TODO(gil) : use small gicp
-  // //  VoxelPointCloud(raw_map, map_arranged_, cfg_.map_voxel_size_);
-  // map_arranged_ =
-  //     small_gicp::voxelgrid_sampling_tbb(*raw_map, cfg_.map_voxel_size_);
-  // num_pcs_init_ = map_arranged_->points.size();
-  // if (cfg_.is_large_scale_) {
-  //   map_arranged_global_->reserve(NUM_PTS_LARGE_ENOUGH_FOR_MAP);
-  //   *map_arranged_global_ = *map_arranged_;
-  // }
-  // std::cout << "tmp" << std::endl;
+  (void)raw_map;
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr FreeDom::getStaticMap() {
-  // pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_voxel(new
-  // pcl::PointCloud<pcl::PointXYZI>);
   pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_point(
       new pcl::PointCloud<pcl::PointXYZI>);
 

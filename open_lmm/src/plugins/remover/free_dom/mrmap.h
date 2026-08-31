@@ -220,18 +220,6 @@ public:
     void staticspace_integration(const ScanMap& scan, unsigned int scan_seq);
     void remove_map_out_of_bound();
 
-    inline const LocalRaycastedFlag& get_raycasted_flags() const {return *local_raycast_flag;}
-    inline const LocalRaycastBlockGrid& get_raycast_blocks() const {return *local_raycast_blocks;}
-    inline const LocalOccupiedBlockGrid& get_occupied_blocks() const {return *local_occupied_blocks;}
-
-    inline const IndexBias& get_raycast_map_min_idx() const {return raycast_map.min_idx;}   // 返回scan map最小block idx
-    inline const IndexBias& get_raycast_map_max_idx() const {return raycast_map.max_idx;}   // 返回scan map最大block idx
-    inline const IndexBias& get_raycast_map_idx_size() const {return raycast_map.idx_size;} // 返回scan map在xyz的block数量
-    inline const PointBias& get_raycast_map_min() const {return raycast_map.min;}     // 返回scan map最小点
-    inline const PointBias& get_raycast_map_max() const {return raycast_map.max;}   // 返回scan map最大点
-    inline const PointBias& get_raycast_map_size() const {return raycast_map.size;}   // 返回scan map在xyz的长度
-
-    inline const std::unordered_map<Index,FreeBlock,IndexHash>& get_free_blocks() const {return free_space;}
     inline const std::unordered_map<Index,StaticBlock,IndexHash>& get_static_blocks() const {return static_space;}
 
 private:

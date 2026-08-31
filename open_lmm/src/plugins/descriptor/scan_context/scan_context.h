@@ -93,16 +93,6 @@ class ScanContext : public IDescriptorKdtree {
   std::pair<double, Eigen::Isometry3d> distance(
       const std::shared_ptr<IDescriptorKdtree>& other) const override;
 
-  /** @brief Computes the distance between the ring key of this descriptor and
-   * the ring key of the other descriptor. Distance is defined as the euclidean
-   * distance between the two ring key vectors.
-   * @param other: The other ScanContext descriptor with which to compare ring
-   * key distances
-   * @returns The ring key distance between two descriptors
-   * @note By definition ring key distance is symmetric
-   */
-  double ringKeyDistance(const ScanContext& other) const;
-
   /** Helpers **/
  private:
   /** @brief Computes the distance between this ScanContext "rotated" by the

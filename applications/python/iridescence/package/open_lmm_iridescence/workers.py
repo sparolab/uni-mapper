@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from .conversion import RenderCandidate, render_candidate
+from .conversion import render_candidate
 from .state import PresentationToken
 
 

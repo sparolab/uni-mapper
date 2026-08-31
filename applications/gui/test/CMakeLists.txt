@@ -134,28 +134,19 @@ if(NOT DEFINED OPEN_LMM_GUI_REPOSITORY_ROOT OR
   get_filename_component(OPEN_LMM_GUI_REPOSITORY_ROOT
     "${PROJECT_SOURCE_DIR}/../.." ABSOLUTE)
 endif()
-function(openlmm_add_gui_package_test name owner)
-  add_test(NAME ${name}
-    COMMAND ${CMAKE_COMMAND}
-      -DOPEN_LMM_GUI_BUILD_DIR=${PROJECT_BINARY_DIR}
-      -DOPEN_LMM_GUI_SOURCE_DIR=${PROJECT_SOURCE_DIR}
-      -DOPEN_LMM_GUI_REPOSITORY_ROOT=${OPEN_LMM_GUI_REPOSITORY_ROOT}
-      -DOPEN_LMM_GUI_CORE_PREFIX=${open_lmm_gui_core_prefix}
-      -DOPEN_LMM_GUI_PACKAGE_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/${name}
-      -DOPEN_LMM_GUI_C_COMPILER=${CMAKE_C_COMPILER}
-      -DOPEN_LMM_GUI_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-      "-DOPEN_LMM_GUI_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/package/gui_package_tests.cmake)
-  set_tests_properties(${name} PROPERTIES
-    LABELS
-      "layer:L5;module:applications.gui.package;owner:${owner};invariant:INV-15;invariant:INV-17;lane:pr"
-    RESOURCE_LOCK open_lmm_gui_package_install_manifest
-    TIMEOUT 180)
-endfunction()
-
-openlmm_add_gui_package_test(
-  open_lmm_gui_direct_package_consumer_tests OpenLmmGui)
-openlmm_add_gui_package_test(
-  open_lmm_gui_compat_forwarding_tests Compat-A)
-openlmm_add_gui_package_test(
-  open_lmm_gui_install_ownership_tests GuiInstallManifest)
+add_test(NAME open_lmm_gui_package_tests
+  COMMAND ${CMAKE_COMMAND}
+    -DOPEN_LMM_GUI_BUILD_DIR=${PROJECT_BINARY_DIR}
+    -DOPEN_LMM_GUI_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+    -DOPEN_LMM_GUI_REPOSITORY_ROOT=${OPEN_LMM_GUI_REPOSITORY_ROOT}
+    -DOPEN_LMM_GUI_CORE_PREFIX=${open_lmm_gui_core_prefix}
+    -DOPEN_LMM_GUI_PACKAGE_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/package-test
+    -DOPEN_LMM_GUI_C_COMPILER=${CMAKE_C_COMPILER}
+    -DOPEN_LMM_GUI_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+    "-DOPEN_LMM_GUI_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/package/gui_package_tests.cmake)
+set_tests_properties(open_lmm_gui_package_tests PROPERTIES
+  LABELS
+    "layer:L5;module:applications.gui.package;owner:GuiPackage;invariant:INV-15;invariant:INV-17;lane:pr"
+  RESOURCE_LOCK open_lmm_gui_package_install_manifest
+  TIMEOUT 180)

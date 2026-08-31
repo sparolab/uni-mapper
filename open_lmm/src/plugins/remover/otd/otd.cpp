@@ -18,29 +18,16 @@ void OTD::initialize() {
 pcl::PointCloud<pcl::PointXYZI>::Ptr OTD::run(
     pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
     Eigen::Isometry3d& optimized_pose) {
-  // PointCloudType::Ptr scan(new PointCloudType);
   ground_scan_->clear();
   nonground_scan_->clear();
 
   p_grdseg_->Run(scan, ground_scan_, nonground_scan_, optimized_pose.matrix());
   p_otd_->Run(ground_scan_, nonground_scan_, scan_num_);
 
-  // scan_.writeLabel("/home/gil/labels/", scan_num_);
-
-  // std::cout << "raw size : " << scan->size() << std::endl;
-  // std::cout << "grund size : " << ground_ptr->size() << std::endl;
-  // std::cout << "ngd size : " << nonground_ptr->size() << std::endl;
-  // std::cout << "----" << std::endl;
-
-  // TODO(gil) : save label
-
   scan_num_++;
-  // TODO 임시
   return scan;
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr OTD::getStaticMap() {
-  // std::cout << "size : " << p_otd_->GetMap(params_.replace_intensity)->size()
-  //           << std::endl;
   return p_otd_->GetMap(params_.replace_intensity);
 }

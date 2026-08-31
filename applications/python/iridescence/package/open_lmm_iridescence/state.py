@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from enum import Enum
 import threading
 from typing import Any
 
@@ -68,12 +67,6 @@ class EventBuffer:
     def diagnostics(self) -> tuple[int, int, bool]:
         with self._lock:
             return len(self._events), self._evictions, self._resync_required
-
-
-class PresentationPhase(Enum):
-    VISIBLE = "visible"
-    PENDING = "pending"
-    READY = "ready"
 
 
 @dataclass(frozen=True, slots=True)

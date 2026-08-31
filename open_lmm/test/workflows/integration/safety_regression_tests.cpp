@@ -8,6 +8,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -1324,42 +1325,44 @@ void TestRemoverStreamingProgressBoundaries() {
 
 }  // namespace
 
-#ifndef OPEN_LMM_SAFETY_SUITE
-#define OPEN_LMM_SAFETY_SUITE 0
-#endif
-
-int main() {
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--suite") {
+    std::cerr << "usage: safety_regression_tests --suite 1..7\n";
+    return 2;
+  }
+  const std::string_view suite(argv[2]);
   open_lmm::InitializeLogging();
-#if OPEN_LMM_SAFETY_SUITE == 1
-  TestFileSetCommitRollsBackPartialReplacement();
-  TestFileSetCleanupFailureRequiresRecovery();
-  TestFileSetRejectsAliasingAndDuplicates();
-#elif OPEN_LMM_SAFETY_SUITE == 2
-  TestAgentContext();
-  TestRigidTransformInverse();
-  TestGlobalAlignmentLoopConvention();
-  TestAlignedMapRebuildUsesLatestTransform();
-  TestPointCloudInputValidation();
-  TestIncrementalVoxelAccumulatorMatchesBatchDownsampling();
-#elif OPEN_LMM_SAFETY_SUITE == 3
-  TestInputValidation();
-  TestDataLoaderSinglePassProgress();
-#elif OPEN_LMM_SAFETY_SUITE == 4
-  TestOptimizerLifecycle();
-  TestAlgorithmInvariants();
-#elif OPEN_LMM_SAFETY_SUITE == 5
-  TestRemoverFrameIdentityAndDownsample();
-  TestOfflineStreamingFrameIdentity();
-  TestRemoverStreamingProgressBoundaries();
-#elif OPEN_LMM_SAFETY_SUITE == 6
-  TestConfigFailurePropagation();
-  TestConfigContractValidation();
-#elif OPEN_LMM_SAFETY_SUITE == 7
-  TestPipelineControlFlow();
-  TestPluginFailurePropagation();
-#else
-#error "OPEN_LMM_SAFETY_SUITE must select an owner suite"
-#endif
+  if (suite == "1") {
+    TestFileSetCommitRollsBackPartialReplacement();
+    TestFileSetCleanupFailureRequiresRecovery();
+    TestFileSetRejectsAliasingAndDuplicates();
+  } else if (suite == "2") {
+    TestAgentContext();
+    TestRigidTransformInverse();
+    TestGlobalAlignmentLoopConvention();
+    TestAlignedMapRebuildUsesLatestTransform();
+    TestPointCloudInputValidation();
+    TestIncrementalVoxelAccumulatorMatchesBatchDownsampling();
+  } else if (suite == "3") {
+    TestInputValidation();
+    TestDataLoaderSinglePassProgress();
+  } else if (suite == "4") {
+    TestOptimizerLifecycle();
+    TestAlgorithmInvariants();
+  } else if (suite == "5") {
+    TestRemoverFrameIdentityAndDownsample();
+    TestOfflineStreamingFrameIdentity();
+    TestRemoverStreamingProgressBoundaries();
+  } else if (suite == "6") {
+    TestConfigFailurePropagation();
+    TestConfigContractValidation();
+  } else if (suite == "7") {
+    TestPipelineControlFlow();
+    TestPluginFailurePropagation();
+  } else {
+    std::cerr << "unknown safety regression suite: " << suite << '\n';
+    return 2;
+  }
   if (failures != 0) {
     std::cerr << failures << " safety regression test(s) failed\n";
     return 1;

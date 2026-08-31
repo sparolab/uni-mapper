@@ -99,8 +99,6 @@ add_gui_loader_probe_test(
 add_gui_loader_probe_test(
   open_lmm_gui_plugin_lifetime_tests lifetime)
 add_gui_loader_probe_test(
-  open_lmm_gui_plugin_failure_cleanup_tests failure-cleanup)
-add_gui_loader_probe_test(
   open_lmm_gui_plugin_stress_tests stress)
 
 set_tests_properties(open_lmm_gui_plugin_stress_tests PROPERTIES

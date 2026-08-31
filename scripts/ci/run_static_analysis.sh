@@ -106,6 +106,7 @@ else
     "-DCMAKE_CXX_FLAGS=$cxx_compatibility_flags" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+    -DBUILD_TESTING=OFF \
     -DUSE_CCACHE=OFF
   build_attempt=1
   until cmake --build "$build_root" --parallel 2; do

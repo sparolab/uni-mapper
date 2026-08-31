@@ -1,15 +1,15 @@
+add_executable(open_lmm_visualization_projector_suite
+  visualization/fault_concurrency/visualization_projector_tests.cpp)
+target_link_libraries(open_lmm_visualization_projector_suite PRIVATE
+  open_lmm_visualization_projection_objects open_lmm_common
+  open_lmm_algorithm_config open_lmm_utils open_lmm_profiling
+  Eigen3::Eigen PCL::PCL gtsam nlohmann_json::nlohmann_json)
+openlmm_set_global_target_properties(open_lmm_visualization_projector_suite)
+
 function(openlmm_add_visualization_suite target selector layer invariants)
-  add_executable(${target}
-    visualization/fault_concurrency/visualization_projector_tests.cpp)
-  target_compile_definitions(${target} PRIVATE
-    OPEN_LMM_VISUALIZATION_SUITE=${selector})
-  target_link_libraries(${target} PRIVATE
-    open_lmm_visualization_projection_objects open_lmm_common
-    open_lmm_algorithm_config open_lmm_utils open_lmm_profiling
-    Eigen3::Eigen PCL::PCL gtsam nlohmann_json::nlohmann_json)
-  openlmm_set_global_target_properties(${target})
   openlmm_add_test(
-    NAME ${target} TARGET ${target}
+    NAME ${target} TARGET open_lmm_visualization_projector_suite
+    COMMAND_ARGS --suite ${selector}
     LAYER ${layer} MODULE visualization.projection OWNER VisualizationProjector
     INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan)
 endfunction()

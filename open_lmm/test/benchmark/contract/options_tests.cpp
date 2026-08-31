@@ -1,7 +1,7 @@
 #include "support/benchmark/benchmark_options.hpp"
+#include "support/benchmark/test_assert.hpp"
 
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -12,11 +12,7 @@
 
 namespace {
 
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
+using open_lmm::test::benchmark::Check;
 
 open_lmm::test::benchmark::RunnerOptions Parse(
     std::vector<std::string> arguments) {

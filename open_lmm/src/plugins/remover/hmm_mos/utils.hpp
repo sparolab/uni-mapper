@@ -1,52 +1,11 @@
 #pragma once
 
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <string>
 #include <vector>
 
 #include "eigen3/Eigen/Dense"
 
 namespace utils
 {
-    /**
-     * @brief Read strings and convert to numbers to correctly order the input
-     *        files. No two files should have the same name.
-     * 
-     * @param a         The first string to compare.
-     * @param b         The second string to compare.
-     * @return true     If file a's name is smaller than file b's name.
-     * @return false    If file b's name is smaller than file a's name.
-     */
-    bool compareStrings(std::string a, std::string b);
-
-    /**
-     * @brief Construct a homogeneous (4x4) matrix.
-     * 
-     * @param roll              Roll angle in radians.
-     * @param pitch             Pitch angle in radians.
-     * @param yaw               Yaw angle in radians.
-     * @param x                 X position in metres.
-     * @param y                 Y position in metres.
-     * @param z                 Z position in metres.
-     * @return Eigen::Matrix4d  The homogeneous (4x4) matrix constructed. 
-     */
-    Eigen::Matrix4d homogeneous(double roll, double pitch, double yaw, double x, double y, double z);
-
-    /**
-     * @brief Read pose estimates in the sensor frame. The file must be in the
-     *        KITTI format. 
-     * 
-     * @param fileName                             Name of the pose estimates file.
-     * @return std::vector<std::vector<double> >   The pose estimates read from the
-     *                                             file stored in a (n by 12) 
-     *                                             matrix where there an n sensor
-     *                                             poses.
-     */
-    std::vector<std::vector<double> > readPoseEstimates(const std::string &fileName);
-
     /**
      * @brief Find the median of the elements.
      * 

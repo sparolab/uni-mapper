@@ -52,26 +52,6 @@ Result<AlignmentConfigValues> LoadAlignmentConfig(
        alignment.at("inter_loop_keyframe_spacing_m").get<double>()});
 }
 
-Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
-                                 const AlignmentConfigValues& values) {
-  auto candidate = BuildAlignmentConfigCandidate(path, values);
-  if (!candidate) return Result<void>::Failure(candidate.GetError());
-  const auto temporary = path.string() + ".tmp";
-  {
-    std::ofstream output(temporary, std::ios::trunc);
-    if (!output) return Result<void>::Failure(Error::IoError(temporary));
-    output << candidate.Value() << '\n';
-    if (!output) return Result<void>::Failure(Error::IoError(temporary));
-  }
-  std::error_code error;
-  std::filesystem::rename(temporary, path, error);
-  if (error) {
-    std::filesystem::remove(temporary);
-    return Result<void>::Failure(Error::IoError(error.message()));
-  }
-  return Result<void>::Ok();
-}
-
 Result<std::string> BuildAlignmentConfigCandidate(
     const std::filesystem::path& path,
     const AlignmentConfigValues& values) {

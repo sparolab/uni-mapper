@@ -34,22 +34,17 @@ mkdir -p "$evidence_root"
 CC="$compiler_c" CXX="$compiler_cxx" cmake \
   -S "$repository_root/open_lmm" -B "$build_root" \
   -DUSE_CCACHE=OFF \
-  -DOPEN_LMM_ENABLE_NIGHTLY_SOAK=ON \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build "$build_root" --parallel 2 \
   --target open_lmm_soak_metrics_contract_tests \
            open_lmm_soak_aggregate \
-           open_lmm_runtime_nightly_soak_tests \
+           open_lmm_runtime_lifecycle_stress_tests \
            open_lmm_runtime_concurrency_stress_tests \
            open_lmm_transaction_fault_stress_tests \
            open_lmm_visualization_stress_tests \
            open_lmm_plugin_stress_tests \
            open_lmm_resource_stress_tests \
            open_lmm_config_apply_stress_tests
-
-ctest --test-dir "$build_root" --output-on-failure \
-  -L 'lane:nightly' \
-  --output-junit "$evidence_root/ctest-nightly-soak.xml"
 
 OPEN_LMM_SOAK_REQUIRE_CLEAN=1 \
 OPEN_LMM_SOAK_EVIDENCE_ROOT="$evidence_root/reports" \

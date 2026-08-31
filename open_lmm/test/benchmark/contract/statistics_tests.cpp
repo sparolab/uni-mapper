@@ -1,16 +1,12 @@
 #include "support/benchmark/benchmark_statistics.hpp"
+#include "support/benchmark/test_assert.hpp"
 
-#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 
 namespace {
 
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
+using open_lmm::test::benchmark::Check;
 
 }  // namespace
 

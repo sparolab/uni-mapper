@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 #include <vector>
 #include <thread>
@@ -1569,12 +1570,13 @@ void TestControllerCoordinatorFatalProposerIntegration() {
 
 }  // namespace
 
-#ifndef OPEN_LMM_PIPELINE_CONTROLLER_SUITE
-#define OPEN_LMM_PIPELINE_CONTROLLER_SUITE 0
-#endif
-
-int main() {
-#if OPEN_LMM_PIPELINE_CONTROLLER_SUITE == 1
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--suite") {
+    std::cerr << "usage: pipeline_controller_tests --suite 1..3\n";
+    return 2;
+  }
+  const std::string_view suite(argv[2]);
+  if (suite == "1") {
   TestRunAllAndArtifacts();
   TestAlgorithmProgressEventBridge();
   TestAlignmentExclusionIsPublishedAfterCommit();
@@ -1585,7 +1587,7 @@ int main() {
   TestConfigApplyInvalidation();
   TestManagedSessionMetadataIsAuthoritative();
   TestSessionRunnerReplacement();
-#elif OPEN_LMM_PIPELINE_CONTROLLER_SUITE == 2
+  } else if (suite == "2") {
   TestMalformedExecutionReceiptsCannotPublishSuccess();
   TestRecoveryReceiptMustMatchQueryAuthority();
   TestRunAllStopsAfterCommittedRecovery();
@@ -1606,7 +1608,7 @@ int main() {
   TestTerminalCommitPrecedesWaitAndReentrantCallback();
   TestTerminalCallbackRejectsWorkerLifecycleCommands();
   TestThreadLaunchFailureDoesNotPublishPartialJob();
-#elif OPEN_LMM_PIPELINE_CONTROLLER_SUITE == 3
+  } else if (suite == "3") {
   TestAlignmentFeedbackAcceptAndStaleResponse();
   TestAlignmentFeedbackCanRespondFromRequestCallback();
   TestAlignmentFeedbackCancellation();
@@ -1614,9 +1616,10 @@ int main() {
   TestControllerKeepsWaitingAfterRecoverableAttempt();
   TestControllerCoordinatorTimeoutIntegration();
   TestControllerCoordinatorFatalProposerIntegration();
-#else
-#error "OPEN_LMM_PIPELINE_CONTROLLER_SUITE must select a layer suite"
-#endif
+  } else {
+    std::cerr << "unknown pipeline controller suite: " << suite << '\n';
+    return 2;
+  }
   std::cout << "pipeline controller tests passed\n";
   return 0;
 }

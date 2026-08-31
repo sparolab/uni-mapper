@@ -38,8 +38,6 @@ void ClearDatasetSelection(std::vector<std::string>& selected) noexcept;
     const AlignmentConfigValues& values);
 [[nodiscard]] Result<std::string> LoadDynamicRemoverConfigCandidate(
     const std::filesystem::path& path);
-Result<void> SaveAlignmentConfig(const std::filesystem::path& path,
-                                 const AlignmentConfigValues& values);
 
 class ConfigEditorDocument {
  public:

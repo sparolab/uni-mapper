@@ -9,15 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from open_lmm_viser import ViserAdapter
-
-
-def wait_until(predicate, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.005)
-    raise AssertionError("condition was not satisfied")
+from viser_test_support import FakeSubscription, wait_until
 
 
 def visual(agent: str = "agent1", revision: int = 1, *, valid: bool = True):
@@ -33,14 +25,6 @@ def visual(agent: str = "agent1", revision: int = 1, *, valid: bool = True):
         points=points,
         poses=poses,
     )
-
-
-class FakeSubscription:
-    def __init__(self) -> None:
-        self.closed = False
-
-    def close(self) -> None:
-        self.closed = True
 
 
 class FakeRuntime:

@@ -10,22 +10,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 if(BUILD_WITH_MARCH_NATIVE)
-  add_definitions(-march=native)
   add_definitions(-DBUILD_WITH_MARCH_NATIVE)
   set(CMAKE_C_FLAGS "-march=native ${CMAKE_C_FLAGS}")
   set(CMAKE_CXX_FLAGS "-march=native ${CMAKE_CXX_FLAGS}")
-endif()
-
-### ROS version check ###
-if(DEFINED ENV{ROS_VERSION})
-  if($ENV{ROS_VERSION} EQUAL 2)
-    message(STATUS "Current ROS version : ROS2")
-    set(ros_version "ros2")
-  else()
-    # ROS1 : not supported
-    # message(STATUS "Current ROS version : ROS1")
-    # set(ros_version "ros1")
-  endif()
 endif()
 
 ### ROS2 ###
@@ -43,8 +30,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 ### open_lmm_ros ###
 ament_auto_add_library(open_lmm_ros_component SHARED
-  ${ros_version}/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp
-  ${ros_version}/open_lmm_ros/runtime_adapter/ros_visualization_bridge.cpp
+  ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp
+  ros2/open_lmm_ros/runtime_adapter/ros_visualization_bridge.cpp
 )
 set_target_properties(open_lmm_ros_component PROPERTIES
   OUTPUT_NAME open_lmm_ros
@@ -60,7 +47,7 @@ target_link_libraries(open_lmm_ros_component "${open_lmm_ros_typesupport_target}
 rclcpp_components_register_nodes(open_lmm_ros_component "open_lmm::OpenLMMROS")
 
 ament_auto_add_library(open_lmm_rviz_control_panel SHARED
-  ${ros_version}/open_lmm_ros/rviz_control/open_lmm_control_panel.cpp
+  ros2/open_lmm_ros/rviz_control/open_lmm_control_panel.cpp
 )
 target_link_libraries(open_lmm_rviz_control_panel
   Qt5::Widgets
@@ -136,7 +123,7 @@ endif()
 
 ### open_lmm_rosnode ###
 ament_auto_add_executable(open_lmm_rosnode
-  ${ros_version}/open_lmm_ros/runtime_adapter/open_lmm_rosnode.cpp
+  ros2/open_lmm_ros/runtime_adapter/open_lmm_rosnode.cpp
 )
 target_link_libraries(open_lmm_rosnode
   open_lmm_ros_component
@@ -144,8 +131,8 @@ target_link_libraries(open_lmm_rosnode
 
 # Install launch files.
 install(DIRECTORY
-  ${ros_version}/launch
-  ${ros_version}/rviz
+  ros2/launch
+  ros2/rviz
   DESTINATION share/${PROJECT_NAME}/
 )
 install(FILES README.md DESTINATION share/${PROJECT_NAME})

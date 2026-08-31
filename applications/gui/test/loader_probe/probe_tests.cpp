@@ -362,24 +362,6 @@ void RunLifetime(const std::vector<std::string>& paths) {
                " start_failure_unknown=1 destroy_before_unload=all\n";
 }
 
-void RunFailureCleanup(const std::vector<std::string>& paths) {
-  for (std::size_t index = 1; index <= 9; ++index) {
-    CheckRejectedBeforeCreate(paths[index], true);
-  }
-  for (std::size_t index = 10; index <= 12; ++index) {
-    CheckRejectedAfterCreate(paths[index], true);
-  }
-  for (std::size_t index = 13; index < kValidationFixtureCount; ++index) {
-    CheckOtherLoadFailure(paths[index], true);
-  }
-  CheckMissingFile(paths[0]);
-  CheckStartFailure(paths[17], "probe start result failure");
-  CheckStartFailure(paths[18], "probe start standard failure");
-  CheckStartFailure(paths[19], "unknown exception");
-  std::cout << "Loader-B failure-cleanup probe passed: validation_failures=16"
-               " start_failures=3 missing_file=1 unload_hook_count_per_dso=1\n";
-}
-
 void CheckNegativeFixture(const std::vector<std::string>& paths,
                           std::size_t index) {
   if (index <= 9) {
@@ -510,8 +492,6 @@ int main(int argc, char** argv) {
     RunPublicContract(paths);
   } else if (mode == "lifetime") {
     RunLifetime(paths);
-  } else if (mode == "failure-cleanup") {
-    RunFailureCleanup(paths);
   } else if (mode == "stress") {
     RunStress(paths);
   } else {

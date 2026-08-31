@@ -11,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -244,30 +245,6 @@ fs::path FindNamedFile(const fs::path& root, const std::string& name) {
   return {};
 }
 
-std::vector<double> ReadNumbers(const fs::path& path) {
-  std::ifstream input(path);
-  Require(static_cast<bool>(input), "open numeric artifact " + path.string());
-  std::vector<double> values;
-  std::string line;
-  while (std::getline(input, line)) {
-    std::replace(line.begin(), line.end(), ',', ' ');
-    std::istringstream fields(line);
-    double value = 0.0;
-    while (fields >> value) values.push_back(value);
-    Require(fields.eof(), "parse numeric artifact " + path.string());
-  }
-  return values;
-}
-
-void RequireNear(const std::vector<double>& lhs, const std::vector<double>& rhs,
-                 double tolerance, const std::string& message) {
-  Require(lhs.size() == rhs.size(), message + " size");
-  for (std::size_t index = 0; index < lhs.size(); ++index) {
-    Require(std::abs(lhs[index] - rhs[index]) <= tolerance,
-            message + " value " + std::to_string(index));
-  }
-}
-
 open_lmm::BootstrapConfigSnapshot Bootstrap(const fs::path& directory) {
   auto loaded = open_lmm::LoadBootstrapConfig(directory);
   Require(loaded.IsOk(), "load bootstrap configuration " + directory.string());
@@ -276,11 +253,16 @@ open_lmm::BootstrapConfigSnapshot Bootstrap(const fs::path& directory) {
 
 }  // namespace
 
-#ifndef OPEN_LMM_E2E_SUITE
-#define OPEN_LMM_E2E_SUITE 0
-#endif
-
-int main() {
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--suite") {
+    std::cerr << "usage: self_contained_e2e_tests --suite 1..4\n";
+    return 2;
+  }
+  const std::string_view suite(argv[2]);
+  if (suite != "1" && suite != "2" && suite != "3" && suite != "4") {
+    std::cerr << "unknown self-contained E2E suite: " << suite << '\n';
+    return 2;
+  }
   TemporaryTree fixture;
   const fs::path data = fixture.path() / "data";
   const fs::path config = fixture.path() / "config";
@@ -290,8 +272,7 @@ int main() {
   WriteIgnoredSparseFile(data / "agent1/ignored.payload", 128ULL << 20);
   WriteConfiguration(config, data, output);
 
-#if OPEN_LMM_E2E_SUITE == 1
-  {
+  if (suite == "1") {
     open_lmm::RuntimeService production_runtime(1);
     auto opened = production_runtime.Open({config, "default-production-port"});
     Require(opened.IsOk(),
@@ -299,91 +280,90 @@ int main() {
     Require(production_runtime.Close().IsOk(),
             "default RuntimeService production port closes cleanly");
   }
-#endif
 
-#if OPEN_LMM_E2E_SUITE == 3
-  const fs::path presentation_config =
+  if (suite == "3") {
+    const fs::path presentation_config =
       fixture.path() / "presentation-fault-config";
-  const fs::path presentation_output =
+    const fs::path presentation_output =
       fixture.path() / "presentation-fault-output";
-  WriteConfiguration(presentation_config, data, presentation_output);
-  bool fail_next_presentation = true;
-  open_lmm::MapServer presentation_server(
+    WriteConfiguration(presentation_config, data, presentation_output);
+    bool fail_next_presentation = true;
+    open_lmm::MapServer presentation_server(
       Bootstrap(presentation_config), std::nullopt, {},
       [&fail_next_presentation] {
         if (!fail_next_presentation) return;
         fail_next_presentation = false;
         throw std::runtime_error("injected presentation failure");
       });
-  const auto presentation_base = presentation_server.Snapshot().revision;
-  auto presentation_load = Execute(
+    const auto presentation_base = presentation_server.Snapshot().revision;
+    auto presentation_load = Execute(
       presentation_server,
       open_lmm::ExecutionCommand::Stage(open_lmm::StageId::kDataLoad));
-  Require(presentation_load &&
+    Require(presentation_load &&
               presentation_load.Value().base_revision == presentation_base &&
               presentation_load.Value().committed_revision ==
                   presentation_base + 1 &&
               presentation_server.Snapshot().revision ==
                   presentation_load.Value().committed_revision,
           "post-commit presentation failure retains the valid receipt");
-  Require(!presentation_server.Visualization(Id("agent1")),
+    Require(!presentation_server.Visualization(Id("agent1")),
           "failed committed presentation rolls back its candidate preview");
-  auto presentation_alignment = Execute(
+    auto presentation_alignment = Execute(
       presentation_server,
       open_lmm::ExecutionCommand::Stage(open_lmm::StageId::kAlignment));
-  Require(presentation_alignment &&
+    Require(presentation_alignment &&
               presentation_server.Snapshot().revision ==
                   presentation_alignment.Value().committed_revision &&
               presentation_server.Visualization(Id("agent1")),
           "a later presentation recovers after the committed fault");
 
-  const fs::path recovery_config = fixture.path() / "recovery-config";
-  const fs::path recovery_output = fixture.path() / "recovery-output";
-  WriteConfiguration(recovery_config, data, recovery_output);
-  fs::create_directories(recovery_output / "agent_manifest.json/retained");
-  std::ofstream(recovery_output / "agent_manifest.json/retained/entry")
+    const fs::path recovery_config = fixture.path() / "recovery-config";
+    const fs::path recovery_output = fixture.path() / "recovery-output";
+    WriteConfiguration(recovery_config, data, recovery_output);
+    fs::create_directories(recovery_output / "agent_manifest.json/retained");
+    std::ofstream(recovery_output / "agent_manifest.json/retained/entry")
       << "force committed manifest cleanup fault\n";
-  auto recovery_bootstrap = open_lmm::LoadBootstrapConfig(recovery_config);
-  Require(recovery_bootstrap.IsOk(), "load recovery configuration");
-  open_lmm::MapServer recovery_server(
+    auto recovery_bootstrap = open_lmm::LoadBootstrapConfig(recovery_config);
+    Require(recovery_bootstrap.IsOk(), "load recovery configuration");
+    open_lmm::MapServer recovery_server(
       std::move(recovery_bootstrap).Value(), recovery_output);
-  const auto recovery_snapshot = recovery_server.Snapshot();
-  Require(recovery_server.ValidateReady() &&
+    const auto recovery_snapshot = recovery_server.Snapshot();
+    Require(recovery_server.ValidateReady() &&
               recovery_snapshot.recovery_required &&
               recovery_snapshot.recovery_required->severity ==
                   open_lmm::Error::Severity::kFatalRuntime &&
               recovery_snapshot.recovery_required->context.runtime_revision ==
                   recovery_snapshot.revision,
           "bootstrap recovery keeps runtime structurally queryable and degraded");
-  auto recovery_mutation = Execute(
+    auto recovery_mutation = Execute(
       recovery_server,
       open_lmm::ExecutionCommand::Stage(open_lmm::StageId::kDataLoad));
-  Require(!recovery_mutation &&
+    Require(!recovery_mutation &&
               recovery_mutation.GetError().severity ==
                   open_lmm::Error::Severity::kFatalRuntime &&
               recovery_server.Snapshot().revision == recovery_snapshot.revision,
           "bootstrap recovery rejects mutation before authority advances");
 
-  const fs::path stage_recovery_config =
+    const fs::path stage_recovery_config =
       fixture.path() / "stage-recovery-config";
-  const fs::path stage_recovery_output =
+    const fs::path stage_recovery_output =
       fixture.path() / "stage-recovery-output";
-  WriteConfiguration(stage_recovery_config, data, stage_recovery_output);
-  open_lmm::MapServer stage_recovery_server(
+    WriteConfiguration(stage_recovery_config, data, stage_recovery_output);
+    open_lmm::MapServer stage_recovery_server(
       Bootstrap(stage_recovery_config), stage_recovery_output);
-  Require(stage_recovery_server.process().IsOk(),
+    Require(stage_recovery_server.process().IsOk(),
           "prepare committed artifacts for stage recovery fault");
-  const fs::path pose_destination =
+    const fs::path pose_destination =
       stage_recovery_output / "optimized_poses_agent1.txt";
-  fs::remove(pose_destination);
-  fs::create_directories(pose_destination / "retained-child");
-  std::ofstream(pose_destination / "retained-child/entry") << "retain\n";
-  const auto stage_recovery_before = stage_recovery_server.Snapshot();
-  auto stage_recovery = Execute(
+    fs::remove(pose_destination);
+    fs::create_directories(pose_destination / "retained-child");
+    std::ofstream(pose_destination / "retained-child/entry") << "retain\n";
+    const auto stage_recovery_before = stage_recovery_server.Snapshot();
+    auto stage_recovery = Execute(
       stage_recovery_server,
       open_lmm::ExecutionCommand::Node(open_lmm::NodeId::kPoseSave));
-  const auto stage_recovery_after = stage_recovery_server.Snapshot();
-  Require(stage_recovery && stage_recovery.Value().recovery_required &&
+    const auto stage_recovery_after = stage_recovery_server.Snapshot();
+    Require(stage_recovery && stage_recovery.Value().recovery_required &&
               stage_recovery_after.revision ==
                   stage_recovery_before.revision + 1 &&
               stage_recovery_after.recovery_required &&
@@ -391,18 +371,18 @@ int main() {
               fs::is_directory(pose_destination.string() +
                                ".open_lmm_backup"),
           "real Save commit preserves files, state, receipt, and recovery health");
-  auto stage_recovery_rejected = Execute(
+    auto stage_recovery_rejected = Execute(
       stage_recovery_server,
       open_lmm::ExecutionCommand::Node(open_lmm::NodeId::kPoseSave));
-  Require(!stage_recovery_rejected &&
+    Require(!stage_recovery_rejected &&
               stage_recovery_rejected.GetError().severity ==
                   open_lmm::Error::Severity::kFatalRuntime &&
               stage_recovery_server.Visualization(Id("agent1")),
           "recovery health blocks later Save while preserving read-only queries");
 
-  std::cout << "self-contained recovery/presentation fault suite passed\n";
-  return 0;
-#endif
+    std::cout << "self-contained recovery/presentation fault suite passed\n";
+    return 0;
+  }
 
   auto configured = open_lmm::LoadBootstrapConfig(config);
   Require(configured.IsOk(), "load self-contained configuration");
@@ -466,13 +446,13 @@ int main() {
               manifest["agents"][1]["symbol_byte"] == 2,
           "manifest preserves config-order AgentId to byte mapping");
 
-#if OPEN_LMM_E2E_SUITE == 1
-  std::cout << "self-contained normal pipeline E2E passed\n";
-  return 0;
-#endif
+  if (suite == "1") {
+    std::cout << "self-contained normal pipeline E2E passed\n";
+    return 0;
+  }
 
-#if OPEN_LMM_E2E_SUITE == 2
-  const fs::path skip_config = fixture.path() / "skip-config";
+  if (suite == "2") {
+    const fs::path skip_config = fixture.path() / "skip-config";
   const fs::path skip_output = fixture.path() / "skip-output";
   WriteConfiguration(skip_config, data, skip_output);
   auto skip_map_config = ReadJson(skip_config / "server/map_server.json");
@@ -576,12 +556,12 @@ int main() {
   Require(replayed.descriptor_count == snapshot.descriptor_count,
           "ordered replay does not append duplicate descriptors");
 
-  std::cout << "self-contained reconfiguration/replay suite passed\n";
-  return 0;
-#endif
+    std::cout << "self-contained reconfiguration/replay suite passed\n";
+    return 0;
+  }
 
-#if OPEN_LMM_E2E_SUITE == 4
-  const fs::path parallel_config = fixture.path() / "parallel-config";
+  if (suite == "4") {
+    const fs::path parallel_config = fixture.path() / "parallel-config";
   const fs::path parallel_output = fixture.path() / "parallel-output";
   WriteConfiguration(parallel_config, data, parallel_output, true);
   auto governor = std::make_shared<open_lmm::ResourceGovernor>(
@@ -671,12 +651,8 @@ int main() {
   Require(pressure_governor->ReservedMemoryBytes() == 0,
           "closing both sessions releases pressure-test reservations");
 
-  std::cout << "self-contained resource fault suite passed\n";
-  return 0;
-#endif
-
-#if OPEN_LMM_E2E_SUITE < 1 || OPEN_LMM_E2E_SUITE > 4
-#error "OPEN_LMM_E2E_SUITE must select a workflow suite"
-#endif
+    std::cout << "self-contained resource fault suite passed\n";
+    return 0;
+  }
   return 0;
 }

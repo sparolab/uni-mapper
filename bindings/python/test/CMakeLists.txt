@@ -24,6 +24,43 @@ if(OPEN_LMM_PYTHON_WHEEL_ONLY)
     LABELS "layer:L3;module:package.python;owner:PythonWheel;lane:pr;invariant:INV-13;invariant:INV-14")
   file(APPEND "${OPEN_LMM_PYTHON_TEST_MANIFEST}"
     "open_lmm_python_wheel_closure_contract\tL3\tpackage.python\tPythonWheel\tINV-13,INV-14\tpr\n")
+
+  function(openlmm_add_python_application_test name application owner)
+    set(application_root
+      "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/${application}")
+    add_test(NAME ${name}
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "PYTHONPATH=${application_root}/package"
+        "${OPEN_LMM_PYTHON_WHEEL_TEST_PYTHON}" -m unittest discover
+        -s "${application_root}/test" -v)
+    set_tests_properties(${name} PROPERTIES
+      LABELS
+        "layer:L3;module:applications.python.${application};owner:${owner};lane:pr;invariant:INV-13;invariant:INV-14"
+      TIMEOUT 60)
+    file(APPEND "${OPEN_LMM_PYTHON_TEST_MANIFEST}"
+      "${name}\tL3\tapplications.python.${application}\t${owner}\tINV-13,INV-14\tpr\n")
+  endfunction()
+
+  openlmm_add_python_application_test(
+    open_lmm_python_experiment_application_tests experiment ExperimentApplication)
+  openlmm_add_python_application_test(
+    open_lmm_python_viser_application_tests viser ViserApplication)
+  openlmm_add_python_application_test(
+    open_lmm_python_iridescence_application_tests iridescence
+    IridescenceApplication)
+
+  set(iridescence_root
+    "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence")
+  add_test(NAME open_lmm_python_iridescence_xvfb_smoke_tests
+    COMMAND bash "${iridescence_root}/test/xvfb_smoke.sh"
+      "${iridescence_root}/package"
+      "${OPEN_LMM_PYTHON_WHEEL_TEST_PYTHON}")
+  set_tests_properties(open_lmm_python_iridescence_xvfb_smoke_tests PROPERTIES
+    LABELS
+      "layer:L5;module:applications.python.iridescence;owner:IridescenceApplication;lane:pr;invariant:INV-13;invariant:INV-17"
+    SKIP_RETURN_CODE 77 TIMEOUT 20)
+  file(APPEND "${OPEN_LMM_PYTHON_TEST_MANIFEST}"
+    "open_lmm_python_iridescence_xvfb_smoke_tests\tL5\tapplications.python.iridescence\tIridescenceApplication\tINV-13,INV-17\tpr\n")
   return()
 endif()
 

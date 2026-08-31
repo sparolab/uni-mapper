@@ -39,11 +39,6 @@ public:
 
     void raycast_enhancement(const pcl::PointCloud<pcl::PointXYZI>& cloud, const Eigen::Isometry3d& transform);
 
-    inline const cv::Mat& get_depth_image() const { return *depth_image; }
-    inline const cv::Mat& get_raycast_enhance_region() const { return *raycast_enhance_region; }
-    inline const cv::Mat& get_inpainted_image() const { return *inpainted_image; }
-    inline const cv::Mat& get_eroded_raycast_enhance_region() const { return *eroded_raycast_enhance_region; }
-    inline const cv::Mat& get_fov_image() const { return *fov_image; }
     inline const Points& get_enhanced_pointcloud() const { return enhanced_pointcloud; }
 
     ~DepthImage();

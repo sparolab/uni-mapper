@@ -32,8 +32,6 @@ option(OPEN_LMM_ENABLE_TSAN
   "Instrument OpenLMM and focused concurrency tests with ThreadSanitizer" OFF)
 option(OPEN_LMM_ENABLE_ASAN_UBSAN
   "Instrument OpenLMM with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
-option(OPEN_LMM_ENABLE_NIGHTLY_SOAK
-  "Register the opt-in 1000-iteration nightly soak CTest" OFF)
 # Opt-in engineering-quality lanes.  Normal C++/ROS/package builds do not
 # discover or require these tools.  CI enables each lane in a clean dedicated
 # build so sanitizer, coverage and fuzz runtimes are never mixed accidentally.

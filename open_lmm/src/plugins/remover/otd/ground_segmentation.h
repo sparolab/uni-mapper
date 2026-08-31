@@ -3,14 +3,9 @@
 
 #define PCL_NO_PRECOMPILE
 
-#include <omp.h>
-
-// #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/common/centroid.h>
-#include <pcl/filters/voxel_grid.h>
-#include<pcl/io/pcd_io.h> 
 
 namespace otd {
 
@@ -24,7 +19,6 @@ class Grd_Seg {
 
     void Run(typename pcl::PointCloud<PointT>::Ptr raw_ptr, typename pcl::PointCloud<PointT>::Ptr ground_ptr, 
       typename pcl::PointCloud<PointT>::Ptr nonground_ptr, const Eigen::Matrix4d pose);
-    void GetTimeConsume();
 
    private:
     void SeparateLines(typename pcl::PointCloud<PointT>::Ptr raw_ptr);
@@ -43,24 +37,12 @@ class Grd_Seg {
     float tau_seeds_ = 1.2;
     float tau_dis_ = 0.3;
     bool kitti_en_;
-    
-    // Time log
-    double t_preprocess = 0.0, t_refine = 0.0, t_separatelines = 0.0, t_downsample = 0.0;
-    double t_preprocess_sum = 0.0, t_refine_sum = 0.0, t_separatelines_sum = 0.0, t_downsample_sum = 0.0;
-    int frame_sum = 0;
 };
 
 template <typename PointT>
 Grd_Seg<PointT>::Grd_Seg(double sensor_height, double tau_seeds, double tau_dis, bool kitti_en) : 
     sensor_height_(-sensor_height), tau_seeds_(tau_seeds), tau_dis_(tau_dis), kitti_en_(kitti_en)
 {}
-
-template <typename PointT>
-void Grd_Seg<PointT>::GetTimeConsume()
-{
-    double t_groundseg_sum = t_preprocess_sum + t_refine_sum + t_downsample_sum;
-    printf("The average ground segmentation time is %lf\n", (t_groundseg_sum/frame_sum) * 1000);
-}
 
 //=====================================================================================//
 //Ground Segmentation for KITTI//
@@ -72,11 +54,6 @@ void Grd_Seg<PointT>::Run(typename pcl::PointCloud<PointT>::Ptr raw_ptr, typenam
 
     GroundSegmentation(raw_ptr, ground_ptr, nonground_ptr, pose);
 
-    t_separatelines_sum += t_separatelines;
-    t_preprocess_sum += t_preprocess;
-    t_refine_sum += t_refine;
-    t_downsample_sum += t_downsample;
-    frame_sum++;
 }
 
 template <typename PointT>
@@ -174,8 +151,6 @@ void Grd_Seg<PointT>::GroundSegmentation(typename pcl::PointCloud<PointT>::Ptr r
 {
     pcl::PointCloud<PointT> cloud_nonground_init, cloud_ground_init;
     pcl::PointCloud<PointT> cloud_ground_seeds, cloud_ground_iter, cloud_nonground_iter;
-    double t_preprocess_start = omp_get_wtime();
-
     if(kitti_en_)
     {
         size_t lowerInd, upperInd;
@@ -223,10 +198,6 @@ void Grd_Seg<PointT>::GroundSegmentation(typename pcl::PointCloud<PointT>::Ptr r
     else {
         cloud_ground_init = *raw_ptr;
     }
-    // printf("The ground points size after preprocess is %ld\n", cloud_ground_init.points.size());
-    t_preprocess = omp_get_wtime() - t_preprocess_start;
-
-    double t_refine_start = omp_get_wtime();
     for(int i=0;i<cloud_ground_init.points.size();i++){
         if(cloud_ground_init.points[i].z > sensor_height_ - tau_seeds_)
         {
@@ -248,8 +219,6 @@ void Grd_Seg<PointT>::GroundSegmentation(typename pcl::PointCloud<PointT>::Ptr r
                 break;
         }
     }
-    // printf("The ground points size after seeds  is %ld\n", cloud_ground_iter.points.size());
-
     Eigen::MatrixXf points(cloud_ground_seeds.points.size(),3);
     int j =0;
     for(auto p:cloud_ground_seeds.points){
@@ -287,10 +256,7 @@ void Grd_Seg<PointT>::GroundSegmentation(typename pcl::PointCloud<PointT>::Ptr r
             }
         }
     }
-    // printf("The ground points size after refine is %ld\n", cloud_ground_iter.points.size());
     cloud_nonground_iter += cloud_nonground_init;
-
-    t_refine = omp_get_wtime() - t_refine_start;
 
     for (size_t i = 0; i < cloud_ground_iter.size(); i++)
     {
