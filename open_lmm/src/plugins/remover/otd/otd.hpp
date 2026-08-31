@@ -19,7 +19,7 @@
 class OTD : public IOnlineRemoverPlugin {
  public:
   OTD(const OTDParams& params);
-  ~OTD();
+  ~OTD() override;
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr run(
       pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,

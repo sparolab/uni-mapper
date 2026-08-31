@@ -52,7 +52,7 @@ std::map<uint64_t, Json> LoadReports(const Json& bundle) {
   std::map<uint64_t, Json> reports;
   for (const auto& reference : bundle.at("reports")) {
     const fs::path path = reference.at("path").get<std::string>();
-    if (Digest(path) != reference.at("sha256")) {
+    if (Digest(path) != reference.at("sha256").get<std::string>()) {
       throw std::invalid_argument("raw report hash changed: " + path.string());
     }
     Json report = ReadJson(path);

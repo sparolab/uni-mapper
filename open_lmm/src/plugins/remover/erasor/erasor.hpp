@@ -14,7 +14,7 @@
 class ErasorServer : public IOfflineRemoverPlugin {
  public:
   ErasorServer(const common::Config& params);
-  ~ErasorServer() = default;
+  ~ErasorServer() override = default;
 
   void run(pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,
            Eigen::Isometry3d& optimized_pose) override;

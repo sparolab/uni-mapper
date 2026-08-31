@@ -1,5 +1,6 @@
 # cmake/internals.cmake — 내부 타겟 공통 컴파일 옵션 및 헬퍼 함수
 # 실제 구현은 cmake/CompilerOptions.cmake에 유지 (MIT license 보존).
+include(${CMAKE_CURRENT_LIST_DIR}/QualityOptions.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/CompilerOptions.cmake)
 
 # PRIVATE/PUBLIC 링크 속성 원칙:

@@ -66,7 +66,6 @@ class InteractivePort final : public test::RuntimePortFixture {
     AlignmentFeedbackSnapshot request;
     request.proposal.target_agent = Id("agent");
     request.proposal.source_agent = Id("agent");
-    feedback_requested.Signal();
     auto response = context.alignment_feedback->Request(std::move(request),
                                                         context.cancellation);
     if (!response) return Result<void>::Failure(response.GetError());
@@ -74,8 +73,6 @@ class InteractivePort final : public test::RuntimePortFixture {
                ? Result<void>::Failure(Error::Cancelled("alignment feedback cancelled"))
                : Result<void>::Ok();
   }
-
-  test::ManualResetEvent feedback_requested;
 
   Result<VisualizationSnapshot> CreateVisualization(
       const AgentId& agent) const override {
@@ -403,15 +400,22 @@ void TestHeadlessFeedbackAndDisableCancellation() {
   const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_feedback";
   fs::remove_all(root);
   WriteRootConfig(root / "config", root / "output", "agent");
-  std::shared_ptr<InteractivePort> port;
   RuntimeService service(
-      1, [&port](const BootstrapConfigSnapshot&, const fs::path&)
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
              -> Result<std::shared_ptr<StageRuntimePort>> {
-        port = std::make_shared<InteractivePort>();
-        return Result<std::shared_ptr<StageRuntimePort>>::Ok(port);
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<InteractivePort>());
       });
   Check(service.Open({root / "config", "headless"}).IsOk(),
         "headless feedback fixture opens");
+  test::ManualResetEvent feedback_requested;
+  auto subscribed = service.SubscribeEvents([&](const ExecutionEvent& event) {
+    if (event.type == EventType::kAlignmentFeedbackRequested) {
+      feedback_requested.Signal();
+    }
+  });
+  Check(subscribed.IsOk(), "feedback fixture subscribes to committed events");
+  auto subscription = std::move(subscribed).Value();
   ExecutionRequest request;
   request.kind = ExecutionRequestKind::kStage;
   request.stage = StageId::kDataLoad;
@@ -425,8 +429,7 @@ void TestHeadlessFeedbackAndDisableCancellation() {
         "authority can be enabled for an interactive owner");
   auto interactive = service.Submit(request);
   Check(interactive.IsOk(), "interactive fixture submits");
-  port->feedback_requested.Wait(
-      "interactive feedback request becomes visible");
+  feedback_requested.Wait("interactive feedback request becomes visible");
   Check(service.SetAlignmentFeedbackEnabled(false).IsOk(),
         "disabling authority cancels the active request");
   Check(!service.Wait(interactive.Value()),
@@ -436,6 +439,7 @@ void TestHeadlessFeedbackAndDisableCancellation() {
             terminal->review_state == AlignmentReviewState::kCancelled &&
             !terminal->terminal_message.empty(),
         "disabled authority preserves a terminal read-only review");
+  subscription.Reset();
   Check(service.Close().IsOk(), "headless feedback fixture closes");
   fs::remove_all(root);
 }

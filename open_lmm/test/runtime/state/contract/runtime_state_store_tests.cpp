@@ -79,11 +79,42 @@ void TestRecoveryAuthorityIsPersistent() {
         "imported recovery health is normalized to committed authority");
 }
 
+void TestMatchAndExplicitRecoveryLatchContracts() {
+  const auto base = State(30);
+  RuntimeStateStore store(base);
+  Check(store.Matches(base),
+        "the exact committed state is recognized as authoritative");
+  Check(!store.Matches(State(30)) &&
+            !store.Matches(std::shared_ptr<const RuntimeState>{}),
+        "matching revision without pointer identity is not authoritative");
+
+  auto recovery = std::make_shared<Error>(Error::IoError("latched recovery"));
+  recovery->MarkFatalRuntime().WithRuntimeRevision(base->revision);
+  store.LatchRecoveryRequired(recovery);
+  const auto authority = store.AuthoritySnapshot();
+  Check(authority.recovery_required == recovery,
+        "explicit recovery latch becomes authoritative health");
+
+  bool side_effect_ran = false;
+  const auto blocked = store.CommitWithBarrier(base, State(31), [&] {
+    side_effect_ran = true;
+    return Result<RuntimeCommitOutcome>::Ok({});
+  });
+  Check(!blocked && !side_effect_ran,
+        "explicit recovery latch gates mutation before side effects");
+
+  RuntimeStateStore uninitialized(nullptr);
+  uninitialized.LatchRecoveryRequired(recovery);
+  Check(!uninitialized.AuthoritySnapshot().recovery_required,
+        "recovery cannot be latched without committed authority");
+}
+
 }  // namespace
 
 int main() {
   TestCandidateAndSideEffectBarrier();
   TestRecoveryAuthorityIsPersistent();
+  TestMatchAndExplicitRecoveryLatchContracts();
   std::cout << "runtime state store contract tests passed\n";
   return 0;
 }

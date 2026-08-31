@@ -38,9 +38,46 @@ option(OPEN_LMM_ENABLE_NIGHTLY_SOAK
 option(OPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST
   "Register the opt-in fresh-process benchmark workflow CTest" OFF)
 
+# Opt-in engineering-quality lanes.  Normal C++/ROS/package builds do not
+# discover or require these tools.  CI enables each lane in a clean dedicated
+# build so sanitizer, coverage and fuzz runtimes are never mixed accidentally.
+option(OPEN_LMM_ENABLE_CLANG_TIDY
+  "Run pinned clang-tidy on OpenLMM-owned C++ targets" OFF)
+option(OPEN_LMM_ENABLE_STRICT_WARNINGS
+  "Enable the reviewed first-party warnings profile" OFF)
+option(OPEN_LMM_ENABLE_COVERAGE
+  "Enable Clang source-based coverage instrumentation" OFF)
+option(OPEN_LMM_ENABLE_FUZZING
+  "Build Clang libFuzzer targets" OFF)
+
+# Optional CPython leaf adapter. The default C++/ROS builds must not discover
+# the adapter's NumPy/pybind11 requirements unless explicitly requested.
+option(OPEN_LMM_BUILD_PYTHON "Build the optional CPython binding" OFF)
+option(OPEN_LMM_PYTHON_WHEEL
+  "Stage OpenLMM-owned runtime libraries in the Python wheel" OFF)
+
 if(OPEN_LMM_ENABLE_TSAN AND OPEN_LMM_ENABLE_ASAN_UBSAN)
   message(FATAL_ERROR
     "OPEN_LMM_ENABLE_TSAN and OPEN_LMM_ENABLE_ASAN_UBSAN are mutually exclusive")
+endif()
+
+if(OPEN_LMM_ENABLE_COVERAGE AND
+   (OPEN_LMM_ENABLE_TSAN OR OPEN_LMM_ENABLE_ASAN_UBSAN OR
+    OPEN_LMM_ENABLE_FUZZING))
+  message(FATAL_ERROR
+    "OPEN_LMM_ENABLE_COVERAGE is mutually exclusive with sanitizer and fuzz builds")
+endif()
+
+if(OPEN_LMM_ENABLE_FUZZING AND
+   (OPEN_LMM_ENABLE_TSAN OR OPEN_LMM_ENABLE_ASAN_UBSAN))
+  message(FATAL_ERROR
+    "OPEN_LMM_ENABLE_FUZZING owns its ASan/UBSan runtime and cannot be combined with sanitizer options")
+endif()
+
+if((OPEN_LMM_ENABLE_COVERAGE OR OPEN_LMM_ENABLE_FUZZING) AND
+   NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  message(FATAL_ERROR
+    "OPEN_LMM_ENABLE_COVERAGE and OPEN_LMM_ENABLE_FUZZING require Clang")
 endif()
 
 # 선택적 데스크톱 GUI. OFF에서는 Iridescence/OpenGL을 찾거나 링크하지 않는다.

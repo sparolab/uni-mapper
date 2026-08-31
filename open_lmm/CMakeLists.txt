@@ -68,6 +68,12 @@ set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
 
 add_subdirectory(src/adapters/batch)
 add_subdirectory(src/adapters/gui)
+if(OPEN_LMM_BUILD_PYTHON)
+  add_subdirectory(src/adapters/python)
+  if(OPEN_LMM_PYTHON_WHEEL)
+    include(cmake/python_wheel.cmake)
+  endif()
+endif()
 
 # Stable package-facing target names. Implementation-only static libraries and
 # fetched dependency targets stay behind these shared-library boundaries.

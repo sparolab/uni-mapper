@@ -23,7 +23,7 @@
 class DUFOMap : public IOnlineRemoverPlugin {
  public:
   DUFOMap(const DUFOMapParams& params);
-  ~DUFOMap() = default;
+  ~DUFOMap() override = default;
 
   void initialize(const DUFOMapParams& params);
 

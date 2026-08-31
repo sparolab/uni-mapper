@@ -359,17 +359,26 @@ if(OPEN_LMM_BUILD_DIR AND
     file(GLOB_RECURSE production_sources
       "${OPEN_LMM_SOURCE_DIR}/${root}/*.cpp")
     foreach(source IN LISTS production_sources)
+      file(RELATIVE_PATH relative_source
+        "${OPEN_LMM_SOURCE_DIR}" "${source}")
       string(REPLACE "\\" "\\\\" source_pattern "${source}")
       string(REPLACE "." "\\." source_pattern "${source_pattern}")
       string(REGEX MATCHALL
         "\"file\"[ \t]*:[ \t]*\"${source_pattern}\""
         source_compile_entries "${compile_commands}")
       list(LENGTH source_compile_entries source_compile_count)
+      set(require_compile_owner ${OPEN_LMM_REQUIRE_COMPLETE_COMPILE_OWNERS})
+      if(relative_source MATCHES "^src/adapters/python/" AND
+         NOT OPEN_LMM_REQUIRE_PYTHON_COMPILE_OWNER)
+        set(require_compile_owner FALSE)
+        if(NOT source_compile_count EQUAL 0)
+          message(FATAL_ERROR
+            "Python-OFF build compiled optional adapter source: "
+            "${relative_source} (${source_compile_count})")
+        endif()
+      endif()
       if(source_compile_count GREATER 1 OR
-         (OPEN_LMM_REQUIRE_COMPLETE_COMPILE_OWNERS AND
-          NOT source_compile_count EQUAL 1))
-        file(RELATIVE_PATH relative_source
-          "${OPEN_LMM_SOURCE_DIR}" "${source}")
+         (require_compile_owner AND NOT source_compile_count EQUAL 1))
         message(FATAL_ERROR
           "production source must have exactly one compile owner: "
           "${relative_source} (${source_compile_count})")
@@ -977,4 +986,31 @@ foreach(forbidden IN ITEMS "../src/" "${OPEN_LMM_SOURCE_DIR}/src/")
     message(FATAL_ERROR
       "benchmark target must not recompile production source: ${forbidden}")
   endif()
+endforeach()
+
+# Goal 07 is a pure-Python leaf over the public Goal 06 API and delegates
+# replay/benchmark semantics to their canonical command-line owners.
+file(GLOB_RECURSE experiment_python LIST_DIRECTORIES false
+  "${OPEN_LMM_SOURCE_DIR}/src/adapters/python/package/open_lmm/experiments/*.py")
+if(NOT experiment_python)
+  message(FATAL_ERROR "Goal 07 experiment package is missing")
+endif()
+foreach(source IN LISTS experiment_python)
+  file(READ "${source}" contents)
+  foreach(forbidden IN ITEMS
+      "open_lmm._native"
+      "from open_lmm import _native"
+      "shell=True"
+      "shell = True"
+      "os.system("
+      "src/runtime/"
+      "plugins/host/")
+    string(FIND "${contents}" "${forbidden}" found)
+    if(NOT found EQUAL -1)
+      file(RELATIVE_PATH relative_source "${OPEN_LMM_SOURCE_DIR}" "${source}")
+      message(FATAL_ERROR
+        "Goal 07 experiment adapter crossed its public/delegation boundary: "
+        "${relative_source} contains ${forbidden}")
+    endif()
+  endforeach()
 endforeach()

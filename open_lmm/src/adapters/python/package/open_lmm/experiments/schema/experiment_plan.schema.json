@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.org/schemas/experiment-plan-v1.json",
+  "title": "OpenLMM experiment plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "experiment_id", "dataset", "config", "software",
+    "workflow", "execution", "fixed_patches", "parameter_axes",
+    "algorithm_variants", "metrics"
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "relative_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "pointer"],
+      "properties": {
+        "file": {"$ref": "#/$defs/relative_path"},
+        "pointer": {"type": "string", "pattern": "^/"}
+      }
+    },
+    "patch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "pointer", "value"],
+      "properties": {
+        "file": {"$ref": "#/$defs/relative_path"},
+        "pointer": {"type": "string", "pattern": "^/"},
+        "value": {}
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "experiment_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "dataset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "lock_kind", "lock_manifest_sha256"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "lock_kind": {"enum": ["replay-case-v1", "sha256-index-v1"]},
+        "lock_manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "config": {
+      "type": "object", "additionalProperties": false,
+      "required": ["files", "dataset_bindings"],
+      "properties": {
+        "files": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"$ref": "#/$defs/relative_path"},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "size": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "dataset_bindings": {"type": "array", "items": {"$ref": "#/$defs/target"}}
+      }
+    },
+    "software": {
+      "type": "object", "additionalProperties": false,
+      "required": ["open_lmm_version", "runtime_api_version", "experiment_api_version", "source"],
+      "properties": {
+        "open_lmm_version": {"type": "string", "minLength": 1},
+        "runtime_api_version": {"const": 1},
+        "experiment_api_version": {"const": 1},
+        "source": {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "dirty"],
+          "properties": {
+            "kind": {"enum": ["git", "wheel", "distribution", "container"]},
+            "identity": {"type": "string"},
+            "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "dirty": {"type": "boolean"}
+          }
+        },
+        "container_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "workflow": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "stages"],
+      "properties": {
+        "kind": {"enum": ["run-all", "stages"]},
+        "stages": {"type": "array", "items": {"enum": ["data-load", "alignment", "map-update", "save"]}}
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "repetitions", "seeds", "timeout_seconds", "failure_policy", "strict_reproducibility", "max_trials"],
+      "properties": {
+        "mode": {"enum": ["fresh-process", "in-process"]},
+        "repetitions": {"type": "integer", "minimum": 1},
+        "seeds": {"type": "array", "items": {"type": "integer"}},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "failure_policy": {"enum": ["continue", "stop"]},
+        "strict_reproducibility": {"type": "boolean"},
+        "max_trials": {"type": "integer", "minimum": 1},
+        "event_retention": {"type": "integer", "minimum": 1},
+        "log_limit_bytes": {"type": "integer", "minimum": 1024}
+      }
+    },
+    "fixed_patches": {"type": "array", "items": {"$ref": "#/$defs/patch"}},
+    "parameter_axes": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "target", "values"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "target": {"$ref": "#/$defs/target"},
+          "values": {"type": "array", "minItems": 1}
+        }
+      }
+    },
+    "algorithm_variants": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "slot", "patches", "expected_plugin_ids"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "slot": {"enum": ["data_loader", "loop_detector", "backend_optimizer", "dynamic_remover"]},
+          "patches": {"type": "array", "items": {"$ref": "#/$defs/patch"}},
+          "expected_plugin_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+        }
+      }
+    },
+    "metrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["include_visualization", "include_points", "preview_voxel_size_m", "hash_output_files"],
+      "properties": {
+        "include_visualization": {"type": "boolean"},
+        "include_points": {"type": "boolean"},
+        "preview_voxel_size_m": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "hash_output_files": {"type": "boolean"}
+      }
+    }
+  }
+}

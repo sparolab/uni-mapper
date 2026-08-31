@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     gcc-12 \
     g++-12 \
     cmake \
+    time \
     wget \
     git \
     software-properties-common \
@@ -41,6 +42,7 @@ RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
       gcc-13 \
       g++-13 \
       clang-15 \
+      clang-tidy-15 \
       libomp-15-dev && \
     rm -rf /var/lib/apt/lists/*
 

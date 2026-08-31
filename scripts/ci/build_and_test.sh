@@ -70,6 +70,7 @@ until CC="$compiler_c" CXX="$compiler_cxx" \
     --install-base "$install_root" \
     --cmake-args \
       -DUSE_CCACHE=OFF \
+      -DOPEN_LMM_ENABLE_STRICT_WARNINGS=ON \
       -DOPEN_LMM_BUILD_IRIDESCENCE_GUI="$gui_enabled" \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       "${compiler_cmake_args[@]}"; do
@@ -141,6 +142,9 @@ cmake \
   -DOPEN_LMM_CONSUMER_CXX_COMPILER="$compiler_cxx" \
   -DOPEN_LMM_CONSUMER_CXX_FLAGS="$cxx_compatibility_flags" \
   -P "$repository_root/open_lmm/test/package/orchestrator/package_consumer_tests.cmake"
+
+"$repository_root/scripts/ci/inspect_symbol_visibility.sh" \
+  "$install_root/open_lmm" "$configuration_root/symbol-visibility"
 
 compiler_cache="$build_root/open_lmm/CMakeCache.txt"
 expected_compiler="CMAKE_CXX_COMPILER:FILEPATH=$compiler_cxx"

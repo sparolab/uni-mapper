@@ -99,7 +99,7 @@ std::vector<Eigen::Vector3f> transformEigenPoints(
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
-    const pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan, const float voxel_size,
+    pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan, const float voxel_size,
     const float min_range, const float max_range, const bool use_range_filter) {
   auto valid = ValidateVoxelizationInput(p_scan, voxel_size, min_range,
                                          max_range, use_range_filter,

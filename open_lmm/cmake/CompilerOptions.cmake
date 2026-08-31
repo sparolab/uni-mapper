@@ -95,6 +95,7 @@ function(openlmm_set_global_target_properties target)
       SOVERSION ${PROJECT_VERSION_MAJOR}
     )
   endif()
+  openlmm_apply_quality_options(${target})
 endfunction()
 
 

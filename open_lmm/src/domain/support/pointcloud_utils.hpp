@@ -96,7 +96,7 @@ std::vector<Eigen::Vector3f> transformEigenPoints(
     const Eigen::Matrix4f& transform_matrix);
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
-    const pcl::PointCloud<pcl::PointXYZI>::Ptr p_cloud, const float voxel_size,
+    pcl::PointCloud<pcl::PointXYZI>::Ptr p_cloud, const float voxel_size,
     const float min_range = 2.0, const float max_range = 100.0,
     const bool use_range_filter = true);
 

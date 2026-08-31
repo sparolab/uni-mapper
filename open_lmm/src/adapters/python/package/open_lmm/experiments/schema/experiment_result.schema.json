@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.org/schemas/experiment-result-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "experiment_id", "manifest_sha256", "trials", "metrics", "summaries", "result"],
+  "$defs": {
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "value", "unit", "source", "scope", "subject", "availability", "reason"],
+      "properties": {
+        "name": {"type": "string"},
+        "value": {"type": ["null", "boolean", "integer", "number", "string"]},
+        "unit": {"type": "string"},
+        "source": {"enum": ["python-callback", "snapshot", "visualization", "output-file", "replay-v1", "benchmark-v1", "process"]},
+        "scope": {"enum": ["experiment", "trial", "stage", "agent", "artifact"]},
+        "subject": {"type": ["string", "null"]},
+        "availability": {"enum": ["available", "not_available", "invalid"]},
+        "reason": {"type": "string"}
+      }
+    },
+    "trial": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trial_id", "trial_index", "seed", "status", "variant_id", "parameters", "config_sha256", "dataset_sha256", "software_sha256", "metrics", "runtime_revision_before", "runtime_revision_after", "error", "worker_pid", "worker_exit_code", "reproducible", "input_reverified"],
+      "properties": {
+        "trial_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "trial_index": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer"},
+        "status": {"enum": ["succeeded", "failed", "cancelled", "timed_out", "invalid"]},
+        "variant_id": {"type": ["string", "null"]},
+        "parameters": {"type": "object"},
+        "config_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "dataset_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "software_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}},
+        "runtime_revision_before": {"type": ["integer", "null"]},
+        "runtime_revision_after": {"type": ["integer", "null"]},
+        "error": {"type": ["object", "null"]},
+        "worker_pid": {"type": ["integer", "null"]},
+        "worker_exit_code": {"type": ["integer", "null"]},
+        "reproducible": {"type": "boolean"},
+        "input_reverified": {"type": "boolean"}
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "unit", "available_count", "missing_count", "failure_count", "median", "p95", "mad", "minimum", "maximum", "selection"],
+      "properties": {
+        "name": {"type": "string"}, "unit": {"type": "string"},
+        "available_count": {"type": "integer", "minimum": 0},
+        "missing_count": {"type": "integer", "minimum": 0},
+        "failure_count": {"type": "integer", "minimum": 0},
+        "median": {"type": ["number", "null"]},
+        "p95": {"type": ["number", "null"]},
+        "mad": {"type": ["number", "null"]},
+        "minimum": {"type": ["number", "null"]},
+        "maximum": {"type": ["number", "null"]},
+        "selection": {"type": "string"}
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "manifest_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "trials": {"type": "array", "items": {"$ref": "#/$defs/trial"}},
+    "metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}},
+    "summaries": {"type": "array", "items": {"$ref": "#/$defs/summary"}},
+    "result": {"enum": ["succeeded", "partial", "failed", "timed_out", "invalid"]}
+  }
+}

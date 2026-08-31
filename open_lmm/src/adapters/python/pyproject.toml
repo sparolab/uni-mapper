@@ -1,0 +1,39 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10,<1",
+  "pybind11>=2.9,<3",
+  "numpy>=1.21,<2",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "open-lmm"
+version = "3.0.0"
+description = "Python API v1 for the OpenLMM RuntimeClient"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+license = { text = "GPL-3.0-only" }
+dependencies = ["numpy>=1.21,<2"]
+
+[project.scripts]
+open-lmm-experiment = "open_lmm.experiments._cli:main"
+
+[tool.scikit-build]
+cmake.version = ">=3.25"
+cmake.source-dir = "../../.."
+wheel.packages = ["package/open_lmm"]
+install.components = ["Python"]
+cmake.args = [
+  "-DOPEN_LMM_BUILD_PYTHON=ON",
+  "-DOPEN_LMM_PYTHON_WHEEL=ON",
+  "-DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF",
+  "-DOPEN_LMM_BUILD_DESCRIPTOR_SOLID=OFF",
+  "-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS=OFF",
+  "-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP=OFF",
+  "-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD=OFF",
+  "-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR=OFF",
+  "-DBUILD_TESTING=OFF",
+]
+
+[tool.scikit-build.cmake.define]
+CMAKE_BUILD_TYPE = "Release"

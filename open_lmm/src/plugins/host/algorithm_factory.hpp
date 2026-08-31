@@ -8,14 +8,14 @@ namespace open_lmm {
 // injectable boundary. Implementations override only the protected hooks.
 class AlgorithmFactory : public AlgorithmProvider {
  public:
-  virtual ~AlgorithmFactory() = default;
+  ~AlgorithmFactory() override = default;
 
-  virtual Result<void> Preflight(
+  Result<void> Preflight(
       const LoopDetectorConfig& loop_detector,
       const DynamicRemoverConfig& remover) const override;
-  virtual Result<void> PreflightDescriptor(
+  Result<void> PreflightDescriptor(
       const LoopDetectorConfig& loop_detector) const override;
-  virtual Result<void> PreflightRemover(
+  Result<void> PreflightRemover(
       const DynamicRemoverConfig& remover) const override;
   Result<std::unique_ptr<DataLoaderBase>> CreateDataLoader(
       const DataLoaderConfig& config) const override;

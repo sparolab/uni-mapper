@@ -594,14 +594,15 @@ bool ExpectationsMet(const Json& expected,
   }
   const Json& failure = expected.at("failure");
   bool matched =
-      observation.failed && observation.stage == failure.at("stage") &&
-      observation.code == failure.at("error_code") &&
+      observation.failed &&
+      observation.stage == failure.at("stage").get<std::string>() &&
+      observation.code == failure.at("error_code").get<std::string>() &&
       (!failure.at("revision_unchanged").get<bool>() ||
        observation.revision_before == observation.revision_after) &&
       (!failure.at("close_succeeds").get<bool>() || close_succeeded);
   if (failure.contains("agent")) {
     matched = matched && observation.agent &&
-              *observation.agent == failure.at("agent");
+              *observation.agent == failure.at("agent").get<std::string>();
   }
   return matched;
 }

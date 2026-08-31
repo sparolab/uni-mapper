@@ -30,10 +30,18 @@ function(openlmm_add_runtime_service_suite target selector layer invariants)
     OPEN_LMM_RUNTIME_SERVICE_SUITE=${selector})
   target_link_libraries(${target} PRIVATE open_lmm_map_server)
   openlmm_set_global_target_properties(${target})
+  set(runtime_service_timeout 60)
+  if(OPEN_LMM_ENABLE_COVERAGE)
+    # Clang's branch instrumentation can make the lifecycle-heavy contract
+    # suite substantially slower on a contended CI runner. Keep the normal
+    # PR timeout unchanged while retaining a finite deadlock guard here.
+    set(runtime_service_timeout 120)
+  endif()
   openlmm_add_test(
     NAME ${target} TARGET ${target}
     LAYER ${layer} MODULE runtime.service OWNER RuntimeService
-    INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan tsan)
+    INVARIANTS ${invariants} LANES pr SANITIZERS asan-ubsan tsan
+    TIMEOUT ${runtime_service_timeout})
 endfunction()
 
 openlmm_add_runtime_service_suite(

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.org/schemas/experiment-trial-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "trial_id", "trial_index", "seed", "status", "variant_id", "parameters", "config_sha256", "dataset_sha256", "software_sha256", "metrics", "runtime_revision_before", "runtime_revision_after", "error", "worker_pid", "worker_exit_code", "reproducible", "input_reverified"],
+  "$defs": {
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "value", "unit", "source", "scope", "subject", "availability", "reason"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "value": {"type": ["null", "boolean", "integer", "number", "string"]},
+        "unit": {"type": "string"},
+        "source": {"enum": ["python-callback", "snapshot", "visualization", "output-file", "replay-v1", "benchmark-v1", "process"]},
+        "scope": {"enum": ["experiment", "trial", "stage", "agent", "artifact"]},
+        "subject": {"type": ["string", "null"]},
+        "availability": {"enum": ["available", "not_available", "invalid"]},
+        "reason": {"type": "string"}
+      }
+    },
+    "error": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "message"],
+      "properties": {
+        "kind": {"enum": ["open_lmm", "python", "timeout", "worker_protocol"]},
+        "type": {"type": "string"},
+        "message": {"type": "string"},
+        "code": {"type": "integer"},
+        "severity": {"type": "integer"},
+        "context": {"type": "object"}
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "trial_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "trial_index": {"type": "integer", "minimum": 1},
+    "seed": {"type": "integer"},
+    "status": {"enum": ["succeeded", "failed", "cancelled", "timed_out", "invalid"]},
+    "variant_id": {"type": ["string", "null"]},
+    "parameters": {"type": "object"},
+    "config_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "dataset_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "software_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}},
+    "runtime_revision_before": {"type": ["integer", "null"], "minimum": 0},
+    "runtime_revision_after": {"type": ["integer", "null"], "minimum": 0},
+    "error": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/error"}]},
+    "worker_pid": {"type": ["integer", "null"], "minimum": 1},
+    "worker_exit_code": {"type": ["integer", "null"]},
+    "reproducible": {"type": "boolean"},
+    "input_reverified": {"type": "boolean"}
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "git": {
+    "head": "f1326842d63ceaa387ec1a0b8aaa1d15f9e5b747",
+    "worktree_state": "modified",
+    "worktree_status_sha256": "269551dcaf8b2bb4f24b7fd4e1020178b13da232520eeb74ba2589fadfba26ad"
+  },
+  "manifests": {
+    "critical_sources_sha256": "c26e45b807f65e534477df2c57874239e6a9a19f577d5710e8e1bf98a76e1934",
+    "critical_tests_sha256": "3069811c2ea5052f7018f6fc53774274c93872b5c4c63e762c661bca70796b55"
+  },
+  "owners": {
+    "FileSetTransaction": {
+      "branches": { "count": 140, "covered": 88, "rate": 0.628571 },
+      "functions": { "count": 6, "covered": 6 },
+      "lines": { "count": 274, "covered": 191 },
+      "path": "src/storage/transactions/file_set_transaction.cpp",
+      "source_sha256": "51c0b942cd09c6f10b01f29893b4f2df9be5d567a9f20b1475b139c4fa8c2f8d"
+    },
+    "PipelineController": {
+      "branches": { "count": 392, "covered": 274, "rate": 0.69898 },
+      "functions": { "count": 55, "covered": 54 },
+      "lines": { "count": 1338, "covered": 1177 },
+      "path": "src/runtime/control/pipeline_controller.cpp",
+      "source_sha256": "25b2533a2b1c0d7a1e236105ba2a39574cfc4e0f5b8825a267a0b7a53e764f8c"
+    },
+    "RuntimeService": {
+      "branches": { "count": 370, "covered": 234, "rate": 0.632432 },
+      "functions": { "count": 66, "covered": 61 },
+      "lines": { "count": 971, "covered": 770 },
+      "path": "src/runtime/service/runtime_service.cpp",
+      "source_sha256": "b7725a2fc342c8349b628ee9c08a74b912b177be08e63881ad29db1e3634b1df"
+    },
+    "RuntimeStateStore": {
+      "branches": { "count": 38, "covered": 29, "rate": 0.763158 },
+      "functions": { "count": 9, "covered": 9 },
+      "lines": { "count": 62, "covered": 62 },
+      "path": "src/runtime/state/runtime_state_store.cpp",
+      "source_sha256": "167e89ae0695129e50f03ea999c53eb8d15740e4df0f3dbe88ea1c482ef2fbb2"
+    },
+    "StageCoordinator": {
+      "branches": { "count": 164, "covered": 34, "rate": 0.207317 },
+      "functions": { "count": 31, "covered": 12 },
+      "lines": { "count": 511, "covered": 159 },
+      "path": "src/runtime/execution/stages/stage_coordinator.cpp",
+      "source_sha256": "f35eff67c4e834b836e2581a98d7df44340405e07f8fa2b3aa6dafe8bdb07fad"
+    }
+  },
+  "schema_version": 1,
+  "status": "reviewed",
+  "toolchain": {
+    "compiler": "Ubuntu clang version 15.0.7",
+    "image_digest": "local-unpinned",
+    "llvm_cov": "Ubuntu LLVM version 15.0.7"
+  }
+}

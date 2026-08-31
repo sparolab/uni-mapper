@@ -20,6 +20,8 @@ set(workflow
   "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/compiler-matrix.yml")
 set(nightly_benchmark_workflow
   "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/nightly-benchmark.yml")
+set(quality_workflow
+  "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/quality-gates.yml")
 
 assert_file_contains(
   "${core_dir}/CMakeLists.txt"
@@ -29,6 +31,21 @@ assert_file_contains(
   "COMPONENT Development"
   "COMPONENT Plugins"
   "COMPONENT Tools")
+assert_file_contains(
+  "${core_dir}/src/adapters/python/pyproject.toml"
+  "name = \"open-lmm\""
+  "version = \"3.0.0\""
+  "requires-python = \">=3.10,<3.11\""
+  "open-lmm-experiment = \"open_lmm.experiments._cli:main\"")
+assert_file_contains(
+  "${core_dir}/src/adapters/python/CMakeLists.txt"
+  "OPEN_LMM_PYTHON_VERSION=\"\${PROJECT_VERSION}\""
+  "target_link_libraries(open_lmm_python_native PRIVATE open_lmm_client)"
+  "PATTERN \"*.json\""
+  "COMPONENT Python")
+assert_file_contains(
+  "${core_dir}/cmake/options.cmake"
+  "option(OPEN_LMM_BUILD_PYTHON \"Build the optional CPython binding\" OFF)")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/ros/CMakeLists.txt"
   "project(open_lmm_ros VERSION 3.0.0"
@@ -95,6 +112,19 @@ assert_file_contains(
   "name: asan-ubsan"
   "name: tsan")
 assert_file_contains(
+  "${quality_workflow}"
+  "pull_request:"
+  "merge_group:"
+  "name: quality / static-high-confidence"
+  "name: quality / fuzz-smoke"
+  "name: quality / critical-coverage"
+  "name: quality / static-broad"
+  "name: quality / fuzz-nightly"
+  "scripts/ci/run_static_analysis.sh required"
+  "scripts/ci/build_fuzz_tests.sh quality-fuzz-smoke"
+  "scripts/ci/run_critical_coverage.sh quality-critical-coverage"
+  "scripts/ci/run_mutation_feasibility.sh quality-mutation-pilot")
+assert_file_contains(
   "${nightly_benchmark_workflow}"
   "OPEN_LMM_BENCHMARK_IMAGE"
   "@sha256:[0-9a-f]{64}"
@@ -110,6 +140,8 @@ if(NOT nightly_mutable_image_build EQUAL -1)
 endif()
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/build_and_test.sh"
+  "-DOPEN_LMM_ENABLE_STRICT_WARNINGS=ON"
+  "scripts/ci/inspect_symbol_visibility.sh"
   "--output-junit"
   "ctest-open_lmm.xml"
   "ctest-open_lmm-ros.xml")
@@ -134,6 +166,67 @@ assert_file_contains(
 assert_file_contains(
   "${workflow}"
   "scripts/ci/check_architecture_policy.sh")
+assert_file_contains(
+  "${core_dir}/cmake/options.cmake"
+  "option(OPEN_LMM_ENABLE_CLANG_TIDY"
+  "option(OPEN_LMM_ENABLE_STRICT_WARNINGS"
+  "option(OPEN_LMM_ENABLE_COVERAGE"
+  "option(OPEN_LMM_ENABLE_FUZZING")
+foreach(quality_script IN ITEMS
+    run_static_analysis.sh
+    build_fuzz_tests.sh
+    run_critical_coverage.sh
+    inspect_symbol_visibility.sh
+    run_mutation_feasibility.sh
+    critical_coverage.py
+    mutation_pilot.py)
+  if(NOT EXISTS
+      "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/${quality_script}")
+    message(FATAL_ERROR "Goal 08 script is missing: ${quality_script}")
+  endif()
+endforeach()
+
+set(critical_sources
+  "${core_dir}/test/quality/coverage/critical_sources.tsv")
+set(critical_tests
+  "${core_dir}/test/quality/coverage/critical_tests.tsv")
+set(critical_baseline
+  "${core_dir}/test/quality/coverage/critical_branch_coverage_baseline.json")
+assert_file_contains("${critical_sources}"
+  "RuntimeStateStore"
+  "PipelineController"
+  "RuntimeService"
+  "FileSetTransaction"
+  "StageCoordinator")
+assert_file_contains("${critical_tests}"
+  "open_lmm_runtime_state_store_tests"
+  "open_lmm_pipeline_controller_tests"
+  "open_lmm_runtime_service_tests"
+  "open_lmm_storage_file_set_tests"
+  "open_lmm_stage_coordinator_tests")
+if(NOT EXISTS "${critical_baseline}")
+  message(FATAL_ERROR "reviewed Goal 08 coverage baseline is missing")
+endif()
+file(READ "${critical_baseline}" critical_baseline_contents)
+string(JSON critical_baseline_schema GET "${critical_baseline_contents}"
+  schema_version)
+string(JSON critical_baseline_status GET "${critical_baseline_contents}"
+  status)
+if(NOT critical_baseline_schema EQUAL 1 OR
+   NOT critical_baseline_status STREQUAL "reviewed")
+  message(FATAL_ERROR
+    "Goal 08 coverage baseline must be schema 1 and reviewed")
+endif()
+foreach(critical_owner IN ITEMS
+    RuntimeStateStore PipelineController RuntimeService FileSetTransaction
+    StageCoordinator)
+  string(JSON owner_branch_count ERROR_VARIABLE owner_json_error
+    GET "${critical_baseline_contents}" owners ${critical_owner} branches count)
+  if(owner_json_error OR owner_branch_count LESS 1)
+    message(FATAL_ERROR
+      "Goal 08 coverage baseline owner is missing/nonzero: ${critical_owner}")
+  endif()
+endforeach()
 
 file(READ "${workflow}" workflow_contents)
 string(FIND "${workflow_contents}" "paths:" paths_filter)
@@ -153,5 +246,33 @@ foreach(action_line IN LISTS action_lines)
      NOT action_ref_length EQUAL 40)
     message(FATAL_ERROR
       "GitHub Action is not pinned to an immutable 40-hex SHA: ${action_line}")
+  endif()
+endforeach()
+
+file(READ "${quality_workflow}" quality_workflow_contents)
+string(FIND "${quality_workflow_contents}" "paths:" quality_paths_filter)
+if(NOT quality_paths_filter EQUAL -1)
+  message(FATAL_ERROR "quality workflow must not use a paths filter")
+endif()
+string(FIND "${quality_workflow_contents}" " calibrate"
+  quality_baseline_rewrite)
+if(NOT quality_baseline_rewrite EQUAL -1)
+  message(FATAL_ERROR
+    "quality workflow must never auto-calibrate/rewrite the reviewed baseline")
+endif()
+string(REGEX MATCHALL "uses:[^\r\n]+" quality_action_lines
+  "${quality_workflow_contents}")
+list(LENGTH quality_action_lines quality_action_count)
+if(quality_action_count LESS 1)
+  message(FATAL_ERROR "quality workflow must use pinned GitHub Actions")
+endif()
+foreach(action_line IN LISTS quality_action_lines)
+  string(REGEX REPLACE "^.*@([0-9a-f]+).*$" "\\1" action_ref
+    "${action_line}")
+  string(LENGTH "${action_ref}" action_ref_length)
+  if(NOT action_ref MATCHES "^[0-9a-f]+$" OR
+     NOT action_ref_length EQUAL 40)
+    message(FATAL_ERROR
+      "Quality GitHub Action is not pinned to 40-hex SHA: ${action_line}")
   endif()
 endforeach()

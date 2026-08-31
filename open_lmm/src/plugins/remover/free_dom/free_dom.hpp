@@ -24,7 +24,7 @@ class FreeDom : public IOfflineRemoverPlugin {
  public:
   FreeDom(const FreeDomParams& params);
   // explicit FreeDom(Config config);
-  ~FreeDom();
+  ~FreeDom() override;
 
   void run(
       pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,

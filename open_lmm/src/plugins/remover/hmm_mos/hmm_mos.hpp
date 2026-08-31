@@ -20,7 +20,7 @@ class HmmMos : public IOnlineRemoverPlugin {
  public:
   HmmMos(const HmmMosParams& params);
   // explicit HmmMos(Config config);
-  ~HmmMos();
+  ~HmmMos() override;
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr run(
       pcl::PointCloud<pcl::PointXYZI>::Ptr& scan,

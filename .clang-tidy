@@ -1,0 +1,20 @@
+---
+Checks: >-
+  -*,
+  bugprone-infinite-loop,
+  bugprone-misplaced-widening-cast,
+  bugprone-sizeof-expression,
+  bugprone-string-integer-assignment,
+  bugprone-suspicious-memory-comparison,
+  bugprone-suspicious-memset-usage,
+  bugprone-undefined-memory-manipulation,
+  bugprone-use-after-move,
+  performance-no-automatic-move,
+  modernize-use-override
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/open_lmm/(src|include/open_lmm)/.*'
+FormatStyle: none
+CheckOptions:
+  - key: modernize-use-override.IgnoreDestructors
+    value: 'false'
+...
