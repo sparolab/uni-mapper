@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import math
 import sys
 import threading
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .conversion import VisualizationCandidate, scene_key, visualization_candidate
+from .conversion import (
+    VisualizationCandidate,
+    agent_color,
+    scene_key,
+    visualization_candidate,
+)
 
 if TYPE_CHECKING:
     import open_lmm
@@ -71,12 +77,52 @@ class ViserAdapter:
         self._catalog_refresh = False
         self._generation = 0
         self._catalog: set[str] = set()
+        self._colors: dict[str, tuple[int, int, int]] = {}
         self._requested: dict[str, int] = {}
         self._pending: dict[str, int] = {}
         self._displayed: dict[str, int] = {}
         self._handles: dict[str, _SceneHandles] = {}
         self._subscription: Any | None = None
         self._worker: threading.Thread | None = None
+        self._commit_observers: list[Callable[[str, int], None]] = []
+        self._presentation_visible = True
+
+    def add_commit_observer(self, observer: Callable[[str, int], None]) -> None:
+        if not callable(observer):
+            raise ValueError("commit observer must be callable")
+        with self._condition:
+            if self._state == "closed":
+                raise RuntimeError("ViserAdapter is closed")
+            self._commit_observers.append(observer)
+
+    def remove_commit_observer(self, observer: Callable[[str, int], None]) -> None:
+        with self._condition:
+            self._commit_observers = [
+                candidate
+                for candidate in self._commit_observers
+                if candidate != observer
+            ]
+
+    def set_presentation_visible(self, visible: bool) -> None:
+        """Show or hide the committed presentation without discarding it.
+
+        Alignment review is a derived, temporary presentation.  It may hide
+        the committed map to avoid presenting two indistinguishable owners,
+        but the last valid committed handles stay alive and are restored when
+        review ends.
+        """
+        requested = bool(visible)
+        with self._condition:
+            if self._state == "closed" or requested == self._presentation_visible:
+                return
+            handles = tuple(self._handles.values())
+            with self._server.atomic():
+                for owned in handles:
+                    if owned.points is not None:
+                        owned.points.visible = requested
+                    if owned.trajectory is not None:
+                        owned.trajectory.visible = requested
+            self._presentation_visible = requested
 
     def start(self) -> None:
         with self._condition:
@@ -158,11 +204,13 @@ class ViserAdapter:
         if any(not isinstance(agent, str) or not agent for agent in agents):
             raise ValueError("runtime snapshot contains an invalid agent catalog")
         authoritative = set(agents)
+        colors = {agent: agent_color(index) for index, agent in enumerate(agents)}
         with self._condition:
             if self._closing:
                 return
             removed = self._catalog - authoritative
             self._catalog = authoritative
+            self._colors = colors
             for agent in removed:
                 self._pending.pop(agent, None)
                 self._requested.pop(agent, None)
@@ -209,7 +257,11 @@ class ViserAdapter:
                 agent, preview_voxel_size_m=self._preview_voxel_size_m
             )
             queried_revision = getattr(snapshot, "revision", None)
-            candidate = visualization_candidate(snapshot)
+            with self._condition:
+                color = self._colors.get(agent)
+            if color is None:
+                return
+            candidate = visualization_candidate(snapshot, color)
         except Exception as error:
             self._diagnostic(
                 f"agent={agent} generation={generation} "
@@ -237,6 +289,12 @@ class ViserAdapter:
                 return
             self._handles[agent] = handles
             self._displayed[agent] = candidate.revision
+            observers = tuple(self._commit_observers)
+        for observer in observers:
+            try:
+                observer(agent, candidate.revision)
+            except Exception as error:
+                self._diagnostic(f"agent={agent} commit observer", error)
 
     def _publish_candidate(self, candidate: VisualizationCandidate) -> _SceneHandles:
         key = scene_key(candidate.agent)
@@ -252,6 +310,7 @@ class ViserAdapter:
                     point_size=self._point_size,
                     precision="float32",
                 )
+                points_handle.visible = self._presentation_visible
             if candidate.trajectory is None:
                 if trajectory_handle is not None:
                     trajectory_handle.remove()
@@ -260,10 +319,11 @@ class ViserAdapter:
                 trajectory_handle = self._server.scene.add_line_segments(
                     f"/open_lmm/agents/{key}/trajectory",
                     points=candidate.trajectory,
-                    colors=(255, 160, 30),
+                    colors=candidate.color,
                     thickness=self._trajectory_thickness,
                     thickness_units="world",
                 )
+                trajectory_handle.visible = self._presentation_visible
         return _SceneHandles(points_handle, trajectory_handle)
 
     def _remove_agent_scene(self, agent: str) -> None:

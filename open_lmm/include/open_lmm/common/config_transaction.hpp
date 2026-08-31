@@ -49,4 +49,34 @@ struct RuntimeReplaceReceipt {
   uint64_t config_revision = 0;
 };
 
+struct CommittedConfigDocument {
+  ConfigDomain domain = ConfigDomain::kGlobal;
+  std::string canonical_json;
+  std::optional<std::string> selected_document;
+};
+
+// Public, immutable copy of committed configuration source. Filesystem owner
+// paths and internal runtime/config objects deliberately remain private.
+struct CommittedConfigDocuments {
+  uint64_t runtime_revision = 0;
+  uint64_t config_revision = 0;
+  std::vector<CommittedConfigDocument> documents;
+};
+
+// One schema-validated candidate discovered below the committed config root.
+// selected_document is always a relative logical selector; owner paths remain
+// private to the runtime.
+struct ConfigDocumentCandidate {
+  ConfigDomain domain = ConfigDomain::kGlobal;
+  std::string model;
+  std::string selected_document;
+  std::string canonical_json;
+};
+
+struct ConfigCandidateCatalog {
+  uint64_t runtime_revision = 0;
+  uint64_t config_revision = 0;
+  std::vector<ConfigDocumentCandidate> candidates;
+};
+
 }  // namespace open_lmm

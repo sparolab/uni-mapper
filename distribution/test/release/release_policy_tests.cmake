@@ -23,6 +23,8 @@ set(experiment_dir
   "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/experiment")
 set(viser_dir
   "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser")
+set(iridescence_python_dir
+  "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence")
 set(workflow
   "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/compiler-matrix.yml")
 set(nightly_benchmark_workflow
@@ -69,6 +71,14 @@ assert_file_contains(
   "\"viser>=1.1,<2\""
   "open-lmm-viser = \"open_lmm_viser.cli:main\"")
 assert_file_contains(
+  "${iridescence_python_dir}/pyproject.toml"
+  "name = \"open-lmm-iridescence\""
+  "version = \"3.0.0\""
+  "requires-python = \">=3.10,<3.11\""
+  "\"open-lmm==3.0.0\""
+  "\"pyridescence==1.0.3\""
+  "open-lmm-iridescence = \"open_lmm_iridescence.cli:main\"")
+assert_file_contains(
   "${experiment_dir}/packaging/RELEASE_POLICY.md"
   "open-lmm-experiment` 3.0.0"
   "open-lmm==3.0.0")
@@ -81,6 +91,16 @@ assert_file_contains(
   "viser"
   "Apache-2.0"
   "dist-info/licenses/LICENSE")
+assert_file_contains(
+  "${iridescence_python_dir}/packaging/RELEASE_POLICY.md"
+  "open-lmm-iridescence"
+  "pyridescence==1.0.3"
+  "Xvfb")
+assert_file_contains(
+  "${iridescence_python_dir}/packaging/THIRD_PARTY_NOTICES.md"
+  "pyridescence 1.0.3"
+  "MIT"
+  "license metadata")
 assert_file_contains(
   "${python_dir}/CMakeLists.txt"
   "project(open_lmm_python VERSION 3.0.0"
@@ -328,6 +348,7 @@ assert_file_contains(
   "python\t3.0.0\tpython-venv\twheel\tpython-sdk"
   "experiment\t3.0.0\tpython-venv\twheel\texperiment-cli\tpython=3.0.0\tapplications/python/experiment"
   "viser\t3.0.0\tpython-venv\twheel\tviser-application\tpython=3.0.0\tapplications/python/viser"
+  "iridescence-python\t3.0.0\tpython-venv\twheel\tiridescence-application\tpython=3.0.0\tapplications/python/iridescence"
   "ros\t3.0.0\tros-overlay\tament-install")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/distribution/manifests/legacy-owner-transfers-v3.tsv"

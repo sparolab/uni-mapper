@@ -49,9 +49,17 @@ function(openlmm_python_install_runtime_closure core_prefix manifest)
 
   list(SORT logical_names)
   set(expected_logical_names
+    libcreate_dufomap.so
+    libcreate_erasor.so
     libcreate_free_dom.so
+    libcreate_hmm_mos.so
+    libcreate_otd.so
     libcreate_scan_context.so
+    libcreate_solid.so
+    libdufomap.so
+    liberasor.so
     libfree_dom.so
+    libhmm_mos.so
     libopen_lmm_algorithm_config.so
     libopen_lmm_backend_optimizer.so
     libopen_lmm_client.so
@@ -62,7 +70,8 @@ function(openlmm_python_install_runtime_closure core_prefix manifest)
     libopen_lmm_dynamic_remover.so
     libopen_lmm_loop_detector.so
     libopen_lmm_map_server.so
-    libopen_lmm_utils.so)
+    libopen_lmm_utils.so
+    libotd.so)
   list(SORT expected_logical_names)
   if(NOT logical_names STREQUAL expected_logical_names)
     message(FATAL_ERROR
@@ -79,8 +88,13 @@ function(openlmm_python_install_runtime_closure core_prefix manifest)
   endforeach()
   list(SORT installed_plugin_names)
   set(expected_plugin_names
+    libcreate_dufomap.so
+    libcreate_erasor.so
     libcreate_free_dom.so
-    libcreate_scan_context.so)
+    libcreate_hmm_mos.so
+    libcreate_otd.so
+    libcreate_scan_context.so
+    libcreate_solid.so)
   list(SORT expected_plugin_names)
   if(NOT installed_plugin_names STREQUAL expected_plugin_names)
     message(FATAL_ERROR
@@ -88,15 +102,4 @@ function(openlmm_python_install_runtime_closure core_prefix manifest)
       "expected: ${expected_plugin_names}\nactual: ${installed_plugin_names}")
   endif()
 
-  foreach(forbidden_name IN ITEMS
-      libcreate_solid.so libcreate_hmm_mos.so libcreate_dufomap.so
-      libcreate_otd.so libcreate_erasor.so libsolid.so libhmm_mos.so
-      libdufomap.so libotd.so liberasor.so libMap.so)
-    file(GLOB forbidden_artifacts
-      "${core_library_directory}/${forbidden_name}*")
-    if(forbidden_artifacts)
-      message(FATAL_ERROR
-        "wheel core prefix has forbidden plugin artifact: ${forbidden_artifacts}")
-    endif()
-  endforeach()
 endfunction()

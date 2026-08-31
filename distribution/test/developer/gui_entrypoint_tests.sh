@@ -21,6 +21,8 @@ fake_bin="$test_root/fake-bin"
 operation_log="$test_root/operations.log"
 mkdir -p "$repository/open_lmm/config" \
   "$repository/applications/gui" "$repository/applications/cli" \
+  "$repository/applications/python/viser" \
+  "$repository/applications/python/iridescence" \
   "$repository/bindings/python/examples" \
   "$repository/ros" "$repository/scripts/dev" "$fake_bin"
 cp "$source_makefile" "$repository/Makefile"
@@ -32,6 +34,10 @@ printf '%s\n' 'pip==24.0' \
   > "$repository/bindings/python/build-constraints.txt"
 printf '%s\n' 'print("fake Python example")' \
   > "$repository/bindings/python/examples/basic_runtime.py"
+printf '%s\n' '[project]' 'name = "open-lmm-viser"' \
+  > "$repository/applications/python/viser/pyproject.toml"
+printf '%s\n' '[project]' 'name = "open-lmm-iridescence"' \
+  > "$repository/applications/python/iridescence/pyproject.toml"
 : > "$operation_log"
 
 cat > "$repository/bindings/python/build_local_wheel.sh" <<'FAKE_WHEEL'
@@ -154,6 +160,27 @@ if [[ ${1:-} == -m && ${2:-} == venv ]]; then
   exit 0
 fi
 if [[ ${1:-} == -m && ${2:-} == pip ]]; then
+  if [[ $* == *"applications/python/viser"* ]]; then
+    command_path="$(dirname "$0")/open-lmm-viser"
+    cat > "$command_path" <<'FAKE_VISER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'viser-run|%s\n' "$*" >> "$OPEN_LMM_TEST_LOG"
+FAKE_VISER
+    chmod +x "$command_path"
+  elif [[ $* == *"applications/python/iridescence"* ]]; then
+    command_path="$(dirname "$0")/open-lmm-iridescence"
+    cat > "$command_path" <<'FAKE_IRIDESCENCE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'iridescence-run|%s\n' "$*" >> "$OPEN_LMM_TEST_LOG"
+FAKE_IRIDESCENCE
+    chmod +x "$command_path"
+  elif [[ $* == *"uninstall"* && $* == *"open-lmm-viser"* ]]; then
+    rm -f -- "$(dirname "$0")/open-lmm-viser"
+  elif [[ $* == *"uninstall"* && $* == *"open-lmm-iridescence"* ]]; then
+    rm -f -- "$(dirname "$0")/open-lmm-iridescence"
+  fi
   exit 0
 fi
 exit 0
@@ -364,8 +391,12 @@ done
 if [[ -z $python_configure ||
       $python_configure != *"-DCMAKE_INSTALL_PREFIX=$repository/install/dev/python-core"* ||
       $python_configure != *"-DOPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT=ON"* ||
+      $python_configure != *"-DOPEN_LMM_BUILD_DESCRIPTOR_SOLID=ON"* ||
+      $python_configure != *"-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS=ON"* ||
+      $python_configure != *"-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP=ON"* ||
+      $python_configure != *"-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD=ON"* ||
       $python_configure != *"-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM=ON"* ||
-      $python_configure != *"-DOPEN_LMM_BUILD_DESCRIPTOR_SOLID=OFF"* ]]; then
+      $python_configure != *"-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR=ON"* ]]; then
   echo "Python build did not use the exact isolated wheel-core profile" >&2
   printf '%s\n' "${python_build_operations[@]}" >&2
   exit 1
@@ -398,6 +429,83 @@ if run_make python-build PYTHON_JOBS=0 >/dev/null 2>&1; then
   exit 1
 fi
 
+run_make viser-install
+if [[ ! -x "$repository/install/dev/python-venv/bin/open-lmm-viser" ]]; then
+  echo "Viser install did not create its application command" >&2
+  exit 1
+fi
+viser_run_start=$(wc -l < "$operation_log")
+run_make viser-run CONFIG="$custom_config" \
+  VISER_HOST=127.0.0.2 VISER_PORT=9090 VISER_PREVIEW_VOXEL_SIZE_M=0.4
+expected_viser_run="viser-run|$custom_config --host 127.0.0.2 --port 9090 --preview-voxel-size-m 0.4"
+if [[ $(wc -l < "$operation_log") -ne $((viser_run_start + 1)) ||
+      $(tail -n 1 "$operation_log") != "$expected_viser_run" ]]; then
+  echo "viser-run rebuilt artifacts or failed to preserve its arguments" >&2
+  exit 1
+fi
+viser_auto_run_start=$(wc -l < "$operation_log")
+run_make viser-run CONFIG="$custom_config" VISER_AUTO_RUN=true
+expected_viser_auto_run="viser-run|$custom_config --host 127.0.0.1 --port 8080 --preview-voxel-size-m 0.2 --auto-run"
+if [[ $(wc -l < "$operation_log") -ne $((viser_auto_run_start + 1)) ||
+      $(tail -n 1 "$operation_log") != "$expected_viser_auto_run" ]]; then
+  echo "viser-run did not preserve explicit auto-run opt-in" >&2
+  exit 1
+fi
+if run_make viser-run CONFIG="$test_root/missing" >/dev/null 2>&1; then
+  echo "viser-run accepted a missing config directory" >&2
+  exit 1
+fi
+if run_make viser-run CONFIG="$custom_config" VISER_AUTO_RUN=invalid >/dev/null 2>&1; then
+  echo "viser-run accepted an invalid VISER_AUTO_RUN value" >&2
+  exit 1
+fi
+
+run_make viser CONFIG="$custom_config" PYTHON=python3.10 PYTHON_JOBS=2
+if [[ $(tail -n 1 "$operation_log") != \
+      "viser-run|$custom_config --host 127.0.0.1 --port 8080 --preview-voxel-size-m 0.2" ]]; then
+  echo "canonical Viser target did not compose Python, install and run" >&2
+  exit 1
+fi
+
+run_make iridescence-install
+if [[ ! -x "$repository/install/dev/python-venv/bin/open-lmm-iridescence" ]]; then
+  echo "Python Iridescence install did not create its application command" >&2
+  exit 1
+fi
+iridescence_run_start=$(wc -l < "$operation_log")
+DISPLAY=:99 run_make iridescence-run CONFIG="$custom_config" \
+  IRIDESCENCE_PREVIEW_VOXEL_SIZE_M=0.4
+expected_iridescence_run="iridescence-run|$custom_config --preview-voxel-size-m 0.4"
+if [[ $(wc -l < "$operation_log") -ne $((iridescence_run_start + 1)) ||
+      $(tail -n 1 "$operation_log") != "$expected_iridescence_run" ]]; then
+  echo "iridescence-run rebuilt artifacts or failed to preserve its arguments" >&2
+  exit 1
+fi
+iridescence_auto_start=$(wc -l < "$operation_log")
+DISPLAY=:99 run_make iridescence-run CONFIG="$custom_config" \
+  IRIDESCENCE_AUTO_RUN=true
+expected_iridescence_auto="iridescence-run|$custom_config --auto-run"
+if [[ $(wc -l < "$operation_log") -ne $((iridescence_auto_start + 1)) ||
+      $(tail -n 1 "$operation_log") != "$expected_iridescence_auto" ]]; then
+  echo "iridescence-run did not preserve explicit auto-run opt-in" >&2
+  exit 1
+fi
+if env -u DISPLAY -u WAYLAND_DISPLAY PATH="$fake_bin:$PATH" \
+    OPEN_LMM_TEST_LOG="$operation_log" make --no-print-directory \
+      -C "$repository" iridescence-run CONFIG="$custom_config" >/dev/null 2>&1; then
+  echo "Python Iridescence accepted a headless environment" >&2
+  exit 1
+fi
+if DISPLAY=:99 run_make iridescence-run CONFIG="$test_root/missing" >/dev/null 2>&1; then
+  echo "Python Iridescence accepted a missing config directory" >&2
+  exit 1
+fi
+if DISPLAY=:99 run_make iridescence-run CONFIG="$custom_config" \
+    IRIDESCENCE_AUTO_RUN=invalid >/dev/null 2>&1; then
+  echo "Python Iridescence accepted an invalid auto-run value" >&2
+  exit 1
+fi
+
 if env -u DISPLAY -u WAYLAND_DISPLAY PATH="$fake_bin:$PATH" \
     OPEN_LMM_TEST_LOG="$operation_log" make --no-print-directory \
       -C "$repository" CC=cc CXX=c++ gui-run >/dev/null 2>&1; then
@@ -418,6 +526,18 @@ if [[ -e "$repository/build/dev/ros" ||
       -e "$repository/install/dev/ros-overlay" ||
       ! -e "$repository/install/dev/lib/libopen_lmm_client.so" ]]; then
   echo "ros-clean escaped its generated overlay ownership" >&2
+  exit 1
+fi
+run_make viser-clean
+if [[ -e "$repository/install/dev/python-venv/bin/open-lmm-viser" ||
+      ! -x "$repository/install/dev/python-venv/bin/python" ]]; then
+  echo "viser-clean escaped its application package ownership" >&2
+  exit 1
+fi
+run_make iridescence-clean
+if [[ -e "$repository/install/dev/python-venv/bin/open-lmm-iridescence" ||
+      ! -x "$repository/install/dev/python-venv/bin/python" ]]; then
+  echo "iridescence-clean escaped its application package ownership" >&2
   exit 1
 fi
 run_make python-clean
@@ -492,4 +612,4 @@ for forbidden in add_subdirectory; do
   fi
 done
 
-echo "core + GUI + CLI + Python + ROS developer entrypoint verified"
+echo "core + GUI + CLI + Python + Viser + Python Iridescence + ROS developer entrypoint verified"

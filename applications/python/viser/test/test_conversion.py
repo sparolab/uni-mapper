@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from open_lmm_viser.conversion import (
+    agent_color,
     point_cloud_payload,
     scene_key,
     trajectory_segments,
@@ -86,6 +87,29 @@ class ConversionTests(unittest.TestCase):
         candidate = visualization_candidate(snapshot)
         self.assertIsNone(candidate.point_cloud)
         self.assertIsNone(candidate.trajectory)
+
+    def test_agent_palette_matches_iridescence_and_is_distinct(self) -> None:
+        expected = (
+            (230, 51, 51),
+            (51, 166, 255),
+            (51, 217, 89),
+            (255, 166, 26),
+            (166, 89, 255),
+            (26, 217, 217),
+            (255, 89, 191),
+        )
+        self.assertEqual(tuple(agent_color(index) for index in range(7)), expected)
+        self.assertEqual(len(set(agent_color(index) for index in range(255))), 255)
+        self.assertEqual(agent_color(3), agent_color(3))
+
+    def test_agent_point_color_preserves_hue_across_intensity(self) -> None:
+        source = np.array(
+            [[0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 10.0]],
+            dtype=np.float32,
+        )
+        payload = point_cloud_payload(source, (100, 200, 50))
+        np.testing.assert_array_equal(payload.colors[1], (100, 200, 50))
+        self.assertTrue(np.all(payload.colors[0] < payload.colors[1]))
 
 
 if __name__ == "__main__":

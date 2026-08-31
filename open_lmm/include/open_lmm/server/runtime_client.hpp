@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace open_lmm {
@@ -36,6 +37,10 @@ class RuntimeClient {
   Result<void> Wait(JobHandle job);
   Result<RuntimeSnapshot> Snapshot() const;
   Result<std::vector<NodeDescriptor>> NodeDescriptors() const;
+  Result<CommittedConfigDocuments> ConfigDocuments() const;
+  Result<ConfigCandidateCatalog> ConfigCandidates() const;
+  Result<std::vector<std::string>> RecentLogs(
+      std::size_t max_lines = 512) const;
   Result<VisualizationSnapshot> Visualization(const AgentId& agent) const;
   Result<VisualizationSnapshot> Visualization(
       const VisualizationQuery& query) const;

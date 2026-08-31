@@ -44,6 +44,8 @@ class StageExecutor {
   void RecordRecoveryRequired(
       std::shared_ptr<const Error> recovery_required) noexcept;
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const;
+  [[nodiscard]] Result<CommittedConfigDocuments> ConfigDocuments() const;
+  [[nodiscard]] Result<ConfigCandidateCatalog> ConfigCandidates() const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const VisualizationQuery& query) const;
   [[nodiscard]] StageExecutorDiagnostics Diagnostics() const;

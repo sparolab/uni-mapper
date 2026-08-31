@@ -9,6 +9,8 @@ int main() {
   const auto agent = open_lmm::AgentId::Parse("consumer");
   if (!agent) return 2;
   (void)client.NodeDescriptors();
+  (void)client.ConfigDocuments();
+  (void)client.ConfigCandidates();
   (void)client.Visualization(agent.Value());
   (void)client.AlignmentFeedback();
   (void)client.Snapshot();

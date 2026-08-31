@@ -47,8 +47,9 @@ its ranges are declared in `pyproject.toml`, while the constraints file is the
 reviewed local baseline.
 
 The core prefix must be a source-free OpenLMM 3.0.0 install built with the
-reviewed wheel profile: ScanContext and FreeDOM enabled and the other built-in
-algorithm plugins disabled. The local wheel contains the native bridge and the
+reviewed wheel profile containing all seven built-in algorithm plugins:
+ScanContext, SOLiD, HMM-MOS, DUFOMap, OTD, FreeDOM and ERASOR. The local wheel
+contains the native bridge and the
 exact OpenLMM-owned runtime/plugin closure recorded in
 `packaging/open_lmm-python-runtime-closure.tsv`. The bridge itself links only
 to installed `open_lmm::client`; packaging owns DSO staging. The wheel must not

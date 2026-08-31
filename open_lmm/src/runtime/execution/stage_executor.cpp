@@ -1,14 +1,149 @@
 #include "stage_executor.hpp"
 
 #include <algorithm>
+#include <array>
+#include <map>
 #include <utility>
+
+#include <nlohmann/json.hpp>
 
 #include <runtime/state/artifact_repository.hpp>
 #include <runtime/composition/runtime_bootstrapper.hpp>
+#include <config/document/config.hpp>
+#include <open_lmm/utils/config_schema.hpp>
 #include <foundation/logging/logging.hpp>
 
 namespace open_lmm {
 namespace {
+
+namespace fs = std::filesystem;
+
+constexpr std::size_t kMaximumCatalogEntries = 64;
+constexpr std::size_t kMaximumCandidatesPerDomain = 16;
+
+bool IsWithin(const fs::path& path, const fs::path& root) {
+  const fs::path relative = path.lexically_relative(root);
+  return !relative.empty() && *relative.begin() != "..";
+}
+
+Result<std::string> CandidateModel(ConfigDocumentKind kind,
+                                   const nlohmann::json& document) {
+  try {
+    if (kind == ConfigDocumentKind::kLoopDetector) {
+      const auto& loop = document.at("loop_detector");
+      const std::string type = loop.at("loop_detector_type").get<std::string>();
+      const std::string model = loop.at("model").get<std::string>();
+      if (type == "kdtree" && (model == "scan_context" || model == "solid")) {
+        return Result<std::string>::Ok(model);
+      }
+    } else if (kind == ConfigDocumentKind::kDynamicRemover) {
+      const std::string model =
+          document.at("dynamic_remover").at("model").get<std::string>();
+      static constexpr std::array<std::string_view, 5> kAllowed = {
+          "erasor", "dufomap", "free_dom", "hmm_mos", "otd"};
+      if (std::find(kAllowed.begin(), kAllowed.end(), model) != kAllowed.end()) {
+        return Result<std::string>::Ok(model);
+      }
+    }
+  } catch (const std::exception& error) {
+    return Result<std::string>::Failure(Error::ParseError(
+        std::string("candidate model selector is invalid: ") + error.what()));
+  }
+  return Result<std::string>::Failure(
+      Error::InvalidArgument("candidate model is not allowed"));
+}
+
+Result<void> AppendCandidates(const RuntimeConfigDocument& committed,
+                              const RuntimeConfigDocument& root_document,
+                              const SchemaRegistry& registry,
+                              ConfigDomain domain, ConfigDocumentKind kind,
+                              ConfigCandidateCatalog& catalog) {
+  std::error_code error;
+  const fs::path root = fs::weakly_canonical(root_document.path.parent_path(), error);
+  if (error) {
+    return Result<void>::Failure(Error::IoError(
+        "failed to resolve committed config root: " + error.message()));
+  }
+  const fs::path directory = fs::weakly_canonical(committed.path.parent_path(), error);
+  if (error || !IsWithin(directory, root)) {
+    return Result<void>::Failure(Error::InvalidArgument(
+        "candidate directory is outside the committed config root"));
+  }
+
+  std::vector<fs::path> paths;
+  fs::directory_iterator iterator(directory, error);
+  fs::directory_iterator end;
+  if (error) {
+    return Result<void>::Failure(Error::IoError(
+        "failed to enumerate config candidate directory: " + error.message()));
+  }
+  std::size_t entries = 0;
+  for (; iterator != end; iterator.increment(error)) {
+    if (error) {
+      return Result<void>::Failure(Error::IoError(
+          "failed to enumerate config candidate directory: " + error.message()));
+    }
+    if (++entries > kMaximumCatalogEntries) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "config candidate directory exceeds entry limit"));
+    }
+    if (iterator->path().extension() == ".json") paths.push_back(iterator->path());
+  }
+  if (error) {
+    return Result<void>::Failure(Error::IoError(
+        "failed to enumerate config candidate directory: " + error.message()));
+  }
+  std::sort(paths.begin(), paths.end());
+  if (paths.size() > kMaximumCandidatesPerDomain) {
+    return Result<void>::Failure(
+        Error::InvalidArgument("config candidate count exceeds domain limit"));
+  }
+
+  std::map<std::string, fs::path> models;
+  for (const auto& path : paths) {
+    const fs::path canonical = fs::weakly_canonical(path, error);
+    if (error || !IsWithin(canonical, root)) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "config candidate is outside the committed config root"));
+    }
+    if (!fs::is_regular_file(canonical, error) || error) {
+      return Result<void>::Failure(
+          Error::InvalidArgument("config candidate must be a regular file"));
+    }
+    auto loaded = LoadConfigFileBounded(
+        canonical, SchemaLimits{}.maximum_document_bytes);
+    if (!loaded) return Result<void>::Failure(loaded.GetError());
+    nlohmann::json raw;
+    try {
+      raw = nlohmann::json::parse(loaded.Value().ToJson());
+    } catch (const std::exception& parse_error) {
+      return Result<void>::Failure(Error::ParseError(
+          std::string("candidate snapshot is invalid: ") + parse_error.what()));
+    }
+    const char* domain_key = kind == ConfigDocumentKind::kLoopDetector
+                                 ? "loop_detector"
+                                 : "dynamic_remover";
+    if (!raw.contains(domain_key)) continue;
+    // Stale or unrelated JSON may share a directory with active module
+    // documents. Only recognized production models enter the trusted catalog;
+    // recognized models must then pass the complete schema below.
+    auto raw_model = CandidateModel(kind, raw);
+    if (!raw_model) continue;
+    auto validated = registry.ParseAndValidate(
+        kind, raw.dump(), canonical.string());
+    if (!validated) return Result<void>::Failure(validated.GetError());
+    const std::string model = std::move(raw_model).Value();
+    if (!models.emplace(model, canonical).second) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "duplicate config candidate model: " + model));
+    }
+    const fs::path selector = canonical.lexically_relative(root);
+    catalog.candidates.push_back(
+        {domain, model, selector.generic_string(),
+         validated.Value().CanonicalJson()});
+  }
+  return Result<void>::Ok();
+}
 
 class ExecutionLease {
  public:
@@ -245,6 +380,99 @@ CommittedRuntimeSnapshot StageExecutor::Snapshot() const {
   }
   snapshot.recovery_required = authority.recovery_required;
   return snapshot;
+}
+
+Result<CommittedConfigDocuments> StageExecutor::ConfigDocuments() const {
+  const auto state = CommittedState();
+  if (!state || !state->config || !state->config->documents) {
+    return Result<CommittedConfigDocuments>::Failure(
+        Error::InvalidArgument("committed config documents are unavailable"));
+  }
+  const auto& source = *state->config->documents;
+  nlohmann::ordered_json root;
+  try {
+    root = nlohmann::ordered_json::parse(source.root.canonical_json);
+  } catch (const std::exception& error) {
+    return Result<CommittedConfigDocuments>::Failure(
+        Error::ParseError(std::string("committed root config is invalid: ") +
+                          error.what()));
+  }
+
+  const auto selected = [&root](const char* key)
+      -> Result<std::optional<std::string>> {
+    try {
+      const auto& value = root.at("global").at(key);
+      if (!value.is_string() || value.get_ref<const std::string&>().empty()) {
+        return Result<std::optional<std::string>>::Failure(
+            Error::InvalidArgument(std::string("committed selector is invalid: ") +
+                                   key));
+      }
+      return Result<std::optional<std::string>>::Ok(
+          value.get<std::string>());
+    } catch (const std::exception& error) {
+      return Result<std::optional<std::string>>::Failure(
+          Error::ParseError(std::string("committed selector is missing: ") +
+                            key + ": " + error.what()));
+    }
+  };
+
+  CommittedConfigDocuments result;
+  result.runtime_revision = state->revision;
+  result.config_revision = state->config->revision;
+  result.documents.push_back(
+      {ConfigDomain::kGlobal, source.root.canonical_json, std::nullopt});
+  const struct {
+    ConfigDomain domain;
+    const RuntimeConfigDocument* document;
+    const char* selector;
+  } modules[] = {
+      {ConfigDomain::kDataLoader, &source.data_loader, "config_data_loader"},
+      {ConfigDomain::kLoopDetector, &source.loop_detector,
+       "config_loop_detector"},
+      {ConfigDomain::kOptimizer, &source.optimizer,
+       "config_backend_optimizer"},
+      {ConfigDomain::kDynamicRemover, &source.dynamic_remover,
+       "config_dynamic_remover"},
+      {ConfigDomain::kMapSave, &source.map_server, "config_map_server"},
+  };
+  for (const auto& module : modules) {
+    auto selector = selected(module.selector);
+    if (!selector) {
+      return Result<CommittedConfigDocuments>::Failure(selector.GetError());
+    }
+    result.documents.push_back(
+        {module.domain, module.document->canonical_json,
+         std::move(selector).Value()});
+  }
+  return Result<CommittedConfigDocuments>::Ok(std::move(result));
+}
+
+Result<ConfigCandidateCatalog> StageExecutor::ConfigCandidates() const {
+  const auto state = CommittedState();
+  if (!state || !state->config || !state->config->documents) {
+    return Result<ConfigCandidateCatalog>::Failure(
+        Error::InvalidArgument("committed config documents are unavailable"));
+  }
+  const auto& config = *state->config;
+  const auto& documents = *config.documents;
+  const SchemaRegistry& registry = config.schema_registry
+                                       ? *config.schema_registry
+                                       : BuiltinConfigSchemaRegistry();
+  ConfigCandidateCatalog result;
+  result.runtime_revision = state->revision;
+  result.config_revision = config.revision;
+  auto loop = AppendCandidates(
+      documents.loop_detector, documents.root, registry,
+      ConfigDomain::kLoopDetector, ConfigDocumentKind::kLoopDetector, result);
+  if (!loop) return Result<ConfigCandidateCatalog>::Failure(loop.GetError());
+  auto remover = AppendCandidates(
+      documents.dynamic_remover, documents.root, registry,
+      ConfigDomain::kDynamicRemover, ConfigDocumentKind::kDynamicRemover,
+      result);
+  if (!remover) {
+    return Result<ConfigCandidateCatalog>::Failure(remover.GetError());
+  }
+  return Result<ConfigCandidateCatalog>::Ok(std::move(result));
 }
 
 void StageExecutor::PublishEmptyVisualization() {

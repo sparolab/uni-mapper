@@ -26,6 +26,18 @@ add_test(NAME open_lmm_viser_python_unit_tests
     /usr/bin/python3 -m unittest discover
     -s "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser/test"
     -v)
+add_test(NAME open_lmm_iridescence_python_unit_tests
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "PYTHONPATH=${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/package"
+    /usr/bin/python3 -m unittest discover
+    -s "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/test"
+    -v)
+add_test(NAME open_lmm_iridescence_xvfb_smoke_tests
+  COMMAND bash
+    "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/test/xvfb_smoke.sh"
+    "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/iridescence/package")
+set_tests_properties(open_lmm_iridescence_xvfb_smoke_tests PROPERTIES
+  SKIP_RETURN_CODE 77 TIMEOUT 20)
 add_test(NAME open_lmm_replay_fetch_tests
   COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/replay/replay_fetch_tests.sh"
     "${OPEN_LMM_REPOSITORY_ROOT}/scripts/replay/fetch_replay_data.sh")

@@ -775,6 +775,30 @@ Result<std::vector<NodeDescriptor>> RuntimeService::NodeDescriptors() const {
                : Result<std::vector<NodeDescriptor>>::Failure(lease.GetError());
 }
 
+Result<CommittedConfigDocuments> RuntimeService::ConfigDocuments() const {
+  auto lease = AcquireOperation(false);
+  return lease ? lease.Value().instance->port->ConfigDocuments()
+               : Result<CommittedConfigDocuments>::Failure(lease.GetError());
+}
+
+Result<ConfigCandidateCatalog> RuntimeService::ConfigCandidates() const {
+  auto lease = AcquireOperation(false);
+  return lease ? lease.Value().instance->port->ConfigCandidates()
+               : Result<ConfigCandidateCatalog>::Failure(lease.GetError());
+}
+
+Result<std::vector<std::string>> RuntimeService::RecentLogs(
+    std::size_t max_lines) const {
+  if (max_lines == 0 || max_lines > 512) {
+    return Result<std::vector<std::string>>::Failure(
+        Error::InvalidArgument("max_lines must be between 1 and 512"));
+  }
+  auto lease = AcquireOperation(false);
+  return lease ? Result<std::vector<std::string>>::Ok(
+                     RecentRuntimeLogs(max_lines))
+               : Result<std::vector<std::string>>::Failure(lease.GetError());
+}
+
 Result<VisualizationSnapshot> RuntimeService::Visualization(
     const AgentId& agent) const {
   return Visualization(VisualizationQuery{agent});

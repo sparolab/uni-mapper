@@ -4,7 +4,9 @@
 #include "numpy_conversion.hpp"
 
 #include <open_lmm/server/runtime_client.hpp>
+#include <open_lmm/common/rigid_transform.hpp>
 
+#include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
 #include <atomic>
@@ -12,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -53,6 +56,31 @@ AgentId ParseAgent(const std::string& value) {
   auto parsed = AgentId::Parse(value);
   if (!parsed) RaiseError(parsed.GetError());
   return std::move(parsed).Value();
+}
+
+std::optional<Eigen::Isometry3d> ParseOptionalTransform(
+    const py::object& value) {
+  if (value.is_none()) return std::nullopt;
+  py::array array = py::array::ensure(value);
+  if (!array || array.ndim() != 2 || array.shape(0) != 4 ||
+      array.shape(1) != 4) {
+    RaiseError(Error::InvalidArgument(
+        "manual_target_T_source must be a numeric array with shape (4, 4)"));
+  }
+  py::array_t<double, py::array::c_style | py::array::forcecast> normalized(
+      array);
+  auto source = normalized.unchecked<2>();
+  Eigen::Matrix4d matrix;
+  for (py::ssize_t row = 0; row < 4; ++row) {
+    for (py::ssize_t column = 0; column < 4; ++column) {
+      matrix(row, column) = source(row, column);
+    }
+  }
+  Eigen::Isometry3d transform(matrix);
+  auto validation = ValidateRigidTransform(
+      transform, "Python alignment response manual_target_T_source");
+  if (!validation) RaiseError(validation.GetError());
+  return transform;
 }
 
 class RuntimeHolder {
@@ -225,9 +253,11 @@ class NativeRuntime {
     request.label = label;
     if (output_root) request.output_root = fs::path(*output_root);
     auto holder = holder_;
-    Unwrap(CallNative([holder, request = std::move(request)] {
+    Unwrap(CallNative([holder, request] {
       return holder->Client().Open(request);
     }));
+    std::lock_guard lock(request_mutex_);
+    bootstrap_request_ = std::move(request);
   }
 
   std::shared_ptr<NativeJob> RunAll() {
@@ -252,6 +282,129 @@ class NativeRuntime {
       return holder->Client().Submit(request);
     }));
     return std::make_shared<NativeJob>(holder, handle);
+  }
+
+  std::shared_ptr<NativeJob> RunNode(
+      int node, const std::optional<std::string>& agent) {
+    if (node < static_cast<int>(NodeId::kDataLoad) ||
+        node > static_cast<int>(NodeId::kFallbackMapSave)) {
+      RaiseError(Error::InvalidArgument("invalid Python node value"));
+    }
+    ExecutionRequest request;
+    request.kind = ExecutionRequestKind::kNode;
+    request.node = static_cast<NodeId>(node);
+    if (agent) request.agent = ParseAgent(*agent);
+    auto holder = holder_;
+    auto handle = Unwrap(CallNative([holder, request = std::move(request)] {
+      return holder->Client().Submit(request);
+    }));
+    return std::make_shared<NativeJob>(holder, handle);
+  }
+
+  std::shared_ptr<NativeJob> OptimizeThrough(const std::string& agent) {
+    ExecutionRequest request;
+    request.kind = ExecutionRequestKind::kOptimizeThrough;
+    request.agent = ParseAgent(agent);
+    auto holder = holder_;
+    auto handle = Unwrap(CallNative([holder, request = std::move(request)] {
+      return holder->Client().Submit(request);
+    }));
+    return std::make_shared<NativeJob>(holder, handle);
+  }
+
+  py::dict ConfigDocuments() const {
+    auto holder = holder_;
+    auto documents = Unwrap(CallNative(
+        [holder] { return holder->Client().ConfigDocuments(); }));
+    return ConfigDocumentsPayload(documents);
+  }
+
+  py::dict ConfigCandidates() const {
+    auto holder = holder_;
+    auto catalog = Unwrap(CallNative(
+        [holder] { return holder->Client().ConfigCandidates(); }));
+    return ConfigCandidatesPayload(catalog);
+  }
+
+  py::list NodeDescriptors() const {
+    auto holder = holder_;
+    auto descriptors = Unwrap(CallNative(
+        [holder] { return holder->Client().NodeDescriptors(); }));
+    return NodeDescriptorsPayload(descriptors);
+  }
+
+  std::vector<std::string> RecentLogs(std::size_t max_lines) const {
+    auto holder = holder_;
+    return Unwrap(CallNative([holder, max_lines] {
+      return holder->Client().RecentLogs(max_lines);
+    }));
+  }
+
+  py::object AlignmentFeedback() const {
+    auto holder = holder_;
+    auto snapshot = Unwrap(CallNative(
+        [holder] { return holder->Client().AlignmentFeedback(); }));
+    return AlignmentFeedbackPayload(std::move(snapshot));
+  }
+
+  void RespondToAlignment(const std::shared_ptr<NativeJob>& job,
+                          uint64_t request_id, int decision,
+                          const py::object& manual_target_T_source,
+                          uint64_t session_revision) {
+    if (!job || !job->BelongsTo(holder_)) {
+      RaiseError(Error::InvalidArgument(
+          "job belongs to a different OpenLMM Runtime"));
+    }
+    if (decision < static_cast<int>(AlignmentDecision::kAccept) ||
+        decision > static_cast<int>(AlignmentDecision::kCancel)) {
+      RaiseError(Error::InvalidArgument(
+          "invalid Python alignment decision value"));
+    }
+    AlignmentResponse response;
+    response.request_id = request_id;
+    response.decision = static_cast<AlignmentDecision>(decision);
+    response.manual_target_T_source =
+        ParseOptionalTransform(manual_target_T_source);
+    response.session_revision = session_revision;
+    const auto handle = job->Handle();
+    auto holder = holder_;
+    Unwrap(CallNative([holder, handle, response = std::move(response)]() mutable {
+      return holder->Client().RespondToAlignment(handle, std::move(response));
+    }));
+  }
+
+  void SetAlignmentFeedbackEnabled(bool enabled) {
+    auto holder = holder_;
+    Unwrap(CallNative([holder, enabled] {
+      return holder->Client().SetAlignmentFeedbackEnabled(enabled);
+    }));
+  }
+
+  py::dict ReplaceRootConfig(const std::string& document_json,
+                             uint64_t expected_runtime_revision,
+                             uint64_t expected_config_revision) {
+    BootstrapRequest request;
+    {
+      std::lock_guard lock(request_mutex_);
+      if (!bootstrap_request_) {
+        RaiseError(Error::InvalidArgument(
+            "runtime must be opened before replacing root config"));
+      }
+      request = *bootstrap_request_;
+    }
+    ConfigCandidate candidate;
+    candidate.domain = ConfigDomain::kGlobal;
+    candidate.document_json = document_json;
+    const ExpectedRevision expected{expected_runtime_revision,
+                                    expected_config_revision};
+    auto holder = holder_;
+    auto receipt = Unwrap(CallNative(
+        [holder, request = std::move(request),
+         candidate = std::move(candidate), expected] {
+          return holder->Client().ReplaceRootConfig(request, candidate,
+                                                    expected);
+        }));
+    return RuntimeReplaceReceiptPayload(receipt);
   }
 
   py::dict Snapshot() const {
@@ -340,6 +493,8 @@ class NativeRuntime {
 
  private:
   std::shared_ptr<RuntimeHolder> holder_;
+  mutable std::mutex request_mutex_;
+  std::optional<BootstrapRequest> bootstrap_request_;
 };
 
 }  // namespace
@@ -368,6 +523,23 @@ void BindRuntime(py::module_& module) {
       .def("run_all", &NativeRuntime::RunAll)
       .def("run_stage", &NativeRuntime::RunStage, py::arg("stage"),
            py::arg("agent"))
+      .def("run_node", &NativeRuntime::RunNode, py::arg("node"),
+           py::arg("agent"))
+      .def("optimize_through", &NativeRuntime::OptimizeThrough,
+           py::arg("agent"))
+      .def("config_documents", &NativeRuntime::ConfigDocuments)
+      .def("config_candidates", &NativeRuntime::ConfigCandidates)
+      .def("node_descriptors", &NativeRuntime::NodeDescriptors)
+      .def("recent_logs", &NativeRuntime::RecentLogs, py::arg("max_lines"))
+      .def("alignment_feedback", &NativeRuntime::AlignmentFeedback)
+      .def("respond_to_alignment", &NativeRuntime::RespondToAlignment,
+           py::arg("job"), py::arg("request_id"), py::arg("decision"),
+           py::arg("manual_target_T_source"), py::arg("session_revision"))
+      .def("set_alignment_feedback_enabled",
+           &NativeRuntime::SetAlignmentFeedbackEnabled, py::arg("enabled"))
+      .def("replace_root_config", &NativeRuntime::ReplaceRootConfig,
+           py::arg("document_json"), py::arg("expected_runtime_revision"),
+           py::arg("expected_config_revision"))
       .def("snapshot", &NativeRuntime::Snapshot)
       .def("visualization", &NativeRuntime::Visualization,
            py::arg("agent"), py::arg("include_points"),

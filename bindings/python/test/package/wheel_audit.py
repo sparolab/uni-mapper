@@ -59,8 +59,8 @@ def main() -> None:
         if not rows or set(rows[0]) != required_columns:
             fail("runtime closure manifest schema changed")
         logical_names = [row["logical_name"] for row in rows]
-        if logical_names != sorted(logical_names) or len(set(logical_names)) != 14:
-            fail("runtime closure must contain 14 unique sorted logical DSOs")
+        if logical_names != sorted(logical_names) or len(set(logical_names)) != 23:
+            fail("runtime closure must contain 23 unique sorted logical DSOs")
         for row in rows:
             logical = row["logical_name"]
             if (
@@ -107,17 +107,26 @@ def main() -> None:
             ):
                 fail(f"staged DSO RUNPATH changed: {elf.name}\n{section}")
             for needed in re.findall(r"Shared library: \[([^]]+)\]", section):
-                if needed.startswith(("libopen_lmm_", "libcreate_", "libfree_dom")):
+                if needed.startswith(
+                    (
+                        "libopen_lmm_",
+                        "libcreate_",
+                        "libdufomap",
+                        "liberasor",
+                        "libfree_dom",
+                        "libhmm_mos",
+                        "libotd",
+                    )
+                ):
                     if needed not in owned_sonames:
                         fail(f"{elf.name} needs an unstaged OpenLMM DSO: {needed}")
 
         ldd_environment = os.environ.copy()
         ldd_environment["LD_LIBRARY_PATH"] = str(library_dir)
-        for logical in (
-            "libcreate_scan_context.so",
-            "libcreate_free_dom.so",
-            "libfree_dom.so",
-        ):
+        plugin_closure = [
+            row["logical_name"] for row in rows if row["kind"] != "runtime"
+        ]
+        for logical in plugin_closure:
             result = subprocess.run(
                 ["ldd", str(library_dir / logical)],
                 check=False,
@@ -151,7 +160,7 @@ def main() -> None:
                     if marker and marker in contents:
                         fail(f"wheel retained a source/build path in {path.relative_to(root)}")
 
-    print("wheel audit passed: 14 logical DSOs / 42 runtime paths")
+    print("wheel audit passed: 23 logical DSOs / 69 runtime paths")
 
 
 if __name__ == "__main__":

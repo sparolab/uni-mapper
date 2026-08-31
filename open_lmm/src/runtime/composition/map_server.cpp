@@ -67,6 +67,14 @@ CommittedRuntimeSnapshot MapServer::Snapshot() const {
   return executor_->Snapshot();
 }
 
+Result<CommittedConfigDocuments> MapServer::ConfigDocuments() const {
+  return executor_->ConfigDocuments();
+}
+
+Result<ConfigCandidateCatalog> MapServer::ConfigCandidates() const {
+  return executor_->ConfigCandidates();
+}
+
 Result<VisualizationSnapshot> MapServer::Visualization(
     const AgentId& agent) const {
   return Visualization(VisualizationQuery{agent});

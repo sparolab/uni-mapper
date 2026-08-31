@@ -8,17 +8,29 @@ from typing import Callable
 from . import _native
 from ._errors import _raise_invalid_argument
 from ._models import (
+    AlignmentFeedbackSnapshot,
+    AlignmentResponse,
     ConfigApplyReceipt,
+    ConfigCandidateCatalog,
     ConfigDomain,
+    CommittedConfigDocuments,
     ExecutionEvent,
+    Node,
+    NodeDescriptor,
     Revision,
     RuntimeSnapshot,
+    RuntimeReplaceReceipt,
     Stage,
     VisualizationSnapshot,
     config_receipt_from_native,
+    config_candidates_from_native,
+    config_documents_from_native,
     execution_event_from_native,
     runtime_snapshot_from_native,
+    runtime_replace_receipt_from_native,
     visualization_from_native,
+    alignment_feedback_from_native,
+    node_descriptors_from_native,
 )
 
 
@@ -90,8 +102,77 @@ class Runtime:
             _raise_invalid_argument("stage must be a valid open_lmm.Stage")
         return Job(self._native_runtime.run_stage(int(normalized), agent))
 
+    def run_node(self, node: Node, *, agent: str | None = None) -> Job:
+        try:
+            normalized = Node(node)
+        except (TypeError, ValueError):
+            _raise_invalid_argument("node must be a valid open_lmm.Node")
+        return Job(self._native_runtime.run_node(int(normalized), agent))
+
+    def optimize_through(self, agent: str) -> Job:
+        if not isinstance(agent, str) or not agent:
+            _raise_invalid_argument("agent must be a non-empty string")
+        return Job(self._native_runtime.optimize_through(agent))
+
     def snapshot(self) -> RuntimeSnapshot:
         return runtime_snapshot_from_native(self._native_runtime.snapshot())
+
+    def config_documents(self) -> CommittedConfigDocuments:
+        return config_documents_from_native(self._native_runtime.config_documents())
+
+    def config_candidates(self) -> ConfigCandidateCatalog:
+        return config_candidates_from_native(self._native_runtime.config_candidates())
+
+    def node_descriptors(self) -> tuple[NodeDescriptor, ...]:
+        return node_descriptors_from_native(self._native_runtime.node_descriptors())
+
+    def recent_logs(self, max_lines: int = 512) -> tuple[str, ...]:
+        if isinstance(max_lines, bool) or not isinstance(max_lines, int):
+            _raise_invalid_argument("max_lines must be an integer")
+        if max_lines < 1 or max_lines > 512:
+            _raise_invalid_argument("max_lines must be between 1 and 512")
+        return tuple(self._native_runtime.recent_logs(max_lines))
+
+    def alignment_feedback(self) -> AlignmentFeedbackSnapshot | None:
+        return alignment_feedback_from_native(self._native_runtime.alignment_feedback())
+
+    def respond_to_alignment(self, job: Job, response: AlignmentResponse) -> None:
+        if not isinstance(job, Job):
+            _raise_invalid_argument("job must be an open_lmm.Job")
+        if not isinstance(response, AlignmentResponse):
+            _raise_invalid_argument(
+                "response must be an open_lmm.AlignmentResponse"
+            )
+        self._native_runtime.respond_to_alignment(
+            job._native_job,
+            response.request_id,
+            int(response.decision),
+            response.manual_target_T_source,
+            response.session_revision,
+        )
+
+    def set_alignment_feedback_enabled(self, enabled: bool) -> None:
+        if not isinstance(enabled, bool):
+            _raise_invalid_argument("enabled must be a bool")
+        self._native_runtime.set_alignment_feedback_enabled(enabled)
+
+    def replace_root_config(
+        self,
+        document_json: str,
+        *,
+        expected: Revision,
+    ) -> RuntimeReplaceReceipt:
+        if not isinstance(document_json, str) or not document_json:
+            _raise_invalid_argument("document_json must be a non-empty string")
+        if not isinstance(expected, Revision):
+            _raise_invalid_argument("expected must be an open_lmm.Revision")
+        return runtime_replace_receipt_from_native(
+            self._native_runtime.replace_root_config(
+                document_json,
+                expected.runtime_revision,
+                expected.config_revision,
+            )
+        )
 
     def visualization(
         self,

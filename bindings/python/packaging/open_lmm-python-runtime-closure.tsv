@@ -1,7 +1,15 @@
 kind	logical_name	source_relative_path	wheel_relative_path	required	license
+remover_plugin	libcreate_dufomap.so	lib/libcreate_dufomap.so	open_lmm/.libs/libcreate_dufomap.so	true	GPL-3.0-only
+remover_plugin	libcreate_erasor.so	lib/libcreate_erasor.so	open_lmm/.libs/libcreate_erasor.so	true	GPL-3.0-only
 remover_plugin	libcreate_free_dom.so	lib/libcreate_free_dom.so	open_lmm/.libs/libcreate_free_dom.so	true	GPL-3.0-only
+remover_plugin	libcreate_hmm_mos.so	lib/libcreate_hmm_mos.so	open_lmm/.libs/libcreate_hmm_mos.so	true	GPL-3.0-only
+remover_plugin	libcreate_otd.so	lib/libcreate_otd.so	open_lmm/.libs/libcreate_otd.so	true	GPL-3.0-only
 descriptor_plugin	libcreate_scan_context.so	lib/libcreate_scan_context.so	open_lmm/.libs/libcreate_scan_context.so	true	GPL-3.0-only
+descriptor_plugin	libcreate_solid.so	lib/libcreate_solid.so	open_lmm/.libs/libcreate_solid.so	true	GPL-3.0-only
+remover_support	libdufomap.so	lib/libdufomap.so	open_lmm/.libs/libdufomap.so	true	GPL-3.0-only
+remover_support	liberasor.so	lib/liberasor.so	open_lmm/.libs/liberasor.so	true	GPL-3.0-only
 remover_support	libfree_dom.so	lib/libfree_dom.so	open_lmm/.libs/libfree_dom.so	true	GPL-3.0-only
+remover_support	libhmm_mos.so	lib/libhmm_mos.so	open_lmm/.libs/libhmm_mos.so	true	GPL-3.0-only
 runtime	libopen_lmm_algorithm_config.so	lib/libopen_lmm_algorithm_config.so	open_lmm/.libs/libopen_lmm_algorithm_config.so	true	GPL-3.0-only
 runtime	libopen_lmm_backend_optimizer.so	lib/libopen_lmm_backend_optimizer.so	open_lmm/.libs/libopen_lmm_backend_optimizer.so	true	GPL-3.0-only
 runtime	libopen_lmm_client.so	lib/libopen_lmm_client.so	open_lmm/.libs/libopen_lmm_client.so	true	GPL-3.0-only
@@ -13,3 +21,4 @@ runtime	libopen_lmm_dynamic_remover.so	lib/libopen_lmm_dynamic_remover.so	open_l
 runtime	libopen_lmm_loop_detector.so	lib/libopen_lmm_loop_detector.so	open_lmm/.libs/libopen_lmm_loop_detector.so	true	GPL-3.0-only
 runtime	libopen_lmm_map_server.so	lib/libopen_lmm_map_server.so	open_lmm/.libs/libopen_lmm_map_server.so	true	GPL-3.0-only
 runtime	libopen_lmm_utils.so	lib/libopen_lmm_utils.so	open_lmm/.libs/libopen_lmm_utils.so	true	GPL-3.0-only
+remover_support	libotd.so	lib/libotd.so	open_lmm/.libs/libotd.so	true	GPL-3.0-only

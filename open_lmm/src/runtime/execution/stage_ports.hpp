@@ -106,6 +106,16 @@ class RuntimeQueryPort {
   [[nodiscard]] virtual CommittedRuntimeSnapshot Snapshot() const = 0;
   [[nodiscard]] virtual Result<VisualizationSnapshot> Visualization(
       const VisualizationQuery& query) const = 0;
+  [[nodiscard]] virtual Result<CommittedConfigDocuments> ConfigDocuments()
+      const {
+    return Result<CommittedConfigDocuments>::Failure(
+        Error::InvalidArgument("config document queries are not supported"));
+  }
+  [[nodiscard]] virtual Result<ConfigCandidateCatalog> ConfigCandidates()
+      const {
+    return Result<ConfigCandidateCatalog>::Failure(
+        Error::InvalidArgument("config candidate queries are not supported"));
+  }
 };
 
 class StageRuntimePort : public StageCommandPort, public RuntimeQueryPort {

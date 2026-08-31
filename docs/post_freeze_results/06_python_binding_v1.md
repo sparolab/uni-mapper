@@ -20,7 +20,8 @@ Goal 06의 로컬 설계·구현은 완료됐다. Python binding은 새로운 ru
 첫 완료 범위는 다음으로 고정한다.
 
 - CPython 3.10 / Ubuntu 22.04 / x86-64의 로컬 platform wheel
-- `RuntimeClient` 기반 Open, RunAll, RunStage, Wait, Cancel, Snapshot,
+- `RuntimeClient` 기반 Open, RunAll, RunStage, RunNode, OptimizeThrough,
+  Wait, Cancel, Snapshot, ConfigDocuments, ConfigCandidates, ReplaceRootConfig,
   Visualization, ApplyConfig, event subscription, Close
 - Python 예외, immutable snapshot DTO, NumPy point representation
 - long-running call의 GIL release와 callback의 안전한 GIL reacquire
@@ -40,20 +41,28 @@ operation을 제공한다.
 | C++ operation | Python v1 | 비고 |
 |---|---|---|
 | `Open` | `Runtime.open` | config directory, label, output root |
-| `ReplaceRootConfig` | 미노출 | v1에서 runtime epoch 교체 API를 확대하지 않음 |
+| `ReplaceRootConfig` | `Runtime.replace_root_config` | exact expected revision과 open 당시 bootstrap request 사용 |
 | `SubmitRunAll` | `Runtime.run_all` | `Job` 반환 |
 | `Submit(kStage)` | `Runtime.run_stage` | public `StageId`만 노출 |
-| `Submit(kNode/kOptimizeThrough)` | 미노출 | 초기 Python API를 execution graph API로 만들지 않음 |
+| `Submit(kNode)` | `Runtime.run_node` | public `NodeId`, optional exact agent만 전달 |
+| `Submit(kOptimizeThrough)` | `Runtime.optimize_through` | authoritative catalog의 agent ID를 전달 |
 | `Cancel` | `Runtime.cancel`, `Job.cancel` | 같은 Runtime이 만든 Job만 허용 |
 | `Wait` | `Job.wait` | 성공 시 `None`, 실패 시 Python 예외 |
 | `Snapshot` | `Runtime.snapshot` | immutable Python DTO |
 | `NodeDescriptors` | 미노출 | v1 완료 후 additive 후보 |
+| committed config query | `Runtime.config_documents` | canonical JSON, logical selector, revision만 복사 |
+| trusted candidate query | `Runtime.config_candidates` | bounded/schema-validated model, canonical JSON, relative selector만 복사 |
 | `Visualization` | `Runtime.visualization` | NumPy semantic point array |
 | alignment feedback | 미노출 | interactive alignment는 후속 additive 범위 |
 | `ApplyConfig` | `Runtime.apply_config` | explicit expected revision 필수 |
 | `SubscribeEvents` | `Runtime.subscribe_events` | `Subscription` 수명으로 해제 |
 | `Close` | `Runtime.close` | 기본 cancel-and-wait, idempotent |
 | `IsOpen` | `Runtime.is_open` | authoritative query의 편의 표현 |
+
+Node, Optimize Through, committed config/candidate query와 root replacement는 초기 v1 완료 후
+additive method로 추가됐다. 새 Python-side execution graph, config owner나 scheduler를
+만들지 않으며 기존 `RuntimeClient` submit/query/transaction 경계에서 검증·실행된다.
+`NodeDescriptors`와 alignment feedback은 계속 후속 범위다.
 
 `Result<T>`는 Python에 노출하지 않는다. 성공 값만 반환하고 `Error`는 한 binding
 boundary에서 Python 예외로 변환한다.

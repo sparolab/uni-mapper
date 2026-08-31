@@ -81,6 +81,7 @@ class FakeHandle:
     def __init__(self, name: str) -> None:
         self.name = name
         self.removed = False
+        self.visible = True
 
     def remove(self) -> None:
         self.removed = True
@@ -190,6 +191,38 @@ class AdapterTests(unittest.TestCase):
         wait_until(lambda: "agent1" not in self.adapter._handles)
         self.assertTrue(points.removed)
         self.assertTrue(trajectory.removed)
+
+    def test_agent_points_and_trajectory_share_catalog_color(self) -> None:
+        self.runtime.agents = ("agent1", "agent2")
+        self.adapter.start()
+        wait_until(lambda: len(self.server.scene.points) == 2)
+        by_name = {name: kwargs for name, _handle, kwargs in self.server.scene.points}
+        lines = {name: kwargs for name, _handle, kwargs in self.server.scene.lines}
+        first_points = by_name["/open_lmm/agents/agent1/points"]["colors"]
+        second_points = by_name["/open_lmm/agents/agent2/points"]["colors"]
+        self.assertFalse(np.array_equal(first_points, second_points))
+        self.assertEqual(lines["/open_lmm/agents/agent1/trajectory"]["colors"], (230, 51, 51))
+        self.assertEqual(lines["/open_lmm/agents/agent2/trajectory"]["colors"], (51, 166, 255))
+
+    def test_committed_presentation_can_be_hidden_without_discarding_it(self) -> None:
+        self.start_and_wait()
+        original = self.adapter._handles["agent1"]
+
+        self.adapter.set_presentation_visible(False)
+        self.assertFalse(original.points.visible)
+        self.assertFalse(original.trajectory.visible)
+        self.assertFalse(original.points.removed)
+
+        self.runtime.revision = 2
+        self.runtime.emit("ARTIFACT_COMMITTED")
+        wait_until(lambda: self.adapter._displayed.get("agent1") == 2)
+        replacement = self.adapter._handles["agent1"]
+        self.assertFalse(replacement.points.visible)
+        self.assertFalse(replacement.trajectory.visible)
+
+        self.adapter.set_presentation_visible(True)
+        self.assertTrue(replacement.points.visible)
+        self.assertTrue(replacement.trajectory.visible)
 
 
 if __name__ == "__main__":

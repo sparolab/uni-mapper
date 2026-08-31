@@ -42,9 +42,12 @@ void TestForwardingMoveAndClose() {
   Check(moved.IsOpen(), "move construction transfers the PImpl runtime");
   const auto snapshot = moved.Snapshot();
   const auto descriptors = moved.NodeDescriptors();
+  const auto logs = moved.RecentLogs(1);
   Check(snapshot && snapshot.Value().pipeline.agents.size() == 1 &&
-            descriptors && !descriptors.Value().empty(),
+            descriptors && !descriptors.Value().empty() && logs,
         "public query types forward through the client façade");
+  Check(!moved.RecentLogs(0) && !moved.RecentLogs(513),
+        "public runtime logs remain bounded to the process ring capacity");
 
   const auto job = moved.Submit(
       {ExecutionRequestKind::kStage, StageId::kDataLoad});

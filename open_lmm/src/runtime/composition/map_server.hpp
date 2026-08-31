@@ -38,6 +38,10 @@ class MapServer final : public StageRuntimePort {
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context) override;
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const override;
+  [[nodiscard]] Result<CommittedConfigDocuments> ConfigDocuments()
+      const override;
+  [[nodiscard]] Result<ConfigCandidateCatalog> ConfigCandidates()
+      const override;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const AgentId& agent) const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(

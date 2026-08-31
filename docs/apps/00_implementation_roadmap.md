@@ -121,6 +121,7 @@ library 구현을 위해 내부적으로 실행되는 private worker는 user-fac
 | DX-1 | [09_core_gui_developer_entrypoint_implementation_spec.md](09_core_gui_developer_entrypoint_implementation_spec.md) | **GO** — `make core-build`, `make cli`, `make gui` C++ 개발 진입점; P7/Goal 09와 독립 |
 | DX-2 | [Python developer entrypoint](../../bindings/python/README.md#local-wheel-build) | **GO** — 전용 wheel-profile core와 venv를 보존하는 `make python*` 개발 진입점 |
 | H1 | [13_production_hardening_implementation_spec.md](13_production_hardening_implementation_spec.md) · [결과](results/13_production_hardening_result.md) | **IMPLEMENTED / GO** — thread rollback, client retirement, ROS early-cancel, stale plugin generation 차단 |
+| DX-3 | [14_python_viser_interactive_alignment_implementation_spec.md](14_python_viser_interactive_alignment_implementation_spec.md) · [결과](results/14_python_viser_interactive_alignment_result.md) | **IMPLEMENTED / GO** — Python alignment API와 exact-job Viser review, ordered agent 색상 |
 
 ## 5. 전역 admission rule
 

@@ -8,6 +8,8 @@ CORE_SOURCE := $(REPOSITORY_ROOT)/open_lmm
 GUI_SOURCE := $(REPOSITORY_ROOT)/applications/gui
 CLI_SOURCE := $(REPOSITORY_ROOT)/applications/cli
 PYTHON_SOURCE := $(REPOSITORY_ROOT)/bindings/python
+VISER_SOURCE := $(REPOSITORY_ROOT)/applications/python/viser
+IRIDESCENCE_PYTHON_SOURCE := $(REPOSITORY_ROOT)/applications/python/iridescence
 ROS_SOURCE := $(REPOSITORY_ROOT)/ros
 DEV_BUILD_ROOT := $(REPOSITORY_ROOT)/build/dev
 CORE_BUILD := $(DEV_BUILD_ROOT)/core
@@ -22,6 +24,8 @@ DEV_PREFIX := $(REPOSITORY_ROOT)/install/dev
 PYTHON_CORE_PREFIX := $(DEV_PREFIX)/python-core
 PYTHON_VENV := $(DEV_PREFIX)/python-venv
 PYTHON_WHEEL_FILE := $(PYTHON_WHEEL_DIR)/open_lmm-3.0.0-cp310-cp310-linux_x86_64.whl
+VISER_EXECUTABLE := $(PYTHON_VENV)/bin/open-lmm-viser
+IRIDESCENCE_PYTHON_EXECUTABLE := $(PYTHON_VENV)/bin/open-lmm-iridescence
 ROS_PREFIX := $(DEV_PREFIX)/ros-overlay
 GUI_EXECUTABLE := $(DEV_PREFIX)/bin/open_lmm_gui
 CLI_EXECUTABLE := $(DEV_PREFIX)/bin/open_lmm_batch
@@ -42,10 +46,18 @@ ROS_USE_RVIZ ?= true
 PYTHON ?= python3.10
 PYTHON_JOBS ?= 2
 PYTHON_EXAMPLE ?= $(PYTHON_SOURCE)/examples/basic_runtime.py
+VISER_HOST ?= 127.0.0.1
+VISER_PORT ?= 8080
+VISER_PREVIEW_VOXEL_SIZE_M ?= 0.2
+VISER_AUTO_RUN ?= false
+IRIDESCENCE_PREVIEW_VOXEL_SIZE_M ?=
+IRIDESCENCE_AUTO_RUN ?= false
 
 .PHONY: help core-build core-clean gui gui-build gui-run gui-clean \
   cli cli-build cli-run cli-clean python python-build python-install \
-  python-run python-clean ros ros-build ros-run ros-clean dev-clean
+  python-run python-clean viser viser-install viser-run viser-clean \
+  iridescence iridescence-install iridescence-run iridescence-clean \
+  ros ros-build ros-run ros-clean dev-clean
 
 help:
 	@printf '%s\n' \
@@ -66,6 +78,14 @@ help:
 	  '  make python-install Install the existing wheel into its developer venv' \
 	  '  make python-run  Run the example from the existing developer venv' \
 	  '  make python-clean Remove Python-owned developer artifacts' \
+	  '  make viser       Build/install Python + Viser, then run the browser viewer' \
+	  '  make viser-install Install the Viser application in the developer venv' \
+	  '  make viser-run   Run the existing installed Viser application' \
+	  '  make viser-clean Uninstall only the Viser application package' \
+	  '  make iridescence Build/install Python + pyridescence, then run the desktop viewer' \
+	  '  make iridescence-install Install the Python Iridescence application' \
+	  '  make iridescence-run Run the installed Python Iridescence application' \
+	  '  make iridescence-clean Uninstall only the Python Iridescence application' \
 	  '  make ros         Build core + ROS, then launch ROS with RViz' \
 	  '  make ros-build   Build/install core + ROS without launching it' \
 	  '  make ros-run     Launch existing installed ROS artifacts' \
@@ -83,6 +103,12 @@ help:
 	  '  PYTHON=/path/to/python3.10      CPython 3.10 interpreter' \
 	  '  PYTHON_JOBS=N                   wheel-profile core jobs (default: 2)' \
 	  '  PYTHON_EXAMPLE=/path/to/example.py' \
+	  '  VISER_HOST=127.0.0.1             Viser bind address' \
+	  '  VISER_PORT=8080                  Viser HTTP/WebSocket port' \
+	  '  VISER_PREVIEW_VOXEL_SIZE_M=0.2  point-cloud preview voxel size' \
+	  '  VISER_AUTO_RUN=true|false        run full pipeline on startup (default: false)' \
+	  '  IRIDESCENCE_PREVIEW_VOXEL_SIZE_M optional point-cloud preview voxel size' \
+	  '  IRIDESCENCE_AUTO_RUN=true|false  run full pipeline on startup (default: false)' \
 	  '  ROS_DISTRO=humble             ROS 2 distribution' \
 	  '  ROS_SYSTEM_SETUP=/path        ROS 2 setup.bash' \
 	  '  ROS_USE_RVIZ=true|false       launch RViz with the ROS node'
@@ -300,16 +326,17 @@ python-build:
 	  -S "$(CORE_SOURCE)" -B "$(PYTHON_CORE_BUILD)" \
 	  -DCMAKE_BUILD_TYPE=Release \
 	  -DCMAKE_INSTALL_PREFIX="$(PYTHON_CORE_PREFIX)" \
+	  "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$(REPOSITORY_ROOT)=. -fmacro-prefix-map=$(REPOSITORY_ROOT)=." \
 	  -DUSE_CCACHE=OFF \
 	  -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
 	  -DBUILD_TESTING=OFF \
 	  -DOPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT=ON \
-	  -DOPEN_LMM_BUILD_DESCRIPTOR_SOLID=OFF \
-	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS=OFF \
-	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP=OFF \
-	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD=OFF \
+	  -DOPEN_LMM_BUILD_DESCRIPTOR_SOLID=ON \
+	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS=ON \
+	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP=ON \
+	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD=ON \
 	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM=ON \
-	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR=OFF
+	  -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR=ON
 	cmake --build "$(PYTHON_CORE_BUILD)" --parallel "$(PYTHON_JOBS)"
 	cmake --install "$(PYTHON_CORE_BUILD)"
 	if [[ ! -f "$(PYTHON_CORE_PREFIX)/share/open_lmm/cmake/open_lmmConfig.cmake" ]]; then
@@ -385,6 +412,140 @@ python-run:
 	  "$$example_path" "$$config_dir"
 	exec env -u PYTHONPATH -u LD_LIBRARY_PATH \
 	  "$(PYTHON_VENV)/bin/python" "$$example_path" "$$config_dir"
+
+viser:
+	@$(MAKE) --no-print-directory python-build \
+	  CC="$(CC)" CXX="$(CXX)" PYTHON="$(PYTHON)" \
+	  PYTHON_JOBS="$(PYTHON_JOBS)"
+	@$(MAKE) --no-print-directory python-install PYTHON="$(PYTHON)"
+	@$(MAKE) --no-print-directory viser-install
+	@$(MAKE) --no-print-directory viser-run \
+	  CONFIG="$(CONFIG)" VISER_HOST="$(VISER_HOST)" \
+	  VISER_PORT="$(VISER_PORT)" \
+	  VISER_PREVIEW_VOXEL_SIZE_M="$(VISER_PREVIEW_VOXEL_SIZE_M)" \
+	  VISER_AUTO_RUN="$(VISER_AUTO_RUN)"
+
+viser-install:
+	@if [[ ! -x "$(PYTHON_VENV)/bin/python" ]]; then
+	  printf 'Developer Python wheel is not installed; run make python-install first: %s\n' \
+	    "$(PYTHON_VENV)" >&2
+	  exit 1
+	fi
+	if [[ ! -f "$(VISER_SOURCE)/pyproject.toml" ]]; then
+	  printf 'Viser application source is incomplete: %s\n' \
+	    "$(VISER_SOURCE)" >&2
+	  exit 1
+	fi
+	env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	  "$(PYTHON_VENV)/bin/python" -m pip install \
+	  --disable-pip-version-check --upgrade "$(VISER_SOURCE)"
+	if [[ ! -x "$(VISER_EXECUTABLE)" ]]; then
+	  printf 'Viser application install did not create its command: %s\n' \
+	    "$(VISER_EXECUTABLE)" >&2
+	  exit 1
+	fi
+	env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	  "$(PYTHON_VENV)/bin/python" -c \
+	  'import open_lmm, open_lmm_viser, viser; assert open_lmm.__version__ == "3.0.0"'
+	printf '==> developer Viser application installed in %s\n' "$(PYTHON_VENV)"
+
+viser-run:
+	@config_dir="$(CONFIG)"
+	if [[ ! -d "$$config_dir" || ! -f "$$config_dir/config.json" ]]; then
+	  printf 'A config directory containing config.json is required: %s\n' \
+	    "$$config_dir" >&2
+	  exit 1
+	fi
+	if [[ ! -x "$(VISER_EXECUTABLE)" ]]; then
+	  printf 'Developer Viser application is not installed; run make viser-install first: %s\n' \
+	    "$(VISER_EXECUTABLE)" >&2
+	  exit 1
+	fi
+	case "$(VISER_AUTO_RUN)" in
+	  true) auto_run_args=(--auto-run) ;;
+	  false) auto_run_args=() ;;
+	  *)
+	    printf 'VISER_AUTO_RUN must be true or false: %s\n' "$(VISER_AUTO_RUN)" >&2
+	    exit 1
+	    ;;
+	esac
+	config_dir=$$(realpath "$$config_dir")
+	printf '==> starting OpenLMM Viser at http://%s:%s with config %s\n' \
+	  "$(VISER_HOST)" "$(VISER_PORT)" "$$config_dir"
+	exec env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	  "$(VISER_EXECUTABLE)" "$$config_dir" \
+	  --host "$(VISER_HOST)" --port "$(VISER_PORT)" \
+	  --preview-voxel-size-m "$(VISER_PREVIEW_VOXEL_SIZE_M)" \
+	  "$${auto_run_args[@]}"
+
+iridescence:
+	@$(MAKE) --no-print-directory python-build \
+	  CC="$(CC)" CXX="$(CXX)" PYTHON="$(PYTHON)" \
+	  PYTHON_JOBS="$(PYTHON_JOBS)"
+	@$(MAKE) --no-print-directory python-install PYTHON="$(PYTHON)"
+	@$(MAKE) --no-print-directory iridescence-install
+	@$(MAKE) --no-print-directory iridescence-run \
+	  CONFIG="$(CONFIG)" \
+	  IRIDESCENCE_PREVIEW_VOXEL_SIZE_M="$(IRIDESCENCE_PREVIEW_VOXEL_SIZE_M)" \
+	  IRIDESCENCE_AUTO_RUN="$(IRIDESCENCE_AUTO_RUN)"
+
+iridescence-install:
+	@if [[ ! -x "$(PYTHON_VENV)/bin/python" ]]; then
+	  printf 'Developer Python wheel is not installed; run make python-install first: %s\n' \
+	    "$(PYTHON_VENV)" >&2
+	  exit 1
+	fi
+	if [[ ! -f "$(IRIDESCENCE_PYTHON_SOURCE)/pyproject.toml" ]]; then
+	  printf 'Python Iridescence application source is incomplete: %s\n' \
+	    "$(IRIDESCENCE_PYTHON_SOURCE)" >&2
+	  exit 1
+	fi
+	env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	  "$(PYTHON_VENV)/bin/python" -m pip install \
+	  --disable-pip-version-check --upgrade "$(IRIDESCENCE_PYTHON_SOURCE)"
+	if [[ ! -x "$(IRIDESCENCE_PYTHON_EXECUTABLE)" ]]; then
+	  printf 'Python Iridescence install did not create its command: %s\n' \
+	    "$(IRIDESCENCE_PYTHON_EXECUTABLE)" >&2
+	  exit 1
+	fi
+	env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	  "$(PYTHON_VENV)/bin/python" -c \
+	  'import importlib.metadata, open_lmm, open_lmm_iridescence, pyridescence; assert open_lmm.__version__ == "3.0.0"; assert importlib.metadata.version("pyridescence") == "1.0.3"'
+	printf '==> developer Python Iridescence application installed in %s\n' "$(PYTHON_VENV)"
+
+iridescence-run:
+	@config_dir="$(CONFIG)"
+	if [[ ! -d "$$config_dir" || ! -f "$$config_dir/config.json" ]]; then
+	  printf 'A config directory containing config.json is required: %s\n' \
+	    "$$config_dir" >&2
+	  exit 1
+	fi
+	if [[ -z "$${DISPLAY:-}" && -z "$${WAYLAND_DISPLAY:-}" ]]; then
+	  printf '%s\n' 'DISPLAY or WAYLAND_DISPLAY is required for Python Iridescence.' >&2
+	  exit 1
+	fi
+	if [[ ! -x "$(IRIDESCENCE_PYTHON_EXECUTABLE)" ]]; then
+	  printf 'Python Iridescence is not installed; run make iridescence-install first: %s\n' \
+	    "$(IRIDESCENCE_PYTHON_EXECUTABLE)" >&2
+	  exit 1
+	fi
+	case "$(IRIDESCENCE_AUTO_RUN)" in
+	  true) auto_run_args=(--auto-run) ;;
+	  false) auto_run_args=() ;;
+	  *)
+	    printf 'IRIDESCENCE_AUTO_RUN must be true or false: %s\n' "$(IRIDESCENCE_AUTO_RUN)" >&2
+	    exit 1
+	    ;;
+	esac
+	preview_args=()
+	if [[ -n "$(IRIDESCENCE_PREVIEW_VOXEL_SIZE_M)" ]]; then
+	  preview_args=(--preview-voxel-size-m "$(IRIDESCENCE_PREVIEW_VOXEL_SIZE_M)")
+	fi
+	config_dir=$$(realpath "$$config_dir")
+	printf '==> starting OpenLMM Python Iridescence with config %s\n' "$$config_dir"
+	exec env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	  "$(IRIDESCENCE_PYTHON_EXECUTABLE)" "$$config_dir" \
+	  "$${preview_args[@]}" "$${auto_run_args[@]}"
 
 ros:
 	@$(MAKE) --no-print-directory ros-build \
@@ -498,6 +659,32 @@ python-clean:
 	cmake -E remove_directory "$(PYTHON_CORE_PREFIX)"
 	cmake -E remove_directory "$(PYTHON_VENV)"
 	printf '%s\n' '==> removed Python-owned developer artifacts'
+
+viser-clean:
+	@if [[ -x "$(PYTHON_VENV)/bin/python" ]]; then
+	  env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	    "$(PYTHON_VENV)/bin/python" -m pip uninstall \
+	    --disable-pip-version-check --yes open-lmm-viser
+	fi
+	if [[ -e "$(VISER_EXECUTABLE)" ]]; then
+	  printf 'Viser application uninstall retained its command: %s\n' \
+	    "$(VISER_EXECUTABLE)" >&2
+	  exit 1
+	fi
+	printf '%s\n' '==> removed Viser application from the developer venv'
+
+iridescence-clean:
+	@if [[ -x "$(PYTHON_VENV)/bin/python" ]]; then
+	  env -u PYTHONPATH -u LD_LIBRARY_PATH \
+	    "$(PYTHON_VENV)/bin/python" -m pip uninstall \
+	    --disable-pip-version-check --yes open-lmm-iridescence
+	fi
+	if [[ -e "$(IRIDESCENCE_PYTHON_EXECUTABLE)" ]]; then
+	  printf 'Python Iridescence uninstall retained its command: %s\n' \
+	    "$(IRIDESCENCE_PYTHON_EXECUTABLE)" >&2
+	  exit 1
+	fi
+	printf '%s\n' '==> removed Python Iridescence application from the developer venv'
 
 ros-clean:
 	@if [[ "$(ROS_BUILD)" != "$(REPOSITORY_ROOT)/build/dev/ros" || \

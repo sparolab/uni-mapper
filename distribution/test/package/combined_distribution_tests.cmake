@@ -18,7 +18,7 @@ if(NOT artifact_header STREQUAL
    "schema_version\tartifact_id\tversion\tnamespace\tinstall_mode\tprofiles\texact_dependencies\towner_root")
   message(FATAL_ERROR "artifact manifest schema changed")
 endif()
-set(expected_artifacts core cli gui python experiment viser ros)
+set(expected_artifacts core cli gui python experiment viser iridescence-python ros)
 foreach(row IN LISTS artifact_rows)
   string(REPLACE "\t" ";" fields "${row}")
   list(LENGTH fields field_count)

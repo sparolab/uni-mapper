@@ -80,6 +80,17 @@ Result<RuntimeSnapshot> RuntimeClient::Snapshot() const {
 Result<std::vector<NodeDescriptor>> RuntimeClient::NodeDescriptors() const {
   return impl_->service.NodeDescriptors();
 }
+Result<CommittedConfigDocuments> RuntimeClient::ConfigDocuments() const {
+  return impl_->service.ConfigDocuments();
+}
+
+Result<ConfigCandidateCatalog> RuntimeClient::ConfigCandidates() const {
+  return impl_->service.ConfigCandidates();
+}
+Result<std::vector<std::string>> RuntimeClient::RecentLogs(
+    std::size_t max_lines) const {
+  return impl_->service.RecentLogs(max_lines);
+}
 Result<VisualizationSnapshot> RuntimeClient::Visualization(
     const AgentId& agent) const {
   return Visualization(VisualizationQuery{agent});

@@ -24,6 +24,11 @@ class Node(IntEnum):
     FALLBACK_MAP_SAVE = 5
 
 
+class ExecutionScope(IntEnum):
+    PER_AGENT = 0
+    RUNTIME = 1
+
+
 class ArtifactType(IntEnum):
     CONFIG_SNAPSHOT = 0
     AGENT_INPUT = 1
@@ -154,10 +159,59 @@ class VisualizationEdgeType(IntEnum):
     INTER_LOOP = 2
 
 
+class AlignmentMethod(IntEnum):
+    PENDING = 0
+    KISS_MATCHER = 1
+    DESCRIPTOR = 2
+    MANUAL = 3
+
+
+class AlignmentDecision(IntEnum):
+    ACCEPT = 0
+    TRY_KISS_MATCHER = 1
+    TRY_DESCRIPTOR = 2
+    MANUAL = 3
+    EXCLUDE_AGENT = 4
+    CANCEL = 5
+
+
+class AlignmentAttemptState(IntEnum):
+    IDLE = 0
+    RUNNING = 1
+    SUCCEEDED = 2
+    FAILED_RECOVERABLE = 3
+
+
+class AlignmentAttemptFailure(IntEnum):
+    NO_CANDIDATE = 0
+    INSUFFICIENT_INLIERS = 1
+    NO_CONSISTENT_CLIQUE = 2
+    NO_POSE_NEIGHBOR = 3
+    PROPOSAL_QUALITY_REJECTED = 4
+
+
+class AlignmentReviewState(IntEnum):
+    ACTIVE = 0
+    CANCELLED = 1
+    FAILED = 2
+
+
 @dataclass(frozen=True, slots=True)
 class Revision:
     runtime_revision: int
     config_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class NodeDescriptor:
+    id: Node
+    name: str
+    stage: Stage
+    scope: ExecutionScope
+    required_artifacts: tuple[ArtifactType, ...]
+    produced_artifacts: tuple[ArtifactType, ...]
+    ordered: bool
+    supports_cancellation: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +312,43 @@ class ConfigApplyReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeReplaceReceipt:
+    previous_runtime_revision: int
+    previous_config_revision: int
+    runtime_revision: int
+    config_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedConfigDocument:
+    domain: ConfigDomain
+    canonical_json: str
+    selected_document: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedConfigDocuments:
+    runtime_revision: int
+    config_revision: int
+    documents: tuple[CommittedConfigDocument, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigDocumentCandidate:
+    domain: ConfigDomain
+    model: str
+    selected_document: str
+    canonical_json: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigCandidateCatalog:
+    runtime_revision: int
+    config_revision: int
+    candidates: tuple[ConfigDocumentCandidate, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class VisualizationEdge:
     from_agent: str
     from_index: int
@@ -284,6 +375,81 @@ class VisualizationSnapshot:
     map_available: bool
     displayed_point_count: int
     source_point_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class LoopConstraintBuildDiagnostics:
+    sampled_source_frames: int
+    target_frames: int
+    within_radius: int
+    nearest_distance_m: float
+    threshold_m: float
+    search_completed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentAttemptStatus:
+    method: AlignmentMethod
+    state: AlignmentAttemptState
+    reason: AlignmentAttemptFailure | None
+    message: str
+    attempt: int
+    constraint_diagnostics: LoopConstraintBuildDiagnostics | None
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentMetrics:
+    correspondence_count: int
+    rotation_inliers: int
+    final_inliers: int
+    consensus_size: int
+    fitness: float | None
+    overlap_ratio: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class MapAlignmentProposal:
+    request_id: int
+    target_agent: str
+    source_agent: str
+    method: AlignmentMethod
+    target_T_source: Any
+    metrics: AlignmentMetrics
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentLoopVisualization:
+    target: tuple[float, float, float]
+    source: tuple[float, float, float]
+    inlier: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentVisualizationData:
+    target_trajectory: Any
+    source_trajectory: Any
+    descriptor_loops: tuple[AlignmentLoopVisualization, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentFeedbackSnapshot:
+    proposal: MapAlignmentProposal
+    target_points: Any
+    source_points: Any
+    diagnostics: AlignmentVisualizationData
+    attempt_status: AlignmentAttemptStatus
+    attempt_history: tuple[AlignmentAttemptStatus, ...]
+    session_revision: int
+    review_state: AlignmentReviewState
+    terminal_message: str
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentResponse:
+    request_id: int
+    decision: AlignmentDecision
+    session_revision: int
+    manual_target_T_source: Any | None = None
 
 
 def _cancellation_from_native(value: Mapping[str, Any]) -> CancellationTelemetry:
@@ -383,6 +549,142 @@ def config_receipt_from_native(value: Mapping[str, Any]) -> ConfigApplyReceipt:
         int(value["base_runtime_revision"]),
         int(value["runtime_revision"]),
         tuple(value["affected_agents"]),
+    )
+
+
+def runtime_replace_receipt_from_native(
+    value: Mapping[str, Any],
+) -> RuntimeReplaceReceipt:
+    return RuntimeReplaceReceipt(
+        int(value["previous_runtime_revision"]),
+        int(value["previous_config_revision"]),
+        int(value["runtime_revision"]),
+        int(value["config_revision"]),
+    )
+
+
+def config_documents_from_native(
+    value: Mapping[str, Any],
+) -> CommittedConfigDocuments:
+    return CommittedConfigDocuments(
+        int(value["runtime_revision"]),
+        int(value["config_revision"]),
+        tuple(
+            CommittedConfigDocument(
+                ConfigDomain(item["domain"]),
+                str(item["canonical_json"]),
+                item.get("selected_document"),
+            )
+            for item in value["documents"]
+        ),
+    )
+
+
+def config_candidates_from_native(
+    value: Mapping[str, Any],
+) -> ConfigCandidateCatalog:
+    return ConfigCandidateCatalog(
+        int(value["runtime_revision"]),
+        int(value["config_revision"]),
+        tuple(
+            ConfigDocumentCandidate(
+                ConfigDomain(item["domain"]),
+                str(item["model"]),
+                str(item["selected_document"]),
+                str(item["canonical_json"]),
+            )
+            for item in value["candidates"]
+        ),
+    )
+
+
+def node_descriptors_from_native(value: object) -> tuple[NodeDescriptor, ...]:
+    return tuple(
+        NodeDescriptor(
+            Node(item["id"]),
+            str(item["name"]),
+            Stage(item["stage"]),
+            ExecutionScope(item["scope"]),
+            tuple(ArtifactType(artifact) for artifact in item["required_artifacts"]),
+            tuple(ArtifactType(artifact) for artifact in item["produced_artifacts"]),
+            bool(item["ordered"]),
+            bool(item["supports_cancellation"]),
+        )
+        for item in value
+    )
+
+
+def _constraint_diagnostics_from_native(
+    value: Mapping[str, Any] | None,
+) -> LoopConstraintBuildDiagnostics | None:
+    if value is None:
+        return None
+    return LoopConstraintBuildDiagnostics(
+        int(value["sampled_source_frames"]),
+        int(value["target_frames"]),
+        int(value["within_radius"]),
+        float(value["nearest_distance_m"]),
+        float(value["threshold_m"]),
+        bool(value["search_completed"]),
+    )
+
+
+def _attempt_status_from_native(value: Mapping[str, Any]) -> AlignmentAttemptStatus:
+    reason = value.get("reason")
+    return AlignmentAttemptStatus(
+        AlignmentMethod(value["method"]),
+        AlignmentAttemptState(value["state"]),
+        None if reason is None else AlignmentAttemptFailure(reason),
+        str(value["message"]),
+        int(value["attempt"]),
+        _constraint_diagnostics_from_native(value.get("constraint_diagnostics")),
+    )
+
+
+def alignment_feedback_from_native(
+    value: Mapping[str, Any] | None,
+) -> AlignmentFeedbackSnapshot | None:
+    if value is None:
+        return None
+    proposal_value = value["proposal"]
+    metrics_value = proposal_value["metrics"]
+    diagnostics_value = value["diagnostics"]
+    proposal = MapAlignmentProposal(
+        int(proposal_value["request_id"]),
+        str(proposal_value["target_agent"]),
+        str(proposal_value["source_agent"]),
+        AlignmentMethod(proposal_value["method"]),
+        proposal_value["target_T_source"],
+        AlignmentMetrics(
+            int(metrics_value["correspondence_count"]),
+            int(metrics_value["rotation_inliers"]),
+            int(metrics_value["final_inliers"]),
+            int(metrics_value["consensus_size"]),
+            metrics_value.get("fitness"),
+            metrics_value.get("overlap_ratio"),
+        ),
+    )
+    return AlignmentFeedbackSnapshot(
+        proposal,
+        value["target_points"],
+        value["source_points"],
+        AlignmentVisualizationData(
+            diagnostics_value["target_trajectory"],
+            diagnostics_value["source_trajectory"],
+            tuple(
+                AlignmentLoopVisualization(
+                    tuple(float(component) for component in loop["target"]),
+                    tuple(float(component) for component in loop["source"]),
+                    bool(loop["inlier"]),
+                )
+                for loop in diagnostics_value["descriptor_loops"]
+            ),
+        ),
+        _attempt_status_from_native(value["attempt_status"]),
+        tuple(_attempt_status_from_native(item) for item in value["attempt_history"]),
+        int(value["session_revision"]),
+        AlignmentReviewState(value["review_state"]),
+        str(value["terminal_message"]),
     )
 
 
