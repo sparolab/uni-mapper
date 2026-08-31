@@ -21,7 +21,7 @@ const std::vector<FileReplacement>& PendingOutputSet::Files() const {
   return files_;
 }
 
-Result<void> PendingOutputSet::Commit() {
+Result<FileSetCommitOutcome> PendingOutputSet::Commit() {
   auto result = CommitFileSet(files_);
   if (result) committed_ = true;
   return result;

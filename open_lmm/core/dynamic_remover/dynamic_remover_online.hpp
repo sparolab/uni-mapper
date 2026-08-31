@@ -15,12 +15,19 @@ class DynamicRemoverOnline : public DynamicRemoverBase {
   Result<PointCloud::Ptr> Process(
       const AlgorithmExecutionContext& context,
       DynamicRemoverInput input) override;
+  Result<PointCloud::Ptr> ProcessStreaming(
+      const AlgorithmExecutionContext& context,
+      const DynamicRemoverStreamingInput& input) override;
+  [[nodiscard]] DynamicRemoverStreamingMode StreamingMode() const override {
+    return DynamicRemoverStreamingMode::kDirect;
+  }
 
   static Result<std::shared_ptr<IOnlineRemoverPlugin>> loadModule(
       const std::string& so_name, const std::string& config_json);
 
  private:
-  PointCloud::Ptr ProcessImpl(
+  Result<PointCloud::Ptr> ProcessImpl(
+      const AlgorithmExecutionContext& context,
       std::vector<PointCloud::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
   OnlineParams params_;

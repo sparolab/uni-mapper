@@ -39,6 +39,11 @@ struct DynamicRemoverStreamingInput {
   DynamicRemoverHeavyPhaseAdmission heavy_phase_admission;
 };
 
+enum class DynamicRemoverStreamingMode : uint8_t {
+  kBuffered,
+  kDirect,
+};
+
 class DynamicRemoverBase {
  public:
   using PointCloud = DynamicRemoverPointCloud;
@@ -54,6 +59,9 @@ class DynamicRemoverBase {
   virtual Result<PointCloud::Ptr> ProcessStreaming(
       const AlgorithmExecutionContext& context,
       const DynamicRemoverStreamingInput& input);
+  [[nodiscard]] virtual DynamicRemoverStreamingMode StreamingMode() const {
+    return DynamicRemoverStreamingMode::kBuffered;
+  }
 };
 
 }  // namespace open_lmm

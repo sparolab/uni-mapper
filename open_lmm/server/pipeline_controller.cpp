@@ -80,15 +80,31 @@ PipelineController::PipelineController(
   alignment_feedback_->SetNotification(
       [this](const AlignmentFeedbackSnapshot& snapshot) {
         uint64_t job_id = 0;
+        EventType event_type = EventType::kAlignmentFeedbackRequested;
+        std::string event_message = "map alignment feedback requested";
         {
           std::lock_guard lock(mutex_);
           if (!job_) return;
           job_id = job_->id;
-          job_->state = JobState::kWaitingForAlignmentFeedback;
-          job_->message = "waiting for map alignment feedback";
+          alignment_feedback_published_ = true;
+          if (snapshot.review_state != AlignmentReviewState::kActive) {
+            job_->message = snapshot.terminal_message;
+            event_type = snapshot.review_state ==
+                                 AlignmentReviewState::kCancelled
+                             ? EventType::kAlignmentFeedbackCancelled
+                             : EventType::kAlignmentProposalRejected;
+            event_message = snapshot.terminal_message;
+          } else if (snapshot.attempt_status.state ==
+              AlignmentAttemptState::kRunning) {
+            job_->state = JobState::kRunning;
+            job_->message = snapshot.attempt_status.message;
+          } else {
+            job_->state = JobState::kWaitingForAlignmentFeedback;
+            job_->message = "waiting for map alignment feedback";
+          }
         }
-        emit({job_id, EventType::kAlignmentFeedbackRequested,
-              StageId::kAlignment, "map alignment feedback requested", 0,
+        emit({job_id, event_type,
+              StageId::kAlignment, std::move(event_message), 0,
               NodeId::kLoopDetect, snapshot.proposal.source_agent});
       });
   if (command_port_ && query_port_) {
@@ -219,6 +235,7 @@ Result<uint64_t> PipelineController::submit(Work work) {
     job_ = JobSnapshot{id, JobState::kQueued, std::nullopt, {},
                        CancellationTelemetry{cancellation_capability_}};
     terminal_event_completed_job_id_ = 0;
+    alignment_feedback_published_ = false;
     cancel_requested_ = false;
     cancellation_ = cancellation;
     execution_context = {
@@ -321,6 +338,8 @@ Result<uint64_t> PipelineController::SubmitNode(
       std::lock_guard lock(mutex_);
       command_context.base_revision = committed_runtime_.revision;
     }
+    command_context = withProgress(command_context, id, descriptor.stage,
+                                   node, agent);
     auto result = command_port_->Execute(
         ExecutionCommand::Node(node, agent), command_context);
     if (result && cancellationRequested()) {
@@ -568,6 +587,7 @@ Result<void> PipelineController::ReplacePorts(
     agents_ = runtime.ordered_agents;
     cancellation_capability_ = std::move(cancellation_capability);
     job_.reset();
+    alignment_feedback_published_ = false;
     terminal_event_completed_job_id_ = 0;
     cancellation_.reset();
     cancel_requested_ = false;
@@ -605,6 +625,8 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(AgentId target_agent)
       std::lock_guard lock(mutex_);
       command_context.base_revision = committed_runtime_.revision;
     }
+    command_context = withProgress(command_context, id, StageId::kAlignment,
+                                   NodeId::kOptimize, target_agent);
     auto result = command_port_->Execute(
         ExecutionCommand::OptimizeThrough(target_agent), command_context);
     if (result && cancellationRequested()) {
@@ -652,6 +674,7 @@ Result<void> PipelineController::runOneStage(
     std::lock_guard lock(mutex_);
     command_context.base_revision = committed_runtime_.revision;
   }
+  command_context = withProgress(command_context, job_id, stage, std::nullopt);
   auto result = command_port_->Execute(ExecutionCommand::Stage(stage),
                                        command_context);
   if (result && cancellationRequested()) {
@@ -677,6 +700,32 @@ Result<void> PipelineController::runOneStage(
   completed.affected_agents = result.Value().affected_agents;
   emit(std::move(completed));
   return Result<void>::Ok();
+}
+
+ExecutionContext PipelineController::withProgress(
+    const ExecutionContext& context, uint64_t job_id, StageId stage,
+    std::optional<NodeId> node, std::optional<AgentId> fallback_agent) {
+  ExecutionContext result = context;
+  result.progress =
+      [this, job_id, stage, node,
+       fallback_agent = std::move(fallback_agent)](
+          const AlgorithmProgress& progress) {
+        ExecutionEvent event;
+        event.job_id = job_id;
+        event.type = EventType::kProgressUpdated;
+        event.stage = stage;
+        event.node = node;
+        event.agent = progress.agent.IsValid()
+                          ? std::optional<AgentId>(progress.agent)
+                          : fallback_agent;
+        event.message = std::string(DescribeAlgorithmProgressPhase(
+            progress.phase));
+        event.progress_current = progress.current;
+        event.progress_total = progress.total.value_or(0);
+        event.algorithm_progress = progress;
+        emit(std::move(event));
+      };
+  return result;
 }
 
 Result<void> PipelineController::Cancel(uint64_t job_id) {
@@ -848,6 +897,11 @@ PipelineSnapshot PipelineController::Snapshot() const {
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     const AgentId& agent) const {
+  return GetVisualizationSnapshot(VisualizationQuery{agent});
+}
+
+Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
+    const VisualizationQuery& query) const {
   std::shared_ptr<RuntimeQueryPort> query_port;
   {
     std::lock_guard lock(mutex_);
@@ -857,34 +911,53 @@ Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(
     return Result<VisualizationSnapshot>::Failure(
         Error::InvalidArgument("runtime query port is not available"));
   }
-  auto result = query_port->Visualization(agent);
+  auto result = query_port->Visualization(query);
   if (!result) return result;
   return result;
 }
 
 std::optional<AlignmentFeedbackSnapshot>
 PipelineController::GetAlignmentFeedbackSnapshot() const {
+  JobState job_state = JobState::kQueued;
   {
     std::lock_guard lock(mutex_);
-    if (!job_ || job_->state != JobState::kWaitingForAlignmentFeedback) {
+    if (!job_ || !alignment_feedback_published_) {
       return std::nullopt;
     }
+    job_state = job_->state;
   }
-  return alignment_feedback_ ? alignment_feedback_->Snapshot() : std::nullopt;
+  auto snapshot =
+      alignment_feedback_ ? alignment_feedback_->Snapshot() : std::nullopt;
+  if (!snapshot) return std::nullopt;
+  if (snapshot->review_state != AlignmentReviewState::kActive) {
+    return snapshot;
+  }
+  const bool attempt_is_running =
+      snapshot->attempt_status.state == AlignmentAttemptState::kRunning;
+  const bool controller_state_matches =
+      attempt_is_running ? job_state == JobState::kRunning
+                         : job_state == JobState::kWaitingForAlignmentFeedback;
+  return controller_state_matches ? snapshot : std::nullopt;
 }
 
 Result<void> PipelineController::RespondToAlignment(
     uint64_t job_id, AlignmentResponse response) {
   AlignmentDecision decision = response.decision;
+  JobState previous_state = JobState::kQueued;
+  std::string previous_message;
   {
     std::lock_guard lock(mutex_);
     if (!job_ || job_->id != job_id) {
       return Result<void>::Failure(Error::InvalidArgument("unknown job id"));
     }
-    if (job_->state != JobState::kWaitingForAlignmentFeedback) {
+    if (job_->state != JobState::kWaitingForAlignmentFeedback &&
+        !(job_->state == JobState::kRunning &&
+          decision == AlignmentDecision::kCancel)) {
       return Result<void>::Failure(
           Error::InvalidArgument("job is not waiting for alignment feedback"));
     }
+    previous_state = job_->state;
+    previous_message = job_->message;
     job_->state = JobState::kRunning;
     job_->message.clear();
   }
@@ -892,8 +965,8 @@ Result<void> PipelineController::RespondToAlignment(
   if (!result) {
     std::lock_guard lock(mutex_);
     if (job_ && job_->id == job_id) {
-      job_->state = JobState::kWaitingForAlignmentFeedback;
-      job_->message = "waiting for map alignment feedback";
+      job_->state = previous_state;
+      job_->message = std::move(previous_message);
     }
     return result;
   }

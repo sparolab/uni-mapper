@@ -18,6 +18,8 @@ struct GuiStageView {
   uint64_t progress_current = 0;
   uint64_t progress_total = 0;
   std::string message;
+  std::map<AgentId, AlgorithmProgress> agent_progress;
+  std::optional<AgentId> latest_progress_agent;
 };
 
 class GuiModel {

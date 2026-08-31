@@ -109,7 +109,8 @@ Result<ExecutionCandidate> MapUpdateExecutor::execute(
     return Result<ExecutionCandidate>::Failure(
         Error::InvalidArgument("MapUpdate config document is unavailable"));
   }
-  ExecutionContext command{input.cancellation, {}, input.committed->revision};
+  ExecutionContext command{input.cancellation, {}, input.committed->revision,
+                           input.progress};
   auto data_loader_context = MakeAlgorithmExecutionContext(
       *input.committed, command, {},
       input.committed->config->documents->data_loader,

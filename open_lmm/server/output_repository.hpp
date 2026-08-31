@@ -24,7 +24,7 @@ class PendingOutputSet {
   void Add(std::filesystem::path temporary,
            std::filesystem::path destination);
   [[nodiscard]] const std::vector<FileReplacement>& Files() const;
-  Result<void> Commit();
+  Result<FileSetCommitOutcome> Commit();
   void Rollback();
 
  private:

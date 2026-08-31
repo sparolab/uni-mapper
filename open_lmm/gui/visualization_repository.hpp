@@ -24,7 +24,6 @@ class VisualizationRepository {
   [[nodiscard]] std::vector<std::shared_ptr<const VisualizationSnapshot>>
   Snapshots() const;
   [[nodiscard]] std::size_t ApproximateBytes() const;
-
   [[nodiscard]] static std::string MapName(const AgentId& agent, uint64_t revision);
   [[nodiscard]] static std::string TrajectoryName(const AgentId& agent,
                                                   uint64_t revision);

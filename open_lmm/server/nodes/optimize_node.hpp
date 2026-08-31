@@ -34,10 +34,20 @@ class OptimizeNode : public PipelineNodeBase {
     AlgorithmExecutionContext algorithm_context = algorithm_context_;
     algorithm_context.agent = ctx.agent;
     algorithm_context.cancellation = ctx.cancellation;
+    if (algorithm_context.progress) {
+      algorithm_context.progress({ctx.agent.id, "optimize",
+                                  AlgorithmProgressPhase::kOptimizeGraph, 0,
+                                  1});
+    }
     BackendOptimizerInput input{*ctx.raw_data,
                                 ctx.loop_output->intra_loops,
                                 ctx.loop_output->inter_loops,
                                 db.raw_data};
+    auto valid_alignment_map =
+        db.descriptor_store.validate_agent_map(ctx.loop_output->alignment_map);
+    if (!valid_alignment_map) {
+      return Result<ControlFlow>::Failure(valid_alignment_map.GetError());
+    }
     auto processed = optimizer_->Process(algorithm_context, input);
     if (!processed) {
       return Result<ControlFlow>::Failure(processed.GetError());
@@ -58,14 +68,22 @@ class OptimizeNode : public PipelineNodeBase {
       db.optimized_data[id] =
           std::make_shared<const AgentOptimizedData>(std::move(opt));
     }
-    db.descriptor_store.set_agent_map(
-        ctx.agent.id, ctx.raw_data->map_points,
+    auto stored_map = db.descriptor_store.set_agent_map(
+        ctx.agent.id, ctx.loop_output->alignment_map,
         *ctx.loop_output->accepted_global_T_agent,
         *ctx.loop_output->accepted_alignment_method,
         *ctx.loop_output->accepted_alignment_approval,
         ctx.loop_output->accepted_target_agent,
         ctx.loop_output->accepted_at_unix_ms);
+    if (!stored_map) {
+      return Result<ControlFlow>::Failure(stored_map.GetError());
+    }
     db.descriptor_store.update_transforms(optimized_map_transforms);
+    if (algorithm_context.progress) {
+      algorithm_context.progress({ctx.agent.id, "optimize",
+                                  AlgorithmProgressPhase::kOptimizeGraph, 1,
+                                  1});
+    }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
   }

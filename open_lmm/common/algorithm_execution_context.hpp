@@ -1,6 +1,7 @@
 #pragma once
 
 #include <open_lmm/common/agent_context.hpp>
+#include <open_lmm/common/algorithm_progress.hpp>
 #include <open_lmm/common/alignment_feedback.hpp>
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/result.hpp>
@@ -46,11 +47,25 @@ struct AlgorithmExecutionContext {
   std::shared_ptr<AlignmentFeedbackBroker> feedback;
   AlgorithmLogger logger;
   AlgorithmProfiler profiler;
+  AlgorithmProgressCallback progress;
   AlgorithmResourceBudget resource_budget;
   uint64_t base_revision = 0;
   std::string operation;
   std::string plugin_id;
 };
+
+inline void ReportAlgorithmProgress(
+    const AlgorithmExecutionContext& context, AlgorithmProgressPhase phase,
+    uint64_t current, std::optional<uint64_t> total = std::nullopt) noexcept {
+  if (!context.progress) return;
+  try {
+    context.progress(
+        AlgorithmProgress{context.agent.id, context.operation, phase,
+                          current, total});
+  } catch (...) {
+    // Progress is observational and must not change algorithm semantics.
+  }
+}
 
 inline Error WithAlgorithmContext(Error error,
                                   const AlgorithmExecutionContext& context) {

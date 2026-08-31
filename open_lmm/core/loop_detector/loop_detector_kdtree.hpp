@@ -46,7 +46,8 @@ class LoopDetectorKdtree : public LoopDetectorBase {
 
   std::optional<MapAlignmentProposal> proposeKissAlignment(
       const AlgorithmExecutionContext& context,
-      const LoopDetectorProcessInput& input);
+      const LoopDetectorProcessInput& input,
+      const VoxelizedAgentMap& current_map);
 
   KdtreeParams params_;
   std::optional<DatabaseKdtree> database_;

@@ -404,11 +404,22 @@ int main() {
   Require(Execute(server, open_lmm::ExecutionCommand::Reconfigure(
                       open_lmm::ConfigDomain::kOptimizer, 4)).IsOk(),
           "optimizer reconfigure ignores unrelated invalid loop config");
+  auto after_optimizer_config = server.Visualization(Id("agent1"));
+  Require(after_optimizer_config &&
+              !after_optimizer_config.Value().poses.empty() &&
+              after_optimizer_config.Value().points_available,
+          "optimizer reconfigure preserves a valid committed presentation");
   WriteJson(config / "core/loop_detector.json", valid_loop);
   WriteJson(config / "core/optimizer.json", nlohmann::json::object());
   Require(Execute(server, open_lmm::ExecutionCommand::Reconfigure(
                       open_lmm::ConfigDomain::kLoopDetector, 5)).IsOk(),
           "loop reconfigure ignores unrelated invalid optimizer config");
+  auto after_loop_config = server.Visualization(Id("agent1"));
+  Require(after_loop_config && !after_loop_config.Value().poses.empty() &&
+              after_loop_config.Value().points_available &&
+              after_loop_config.Value().phase ==
+                  open_lmm::VisualizationPhase::kDataLoad,
+          "loop reconfigure preserves the valid DataLoad presentation");
   WriteJson(config / "core/optimizer.json", valid_optimizer);
 
   const auto reconfigured_snapshot = server.Snapshot();
@@ -419,6 +430,18 @@ int main() {
                                          open_lmm::NodeId::kLoopDetect,
                                          Id("agent2")));
   Require(replay_loop.IsOk(), "ordered LoopDetect replay for follower");
+  auto loop_visualization = server.Visualization(
+      open_lmm::VisualizationQuery{Id("agent2"), false});
+  Require(loop_visualization &&
+              loop_visualization.Value().phase ==
+                  open_lmm::VisualizationPhase::kLoopDetection &&
+              std::any_of(loop_visualization.Value().edges.begin(),
+                          loop_visualization.Value().edges.end(),
+                          [](const auto& edge) {
+                            return edge.type !=
+                                   open_lmm::VisualizationEdgeType::kTrajectory;
+                          }),
+          "LoopDetect commit publishes candidate loops instead of clearing them");
   auto replay_optimize = Execute(server, open_lmm::ExecutionCommand::Node(
                                              open_lmm::NodeId::kOptimize,
                                              Id("agent2")));
@@ -476,6 +499,16 @@ int main() {
     Require(Execute(first_session, open_lmm::ExecutionCommand::Stage(
                                        open_lmm::StageId::kDataLoad)).IsOk(),
             "first session is admitted under resident budget");
+    auto data_load_visualization = first_session.Visualization(
+        open_lmm::VisualizationQuery{Id("agent1"), false});
+    Require(data_load_visualization &&
+                data_load_visualization.Value().phase ==
+                    open_lmm::VisualizationPhase::kDataLoad &&
+                data_load_visualization.Value().pose_kind ==
+                    open_lmm::VisualizationPoseKind::kOdometry &&
+                !data_load_visualization.Value().poses.empty() &&
+                data_load_visualization.Value().points.empty(),
+            "DataLoad commit exposes odometry without eager point payload");
     const auto first_before = first_session.Snapshot();
     const uint64_t first_reserved = pressure_governor->ReservedMemoryBytes();
     Require(first_before.revision != 0 &&

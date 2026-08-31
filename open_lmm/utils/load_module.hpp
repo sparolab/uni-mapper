@@ -14,9 +14,6 @@
 
 namespace open_lmm {
 
-void open_so(const std::string& so_name);
-void* load_symbol(const std::string& so_name, const std::string& symbol_name);
-
 struct PluginMetadata {
   uint32_t abi_version = 0;
   std::string kind;

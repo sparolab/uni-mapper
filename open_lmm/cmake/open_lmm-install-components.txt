@@ -1,4 +1,4 @@
-OpenLMM install components, version 2.0.0
+OpenLMM install components, version 3.0.0
 
 Runtime
   Versioned OpenLMM runtime shared libraries, license and release metadata.

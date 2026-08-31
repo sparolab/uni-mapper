@@ -59,6 +59,11 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
     AlgorithmExecutionContext remover_context = remover_context_;
     remover_context.agent = ctx.agent;
     remover_context.cancellation = ctx.cancellation;
+    const auto input_progress_phase =
+        dynamic_remover->StreamingMode() ==
+                DynamicRemoverStreamingMode::kDirect
+            ? AlgorithmProgressPhase::kReadAndRunRemover
+            : AlgorithmProgressPhase::kLoadRemoverInput;
     auto processed = dynamic_remover->ProcessStreaming(
         remover_context,
         DynamicRemoverStreamingInput{
@@ -73,7 +78,7 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
                       Error::Cancelled("during raw scan streaming"));
                 }
                 return visitor(index, scan);
-              });
+              }, input_progress_phase);
         },
         it->second->optimized_poses, heavy_phase_admission_});
     if (!processed) {
@@ -117,6 +122,12 @@ Result<ControlFlow> MapUpdateNode::Process(AgentPipelineCtx& ctx,
   int save_result = 0;
   {
     OPEN_LMM_ZONE_N("MapUpdate.PCDWrite");
+    AlgorithmExecutionContext output_context = remover_context_;
+    output_context.agent = ctx.agent;
+    output_context.cancellation = ctx.cancellation;
+    output_context.operation = "map_update_write";
+    ReportAlgorithmProgress(output_context,
+                            AlgorithmProgressPhase::kWriteOutput, 0);
     save_result = pcl::io::savePCDFileBinaryCompressed(temp_file, *ds_map);
   }
   if (save_result != 0) {

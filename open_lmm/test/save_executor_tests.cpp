@@ -263,7 +263,8 @@ void TestRecoveryRequiredPropagatesFromFileSet() {
       pending, artifacts);
   Check(prepared.IsOk(), "recovery fixture preparation must succeed");
   auto committed = pending.Commit();
-  Check(committed.IsOk() && fs::is_regular_file(original_map),
+  Check(committed.IsOk() && committed.Value().recovery_required.has_value() &&
+            fs::is_regular_file(original_map),
         "Save commit must remain successful after post-install cleanup failure");
   Check(fs::exists(output / "global_map_A.pcd.open_lmm_backup/original"),
         "recovery-required Save must preserve the original backup");

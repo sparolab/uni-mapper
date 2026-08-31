@@ -44,6 +44,22 @@ Result<void> ValidateNodeTarget(const RuntimeState& state, NodeId node,
   return Result<void>::Ok();
 }
 
+VisualizationPhase InferVisualizationPhase(const RuntimeState& state) {
+  if (!state.payload || !state.payload->database) {
+    return VisualizationPhase::kDataLoad;
+  }
+  if (!state.payload->database->optimized_data.empty()) {
+    return VisualizationPhase::kOptimization;
+  }
+  if (std::any_of(state.payload->contexts.begin(), state.payload->contexts.end(),
+                  [](const AgentPipelineCtx& context) {
+                    return static_cast<bool>(context.loop_output);
+                  })) {
+    return VisualizationPhase::kLoopDetection;
+  }
+  return VisualizationPhase::kDataLoad;
+}
+
 }  // namespace
 
 StageExecutor::StageExecutor(
@@ -66,7 +82,12 @@ StageExecutor::StageExecutor(
   }
   runtime_state_store_.Initialize(std::move(result.initial_state));
   coordinator_ = std::make_unique<StageCoordinator>(
-      runtime_state_store_, output_repository_, resource_governor_);
+      runtime_state_store_, output_repository_, resource_governor_, nullptr,
+      [this](uint64_t base_revision, const AgentId& agent,
+             const AgentRawDataHandle& raw) {
+        visualization_projector_.PublishDataLoadCandidate(base_revision,
+                                                          agent, raw);
+      });
 }
 
 StageExecutor::~StageExecutor() = default;
@@ -142,13 +163,14 @@ void StageExecutor::PublishEmptyVisualization() {
   visualization_projector_.Clear(state ? state->revision : 0);
 }
 
-void StageExecutor::PublishVisualization(bool include_maps) {
-  visualization_projector_.Publish(CommittedState(), include_maps);
+void StageExecutor::PublishVisualization(VisualizationPhase phase,
+                                         bool include_maps) {
+  visualization_projector_.Publish(CommittedState(), phase, include_maps);
 }
 
 Result<VisualizationSnapshot> StageExecutor::Visualization(
-    const AgentId& agent) const {
-  return visualization_projector_.Project(agent);
+    const VisualizationQuery& query) const {
+  return visualization_projector_.Project(query);
 }
 
 Result<ExecutionReceipt> StageExecutor::Execute(
@@ -179,11 +201,20 @@ Result<ExecutionReceipt> StageExecutor::Execute(
             Error::InvalidArgument("stage command requires a stage"));
       }
       result = coordinator_->ExecuteStage(base, *command.stage, context);
-      if (result && *command.stage == StageId::kDataLoad) {
-        PublishEmptyVisualization();
-      } else if (result) {
-        PublishVisualization(*command.stage == StageId::kMapUpdate ||
-                             *command.stage == StageId::kSave);
+      if (!result && *command.stage == StageId::kDataLoad) {
+        visualization_projector_.RollbackDataLoadCandidate(base->revision);
+      }
+      if (result) {
+        const VisualizationPhase phase =
+            *command.stage == StageId::kDataLoad
+                ? VisualizationPhase::kDataLoad
+            : *command.stage == StageId::kAlignment
+                ? VisualizationPhase::kOptimization
+            : *command.stage == StageId::kMapUpdate
+                ? VisualizationPhase::kMapUpdate
+                : VisualizationPhase::kSave;
+        PublishVisualization(phase, *command.stage == StageId::kMapUpdate ||
+                                        *command.stage == StageId::kSave);
       }
       break;
     case ExecutionCommandKind::kNode: {
@@ -197,13 +228,23 @@ Result<ExecutionReceipt> StageExecutor::Execute(
       }
       result = coordinator_->ExecuteNode(base, *command.node, command.agent,
                                          context);
-      if (result && (*command.node == NodeId::kDataLoad ||
-                     *command.node == NodeId::kLoopDetect)) {
-        PublishEmptyVisualization();
-      } else if (result) {
-        PublishVisualization(*command.node == NodeId::kMapUpdate ||
-                             *command.node == NodeId::kPoseSave ||
-                             *command.node == NodeId::kFallbackMapSave);
+      if (!result && *command.node == NodeId::kDataLoad) {
+        visualization_projector_.RollbackDataLoadCandidate(base->revision);
+      }
+      if (result) {
+        const VisualizationPhase phase =
+            *command.node == NodeId::kDataLoad
+                ? VisualizationPhase::kDataLoad
+            : *command.node == NodeId::kLoopDetect
+                ? VisualizationPhase::kLoopDetection
+            : *command.node == NodeId::kOptimize
+                ? VisualizationPhase::kOptimization
+            : *command.node == NodeId::kMapUpdate
+                ? VisualizationPhase::kMapUpdate
+                : VisualizationPhase::kSave;
+        PublishVisualization(phase, *command.node == NodeId::kMapUpdate ||
+                                        *command.node == NodeId::kPoseSave ||
+                                        *command.node == NodeId::kFallbackMapSave);
       }
       break;
     }
@@ -214,7 +255,9 @@ Result<ExecutionReceipt> StageExecutor::Execute(
       }
       result = coordinator_->ExecuteOptimizeThrough(base, *command.agent,
                                                     context);
-      if (result) PublishVisualization(false);
+      if (result) {
+        PublishVisualization(VisualizationPhase::kOptimization, false);
+      }
       break;
     case ExecutionCommandKind::kReconfigure:
       if (!command.config_domain || command.config_revision == 0) {
@@ -223,11 +266,8 @@ Result<ExecutionReceipt> StageExecutor::Execute(
       }
       result = coordinator_->ExecuteReconfigure(
           base, *command.config_domain, command.config_revision, context);
-      if (result && (*command.config_domain == ConfigDomain::kLoopDetector ||
-                     *command.config_domain == ConfigDomain::kOptimizer)) {
-        PublishEmptyVisualization();
-      } else if (result) {
-        PublishVisualization(false);
+      if (result) {
+        PublishVisualization(InferVisualizationPhase(*CommittedState()), false);
       }
       break;
   }
@@ -271,12 +311,7 @@ Result<ConfigApplyReceipt> StageExecutor::ApplyConfig(
   }
   auto applied = coordinator_->ApplyConfig(base, candidate, expected, context);
   if (!applied) return applied;
-  if (candidate.domain == ConfigDomain::kLoopDetector ||
-      candidate.domain == ConfigDomain::kOptimizer) {
-    PublishEmptyVisualization();
-  } else {
-    PublishVisualization(false);
-  }
+  PublishVisualization(InferVisualizationPhase(*CommittedState()), false);
   return applied;
 }
 

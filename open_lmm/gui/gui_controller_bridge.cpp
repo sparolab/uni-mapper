@@ -91,9 +91,10 @@ GuiServices MakeGuiServices(const std::shared_ptr<RuntimeClient>& runtime,
     auto snapshot = locked->Snapshot();
     return snapshot ? std::move(snapshot).Value().pipeline : PipelineSnapshot{};
   };
-  services.visualization_snapshot = [weak_runtime](const AgentId& agent) {
+  services.visualization_snapshot = [weak_runtime](
+                                        const VisualizationQuery& query) {
     auto locked = weak_runtime.lock();
-    return locked ? locked->Visualization(agent)
+    return locked ? locked->Visualization(query)
                   : RuntimeExpired<VisualizationSnapshot>();
   };
   services.alignment_feedback_snapshot = [weak_runtime] {

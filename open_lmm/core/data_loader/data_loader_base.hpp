@@ -36,7 +36,9 @@ class DataLoaderBase {
   // Context-aware streaming is the only public raw-scan boundary.
   virtual Result<std::size_t> VisitRawScanData(
       const AlgorithmExecutionContext& context,
-      const fs::path& data_dir_path, const RawScanVisitor& visitor) = 0;
+      const fs::path& data_dir_path, const RawScanVisitor& visitor,
+      AlgorithmProgressPhase phase =
+          AlgorithmProgressPhase::kLoadRemoverInput) = 0;
 
 };
 

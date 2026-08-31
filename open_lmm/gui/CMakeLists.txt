@@ -5,6 +5,7 @@ add_library(open_lmm_gui_core SHARED
   gui_model.cpp
   gui_plugin_host.cpp
   gui_runtime_host.cpp
+  map_presentation_state.cpp
   visualization_repository.cpp
   visualization_snapshot_worker.cpp
 )

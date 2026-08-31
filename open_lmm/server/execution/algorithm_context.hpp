@@ -40,6 +40,7 @@ inline AlgorithmExecutionContext MakeAlgorithmExecutionContext(
   context.config = std::move(config);
   context.cancellation = command.cancellation;
   context.feedback = command.alignment_feedback;
+  context.progress = command.progress;
   context.resource_budget.maximum_cpu_threads =
       state.config ? state.config->root.max_parallel_agents : 1;
   context.base_revision = state.revision;

@@ -1,7 +1,7 @@
 # OpenLMM release and compatibility policy
 
 OpenLMM uses semantic versioning for its installed packages. The current package version is
-`2.0.0`; `open_lmm`, `open_lmm_ros`, the generated CMake package version and shared-library
+`3.0.0`; `open_lmm`, `open_lmm_ros`, the generated CMake package version and shared-library
 versions must remain synchronized.
 
 ## Compatibility contracts
@@ -13,13 +13,13 @@ versions must remain synchronized.
 | C++ runtime API | Source/rebuild compatibility only within the documented compiler and standard-library matrix. |
 | Artifact files | Only formats carrying an explicit schema/version field are long-term contracts. |
 
-Shared libraries use `SOVERSION=2` and full `VERSION=2.0.0`. A breaking installed C++ or plugin
+Shared libraries use `SOVERSION=3` and full `VERSION=3.0.0`. A breaking installed C++ or plugin
 ABI change requires a major-version and SONAME-major change. Additive source changes still require
 the normal compiler matrix and source-free package consumer checks.
 
 Plugin entry ABI v1 remains version 1. GUI plugins are the exception to the
 otherwise descriptive capability metadata: the GUI host requires the exact
-`gui:services-v2` capability before it calls `create()`, so a DSO compiled for
+`gui:services-v3` capability before it calls `create()`, so a DSO compiled for
 the previous `GuiServices` layout is rejected safely.
 
 ## Supported release matrix

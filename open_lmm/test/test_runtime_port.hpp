@@ -100,8 +100,8 @@ class RuntimePortFixture : public StageRuntimePort {
   }
 
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
-      const AgentId& agent) const override {
-    return CreateVisualization(agent);
+      const VisualizationQuery& query) const override {
+    return CreateVisualization(query.agent);
   }
 
   Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,

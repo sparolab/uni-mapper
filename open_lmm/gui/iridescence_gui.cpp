@@ -10,6 +10,8 @@
 #include <iridescence/portable-file-dialogs.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cfloat>
 #include <exception>
 #include <map>
 #include <cstdio>
@@ -56,7 +58,8 @@ const char* ArtifactStateName(ArtifactState state) {
   }
   return "Unknown";
 }
-Eigen::Vector4f AgentColor(const AgentId& agent) {
+Eigen::Vector4f AgentColor(const AgentId& agent,
+                           const std::vector<AgentId>& ordered_agents) {
   static const std::array<Eigen::Vector4f, 8> colors = {
       Eigen::Vector4f(0.90F, 0.20F, 0.20F, 1.0F),
       Eigen::Vector4f(0.20F, 0.65F, 1.00F, 1.0F),
@@ -67,6 +70,13 @@ Eigen::Vector4f AgentColor(const AgentId& agent) {
       Eigen::Vector4f(1.00F, 0.35F, 0.75F, 1.0F),
       Eigen::Vector4f(0.75F, 0.75F, 0.20F, 1.0F),
   };
+  const auto found = std::find(ordered_agents.begin(), ordered_agents.end(),
+                               agent);
+  if (found != ordered_agents.end()) {
+    return colors[static_cast<std::size_t>(
+                      std::distance(ordered_agents.begin(), found)) %
+                  colors.size()];
+  }
   return colors[std::hash<std::string>{}(agent.Value()) % colors.size()];
 }
 template <std::size_t N>
@@ -145,13 +155,48 @@ void IridescenceGui::ViewerLoop() {
       bool needs_resync = false;
       for (const auto& event : events) {
         needs_resync |= !model_.Apply(event);
+        if ((event.type == EventType::kStageStarted ||
+             event.type == EventType::kNodeStarted) && event.stage) {
+          if (*event.stage == StageId::kAlignment) {
+            alignment_stage_active_ = true;
+          } else {
+            alignment_stage_active_ = false;
+          }
+          data_load_preview_active_ =
+              *event.stage == StageId::kDataLoad &&
+              (!event.node || *event.node == NodeId::kDataLoad);
+          if (data_load_preview_active_) {
+            next_data_load_preview_refresh_ =
+                std::chrono::steady_clock::now();
+          }
+        }
         if (event.type == EventType::kArtifactCommitted && event.agent) {
           RequestVisualization(*event.agent);
         }
         if (event.type == EventType::kStageCompleted && event.stage &&
-            (*event.stage == StageId::kAlignment ||
+            (*event.stage == StageId::kDataLoad ||
+             *event.stage == StageId::kAlignment ||
              *event.stage == StageId::kMapUpdate)) {
+          if (*event.stage == StageId::kAlignment) {
+            alignment_stage_active_ = false;
+          }
           for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
+        }
+        if ((event.type == EventType::kStageFailed ||
+             event.type == EventType::kNodeFailed) &&
+            event.stage && *event.stage == StageId::kDataLoad) {
+          data_load_preview_active_ = false;
+          for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
+        }
+        if ((event.type == EventType::kStageFailed ||
+             event.type == EventType::kNodeFailed) &&
+            event.stage && *event.stage == StageId::kAlignment) {
+          alignment_stage_active_ = false;
+          ResetPipelineAlignmentPreview();
+        }
+        if (event.type == EventType::kJobCancelled) {
+          alignment_stage_active_ = false;
+          ResetPipelineAlignmentPreview();
         }
       }
       if (event_queue_->Stats().resync_required && services_.snapshot) {
@@ -160,6 +205,14 @@ void IridescenceGui::ViewerLoop() {
       if (needs_resync) {
         SynchronizeModel();
         event_queue_->MarkResynchronized();
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (model_.Stage(StageId::kDataLoad).state == GuiStageState::kRunning &&
+          now >= next_data_load_preview_refresh_) {
+        for (const AgentId& agent : model_.Agents()) {
+          RequestVisualization(agent);
+        }
+        next_data_load_preview_refresh_ = now + std::chrono::milliseconds(100);
       }
       last_gui_work_ms_ = std::chrono::duration<double, std::milli>(
                               std::chrono::steady_clock::now() - gui_work_begin)
@@ -196,31 +249,82 @@ void IridescenceGui::SynchronizeModel() {
     if (!snapshot) return;
     model_.Synchronize(std::move(snapshot).Value().pipeline);
     config_revision_draft_ = model_.ConfigRevision() + 1;
-    for (const AgentId& agent : model_.Agents()) RequestVisualization(agent);
+    for (const AgentId& agent : model_.Agents()) {
+      RequestVisualization(agent);
+    }
   }
 }
 
-void IridescenceGui::RequestVisualization(AgentId agent) {
-  if (visualization_worker_) visualization_worker_->Request(agent);
+void IridescenceGui::RequestVisualization(AgentId agent, bool include_points) {
+  if (!visualization_worker_ || !map_presentation_.IsVisible(agent)) return;
+  const AgentId requested_agent = agent;
+  const auto generation = visualization_worker_->Request(
+      {std::move(agent), include_points, 0.4F, 1'000'000});
+  if (generation) map_presentation_.Begin(requested_agent, *generation);
 }
 
 void IridescenceGui::DrainVisualizationSnapshots() {
   if (!visualization_worker_) return;
   for (auto& completed : visualization_worker_->Drain()) {
+    if (!map_presentation_.IsCurrent(completed.query.agent,
+                                     completed.request_generation)) {
+      continue;
+    }
     auto& result = completed.result;
-    if (!result) continue;  // Pose artifacts may not exist during initial sync.
+    if (!result) {
+      // Pose artifacts may not exist during initial sync. Preserve the visible
+      // map and finish only this failed pending generation.
+      map_presentation_.FinishWithoutReplacement(
+          completed.query.agent, completed.request_generation);
+      continue;
+    }
     auto snapshot = std::make_shared<const VisualizationSnapshot>(
         std::move(result).Value());
+    if (data_load_preview_active_ &&
+        snapshot->phase != VisualizationPhase::kDataLoad) {
+      map_presentation_.FinishWithoutReplacement(
+          completed.query.agent, completed.request_generation);
+      continue;
+    }
     auto update = visualization_.Commit(snapshot);
-    if (update.changed) UpdateDrawables(snapshot, update);
+    if (update.changed) {
+      UpdateDrawables(snapshot, update, completed.request_generation);
+    }
+    const auto preferences = DefaultVisualizationPreferences(snapshot->phase);
+    if (preferences.points && snapshot->points_available &&
+        !(alignment_stage_active_ &&
+          snapshot->phase == VisualizationPhase::kDataLoad) &&
+        !snapshot->points_complete && !completed.query.include_points) {
+      RequestVisualization(snapshot->agent, true);
+    }
+    if (map_presentation_.IsCurrent(completed.query.agent,
+                                    completed.request_generation)) {
+      map_presentation_.FinishWithoutReplacement(
+          completed.query.agent, completed.request_generation);
+    }
   }
 }
 
 void IridescenceGui::UpdateDrawables(
     const std::shared_ptr<const VisualizationSnapshot>& snapshot,
-    const VisualizationUpdate& update) {
+    const VisualizationUpdate& update,
+    std::optional<uint64_t> request_generation) {
   auto viewer = guik::LightViewer::instance();
-  for (const auto& name : update.remove_drawables) viewer->remove_drawable(name);
+  const std::string map_prefix =
+      "agent/" + snapshot->agent.Value() + "/map/";
+  for (const auto& name : update.remove_drawables) {
+    // Map drawables are swapped only after the replacement point payload is
+    // ready. Metadata, trajectory, and loop updates must not create a blank
+    // frame by eagerly removing the last usable map.
+    if (name.rfind(map_prefix, 0) != 0) viewer->remove_drawable(name);
+  }
+  if (!IsAgentVisualizationVisible(snapshot->agent)) {
+    if (auto removed = map_presentation_.SetVisible(snapshot->agent, false)) {
+      viewer->remove_drawable(*removed);
+    }
+    return;
+  }
+  const auto preferences = DefaultVisualizationPreferences(snapshot->phase);
 
   bool has_map_bounds = false;
   float min_z = 0.0F;
@@ -245,7 +349,10 @@ void IridescenceGui::UpdateDrawables(
         "z_range", Eigen::Vector2f(min_z, max_z));
   }
 
-  if (!snapshot->points.empty()) {
+  if (preferences.points &&
+      !(alignment_stage_active_ &&
+        snapshot->phase == VisualizationPhase::kDataLoad) &&
+      !snapshot->points.empty()) {
     std::vector<Eigen::Vector3f> points;
     std::vector<Eigen::Vector4f> colors;
     points.reserve(snapshot->points.size());
@@ -260,16 +367,40 @@ void IridescenceGui::UpdateDrawables(
     }
     auto cloud = std::make_shared<glk::PointCloudBuffer>(points);
     cloud->add_color(colors);
-    guik::Rainbow shader_setting;
-    if (visualization_color_mode_ == 1) {
-      shader_setting.set_color_mode(guik::ColorMode::VERTEX_COLOR);
-    } else if (visualization_color_mode_ == 2) {
-      shader_setting.set_color_mode(guik::ColorMode::FLAT_COLOR);
-      shader_setting.set_color(AgentColor(snapshot->agent));
+    const std::string map_name = VisualizationRepository::MapName(
+        snapshot->agent, snapshot->revision);
+    if (visualization_color_mode_ == 0) {
+      viewer->update_drawable(map_name, cloud, guik::Rainbow());
+    } else if (visualization_color_mode_ == 1 &&
+               snapshot->point_kind ==
+                   VisualizationPointKind::kFinalStaticMap) {
+      viewer->update_drawable(map_name, cloud, guik::VertexColor());
+    } else {
+      viewer->update_drawable(
+          map_name, cloud,
+          guik::FlatColor(AgentColor(snapshot->agent, model_.Agents())));
     }
-    viewer->update_drawable(
-        VisualizationRepository::MapName(snapshot->agent, snapshot->revision),
-        cloud, shader_setting);
+    const auto committed = request_generation
+                               ? map_presentation_.Commit(
+                                     snapshot->agent, *request_generation,
+                                     map_name, snapshot->point_kind)
+                               : MapPresentationCommit{};
+    if (committed.replaced_drawable) {
+      viewer->remove_drawable(*committed.replaced_drawable);
+    }
+    if (committed.accepted && alignment_preview_agent_ &&
+        *alignment_preview_agent_ == snapshot->agent &&
+        snapshot->phase != VisualizationPhase::kDataLoad) {
+      // Keep the accepted review cloud visible until this replacement map is
+      // fully resident. Remove it only after the new drawable is installed.
+      viewer->remove_drawable("open_lmm.alignment.target");
+      viewer->remove_drawable("open_lmm.alignment.source");
+      viewer->remove_drawable("open_lmm.alignment.target_trajectory");
+      viewer->remove_drawable("open_lmm.alignment.source_trajectory");
+      viewer->remove_drawable("open_lmm.alignment.inlier_loops");
+      viewer->remove_drawable("open_lmm.alignment.outlier_loops");
+      alignment_preview_agent_.reset();
+    }
   }
 
   std::vector<Eigen::Vector3f> trajectory;
@@ -277,23 +408,47 @@ void IridescenceGui::UpdateDrawables(
   for (const auto& pose : snapshot->poses) {
     trajectory.push_back(pose.transform.translation());
   }
-  if (trajectory.size() > 1) {
+  if (preferences.trajectory && trajectory.size() > 1) {
     viewer->update_drawable(
         VisualizationRepository::TrajectoryName(snapshot->agent,
                                                 snapshot->revision),
-        std::make_shared<glk::ThinLines>(trajectory, true),
-        guik::FlatGreen());
+        std::make_shared<glk::ThinLines>(trajectory, true,
+                                         kVisualizationTrajectoryLineWidth),
+        guik::FlatColor(AgentColor(snapshot->agent, model_.Agents())));
   }
-  for (std::size_t i = 0; i < snapshot->poses.size(); ++i) {
-    viewer->update_drawable(
-        VisualizationRepository::PoseName(snapshot->agent, i,
-                                          snapshot->revision),
-        glk::Primitives::coordinate_system(),
-        guik::VertexColor(snapshot->poses[i].transform.matrix()).scale(0.25F));
+  if (preferences.pose_axes) {
+    for (std::size_t i = 0; i < snapshot->poses.size(); ++i) {
+      viewer->update_drawable(
+          VisualizationRepository::PoseName(snapshot->agent, i,
+                                            snapshot->revision),
+          glk::Primitives::coordinate_system(),
+          guik::VertexColor(snapshot->poses[i].transform.matrix())
+              .scale(0.25F));
+    }
   }
 
+  for (const auto& current : visualization_.Snapshots()) {
+    UpdateLoopDrawables(current);
+  }
+  if (alignment_feedback_ && alignment_model_control_ &&
+      alignment_feedback_->proposal.source_agent == snapshot->agent) {
+    ApplyPipelineAlignmentPreview(
+        snapshot->agent, alignment_model_control_->model_matrix());
+  }
+}
+
+void IridescenceGui::UpdateLoopDrawables(
+    const std::shared_ptr<const VisualizationSnapshot>& snapshot) {
+  auto viewer = guik::LightViewer::instance();
+  viewer->remove_drawable(VisualizationRepository::IntraLoopName(
+      snapshot->agent, snapshot->revision));
+  viewer->remove_drawable(VisualizationRepository::InterLoopName(
+      snapshot->agent, snapshot->revision));
+  if (!IsAgentVisualizationVisible(snapshot->agent)) return;
+  const auto preferences = DefaultVisualizationPreferences(snapshot->phase);
   std::map<std::pair<AgentId, std::size_t>, Eigen::Vector3f> pose_lookup;
   for (const auto& current : visualization_.Snapshots()) {
+    if (!IsAgentVisualizationVisible(current->agent)) continue;
     for (const auto& pose : current->poses) {
       pose_lookup[{current->agent, static_cast<std::size_t>(pose.index)}] =
           pose.transform.translation();
@@ -312,35 +467,108 @@ void IridescenceGui::UpdateDrawables(
     lines.push_back(from->second);
     lines.push_back(to->second);
   }
-  if (!intra_loops.empty()) {
+  if (preferences.intra_loops && !intra_loops.empty()) {
     viewer->update_drawable(
         VisualizationRepository::IntraLoopName(snapshot->agent,
                                                snapshot->revision),
-        std::make_shared<glk::ThinLines>(intra_loops, false),
+        std::make_shared<glk::ThinLines>(intra_loops, false,
+                                         kVisualizationIntraLoopLineWidth),
         guik::FlatOrange());
   }
-  if (!inter_loops.empty()) {
+  if (preferences.inter_loops && !inter_loops.empty()) {
     viewer->update_drawable(
         VisualizationRepository::InterLoopName(snapshot->agent,
                                                snapshot->revision),
-        std::make_shared<glk::ThinLines>(inter_loops, false), guik::FlatRed());
+        std::make_shared<glk::ThinLines>(inter_loops, false,
+                                         kVisualizationInterLoopLineWidth),
+        guik::FlatRed());
+  }
+}
+
+void IridescenceGui::SetAgentVisualizationVisible(const AgentId& agent,
+                                                  bool visible) {
+  auto viewer = guik::LightViewer::instance();
+  if (auto removed = map_presentation_.SetVisible(agent, visible)) {
+    viewer->remove_drawable(*removed);
+  }
+  const auto snapshot = visualization_.Latest(agent);
+  if (!snapshot) {
+    if (visible) RequestVisualization(agent);
+    return;
+  }
+  if (!visible) {
+    viewer->remove_drawable(VisualizationRepository::TrajectoryName(
+        snapshot->agent, snapshot->revision));
+    viewer->remove_drawable(VisualizationRepository::IntraLoopName(
+        snapshot->agent, snapshot->revision));
+    viewer->remove_drawable(VisualizationRepository::InterLoopName(
+        snapshot->agent, snapshot->revision));
+    for (std::size_t index = 0; index < snapshot->poses.size(); ++index) {
+      viewer->remove_drawable(VisualizationRepository::PoseName(
+          snapshot->agent, index, snapshot->revision));
+    }
+  } else {
+    UpdateDrawables(snapshot, {});
+    if (DefaultVisualizationPreferences(snapshot->phase).points &&
+        snapshot->points_available &&
+        !(alignment_stage_active_ &&
+          snapshot->phase == VisualizationPhase::kDataLoad)) {
+      RequestVisualization(snapshot->agent, true);
+    }
+  }
+  for (const auto& current : visualization_.Snapshots()) {
+    UpdateLoopDrawables(current);
+  }
+}
+
+bool IridescenceGui::IsAgentVisualizationVisible(
+    const AgentId& agent) const {
+  return map_presentation_.IsVisible(agent);
+}
+
+void IridescenceGui::HideDataLoadPointLayers() {
+  auto viewer = guik::LightViewer::instance();
+  for (const auto& snapshot : visualization_.Snapshots()) {
+    if (snapshot->phase != VisualizationPhase::kDataLoad) continue;
+    if (auto removed = map_presentation_.DiscardVisible(snapshot->agent)) {
+      viewer->remove_drawable(*removed);
+    }
   }
 }
 
 void IridescenceGui::ApplyVisualizationColorMode() {
   auto viewer = guik::LightViewer::instance();
   for (const auto& snapshot : visualization_.Snapshots()) {
-    const auto drawable = viewer->find_drawable(
-        VisualizationRepository::MapName(snapshot->agent, snapshot->revision));
-    if (!drawable.first) continue;
+    const auto rendered = map_presentation_.Visible(snapshot->agent);
+    if (!rendered) continue;
+    const std::string& map_name = rendered->drawable;
+    const auto drawable = viewer->find_drawable(map_name);
+    if (!drawable.second) continue;
     if (visualization_color_mode_ == 0) {
-      drawable.first->set_color_mode(guik::ColorMode::RAINBOW);
-    } else if (visualization_color_mode_ == 1) {
-      drawable.first->set_color_mode(guik::ColorMode::VERTEX_COLOR);
+      viewer->update_drawable(map_name, drawable.second, guik::Rainbow());
+    } else if (visualization_color_mode_ == 1 &&
+               rendered->point_kind ==
+                   VisualizationPointKind::kFinalStaticMap) {
+      viewer->update_drawable(map_name, drawable.second, guik::VertexColor());
     } else {
-      drawable.first->set_color_mode(guik::ColorMode::FLAT_COLOR);
-      drawable.first->set_color(AgentColor(snapshot->agent));
+      viewer->update_drawable(
+          map_name, drawable.second,
+          guik::FlatColor(AgentColor(snapshot->agent, model_.Agents())));
     }
+  }
+}
+
+void IridescenceGui::DrawAgentVisibilityControls() {
+  if (model_.Agents().empty()) return;
+  ImGui::TextUnformatted("Visible agents");
+  for (const AgentId& agent : model_.Agents()) {
+    ImGui::PushID(agent.Value().c_str());
+    bool visible = IsAgentVisualizationVisible(agent);
+    if (ImGui::Checkbox(agent.Value().c_str(), &visible)) {
+      SetAgentVisualizationVisible(agent, visible);
+    }
+    ImGui::PopID();
+    if (agent != model_.Agents().back()) ImGui::SameLine();
   }
 }
 
@@ -361,11 +589,12 @@ void IridescenceGui::DrawPipelineUi() {
   ImGui::Text("Visualization cache: %.2f MiB",
               static_cast<double>(visualization_.ApproximateBytes()) /
                   (1024.0 * 1024.0));
-  const char* color_modes[] = {"RAINBOW (height)", "INTENSITY", "AGENT"};
+  const char* color_modes[] = {"HEIGHT", "INTENSITY (final map)", "AGENT"};
   if (ImGui::Combo("Map color", &visualization_color_mode_, color_modes,
                    IM_ARRAYSIZE(color_modes))) {
     ApplyVisualizationColorMode();
   }
+  DrawAgentVisibilityControls();
 
   if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
   if (ImGui::Button("Run All") && services_.submit_run_all) {
@@ -403,10 +632,39 @@ void IridescenceGui::DrawPipelineUi() {
       command_error_ = result ? std::string{} : result.GetError().Message();
     }
     if (!model_.CanSubmitCommand()) ImGui::EndDisabled();
-    if (view.progress_total > 0) {
-      const float fraction = static_cast<float>(view.progress_current) /
-                             static_cast<float>(view.progress_total);
-      ImGui::ProgressBar(fraction);
+    const auto draw_algorithm_progress = [](const AgentId& agent,
+                                            const AlgorithmProgress& progress) {
+      const std::string status = FormatAlgorithmProgressStatus(progress);
+      ImGui::Text("%s - %s", agent.Value().c_str(), status.c_str());
+      if (progress.total && *progress.total > 0) {
+        const float fraction = static_cast<float>(progress.current) /
+                               static_cast<float>(*progress.total);
+        const std::string overlay = std::to_string(progress.current) + "/" +
+                                    std::to_string(*progress.total);
+        ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 0.0F), overlay.c_str());
+      }
+    };
+    const auto latest = view.latest_progress_agent
+                            ? view.agent_progress.find(
+                                  *view.latest_progress_agent)
+                            : view.agent_progress.end();
+    const bool show_latest_algorithm_only =
+        stage == StageId::kDataLoad || stage == StageId::kAlignment ||
+        stage == StageId::kMapUpdate;
+    if (show_latest_algorithm_only && latest != view.agent_progress.end()) {
+      // These stages can expose both aggregate completion and algorithm-level
+      // progress. Show only the latest active stream so the panel never stacks
+      // duplicate or already-completed progress bars.
+      draw_algorithm_progress(latest->first, latest->second);
+    } else {
+      if (view.progress_total > 0) {
+        const float fraction = static_cast<float>(view.progress_current) /
+                               static_cast<float>(view.progress_total);
+        ImGui::ProgressBar(fraction);
+      }
+      for (const auto& [agent, progress] : view.agent_progress) {
+        draw_algorithm_progress(agent, progress);
+      }
     }
     if (!view.message.empty()) ImGui::TextWrapped("%s", view.message.c_str());
   }
@@ -445,8 +703,13 @@ void IridescenceGui::DrawPipelineUi() {
   ImGui::Separator();
   ImGui::Text("Agents");
   for (const AgentId& agent : model_.Agents()) {
-    ImGui::BulletText("Agent %s", agent.Value().c_str());
     ImGui::PushID(agent.Value().c_str());
+    ImGui::Text("Agent %s", agent.Value().c_str());
+    if (const auto snapshot = visualization_.Latest(agent);
+        snapshot && snapshot->points_complete) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("(%zu points)", snapshot->displayed_point_count);
+    }
     for (const auto& descriptor : node_descriptors_) {
       if (descriptor.scope != ExecutionScope::kPerAgent) continue;
       if (!model_.CanSubmitCommand()) ImGui::BeginDisabled();
@@ -559,37 +822,61 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
   auto viewer = guik::LightViewer::instance();
   if (!snapshot) {
     if (alignment_request_id_ != 0) {
-      viewer->remove_drawable("open_lmm.alignment.target");
-      viewer->remove_drawable("open_lmm.alignment.source");
-      viewer->remove_drawable("open_lmm.alignment.target_trajectory");
-      viewer->remove_drawable("open_lmm.alignment.source_trajectory");
-      viewer->remove_drawable("open_lmm.alignment.inlier_loops");
-      viewer->remove_drawable("open_lmm.alignment.outlier_loops");
+      // A successful Apply ends the review before the committed Optimization
+      // visualization arrives. Keep both the accepted render transform and
+      // review clouds across that gap; the full replacement map removes them.
       alignment_feedback_.reset();
       alignment_model_control_.reset();
       alignment_request_id_ = 0;
+      alignment_session_revision_ = 0;
       alignment_manual_mode_ = false;
     }
     return;
   }
-  if (snapshot->proposal.request_id != alignment_request_id_) {
+  const bool new_alignment_session =
+      snapshot->proposal.request_id != alignment_request_id_;
+  if (new_alignment_session && alignment_preview_agent_ &&
+      *alignment_preview_agent_ != snapshot->proposal.source_agent) {
+    ResetPipelineAlignmentPreview();
+  }
+  if (new_alignment_session ||
+      snapshot->session_revision != alignment_session_revision_) {
     alignment_feedback_ = std::move(snapshot);
     alignment_request_id_ = alignment_feedback_->proposal.request_id;
-    alignment_manual_mode_ =
-        alignment_feedback_->proposal.method == AlignmentMethod::kManual;
-    alignment_model_control_ = std::make_unique<guik::ModelControl>(
-        "Map alignment",
-        alignment_feedback_->proposal.target_T_source.matrix().cast<float>());
-    alignment_model_control_->set_gizmo_clip_scale(
-        kAlignmentGizmoClipScale);
-    alignment_manual_transform_ =
-        alignment_feedback_->proposal.target_T_source;
-    alignment_previous_render_matrix_ =
-        alignment_manual_transform_.matrix().cast<float>();
-    alignment_gizmo_operation_ = 0;
-    alignment_gizmo_mode_ = 0;
-    alignment_model_control_->set_gizmo_operation("TRANSLATE");
-    alignment_model_control_->set_gizmo_mode(alignment_gizmo_mode_);
+    alignment_session_revision_ = alignment_feedback_->session_revision;
+    if (new_alignment_session) {
+      alignment_kiss_transform_.reset();
+      alignment_descriptor_transform_.reset();
+      alignment_manual_mode_ =
+          alignment_feedback_->proposal.method == AlignmentMethod::kManual;
+      alignment_model_control_ = std::make_unique<guik::ModelControl>(
+          "Map alignment",
+          alignment_feedback_->proposal.target_T_source.matrix().cast<float>());
+      alignment_model_control_->set_gizmo_clip_scale(
+          kAlignmentGizmoClipScale);
+      alignment_manual_transform_ =
+          alignment_feedback_->proposal.target_T_source;
+      alignment_previous_render_matrix_ =
+          alignment_manual_transform_.matrix().cast<float>();
+      alignment_gizmo_operation_ = 0;
+      alignment_gizmo_mode_ = 0;
+      alignment_model_control_->set_gizmo_operation("TRANSLATE");
+      alignment_model_control_->set_gizmo_mode(alignment_gizmo_mode_);
+    } else if (alignment_feedback_->attempt_status.state ==
+                   AlignmentAttemptState::kSucceeded &&
+               alignment_feedback_->proposal.method !=
+                   AlignmentMethod::kManual) {
+      alignment_manual_mode_ = false;
+      SetManualAlignmentTransform(
+          alignment_feedback_->proposal.target_T_source);
+    } else if (alignment_feedback_->proposal.method ==
+                   AlignmentMethod::kManual &&
+               alignment_feedback_->attempt_status.state ==
+                   AlignmentAttemptState::kFailedRecoverable) {
+      // A rejected manual attempt remains editable. Do not recreate the model
+      // control or reset the gizmo transform for an in-session update.
+      alignment_manual_mode_ = true;
+    }
     if (alignment_feedback_->proposal.method == AlignmentMethod::kKissMatcher) {
       alignment_kiss_transform_ =
           alignment_feedback_->proposal.target_T_source.matrix();
@@ -621,6 +908,9 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
         std::make_shared<glk::PointCloudBuffer>(source),
         guik::FlatOrange(alignment_model_control_->model_matrix())
             .set_point_scale(kAlignmentReviewPointScale));
+    // The review clouds are ready now, so replacing DataLoad point layers no
+    // longer exposes an empty frame between the two visualization products.
+    HideDataLoadPointLayers();
 
     viewer->remove_drawable("open_lmm.alignment.target_trajectory");
     viewer->remove_drawable("open_lmm.alignment.source_trajectory");
@@ -672,6 +962,9 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
             guik::FlatRed());
       }
     }
+    ApplyPipelineAlignmentPreview(
+        alignment_feedback_->proposal.source_agent,
+        alignment_model_control_->model_matrix());
   }
   if (alignment_model_control_) {
     viewer->update_drawable(
@@ -680,6 +973,49 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
         guik::FlatOrange(alignment_model_control_->model_matrix())
             .set_point_scale(kAlignmentReviewPointScale));
   }
+}
+
+void IridescenceGui::ApplyPipelineAlignmentPreview(
+    const AgentId& source_agent, const Eigen::Matrix4f& transform) {
+  const auto snapshot = visualization_.Latest(source_agent);
+  // Only the DataLoad trajectory is still in the source-agent frame. Later
+  // projections already contain loop/alignment or optimized global poses and
+  // must not receive the proposal transform a second time.
+  if (!snapshot || snapshot->phase != VisualizationPhase::kDataLoad ||
+      !IsAgentVisualizationVisible(source_agent)) {
+    return;
+  }
+  auto viewer = guik::LightViewer::instance();
+  const std::string trajectory_name = VisualizationRepository::TrajectoryName(
+      source_agent, snapshot->revision);
+  const auto trajectory = viewer->find_drawable(trajectory_name);
+  if (trajectory.second) {
+    viewer->update_drawable(trajectory_name, trajectory.second,
+                            guik::FlatColor(AgentColor(source_agent,
+                                                       model_.Agents()),
+                                            transform));
+  }
+  if (DefaultVisualizationPreferences(snapshot->phase).pose_axes) {
+    const Eigen::Isometry3f global_T_source(transform);
+    for (std::size_t index = 0; index < snapshot->poses.size(); ++index) {
+      viewer->update_drawable(
+          VisualizationRepository::PoseName(source_agent, index,
+                                            snapshot->revision),
+          glk::Primitives::coordinate_system(),
+          guik::VertexColor(
+              (global_T_source * snapshot->poses[index].transform).matrix())
+              .scale(0.25F));
+    }
+  }
+  alignment_preview_agent_ = source_agent;
+}
+
+void IridescenceGui::ResetPipelineAlignmentPreview() {
+  if (!alignment_preview_agent_) return;
+  const AgentId source_agent = *alignment_preview_agent_;
+  alignment_preview_agent_.reset();
+  ApplyPipelineAlignmentPreview(source_agent, Eigen::Matrix4f::Identity());
+  alignment_preview_agent_.reset();
 }
 
 void IridescenceGui::SetManualAlignmentTransform(
@@ -708,6 +1044,11 @@ void IridescenceGui::SynchronizeManualAlignmentTransform() {
       alignment_manual_transform_.matrix().cast<float>();
   alignment_model_control_->set_model_matrix(
       alignment_previous_render_matrix_);
+  if (alignment_feedback_) {
+    ApplyPipelineAlignmentPreview(
+        alignment_feedback_->proposal.source_agent,
+        alignment_previous_render_matrix_);
+  }
 }
 
 void IridescenceGui::DrawAlignmentUi() {
@@ -724,6 +1065,61 @@ void IridescenceGui::DrawAlignmentUi() {
   ImGui::Text("Agent: %s <- %s", proposal.target_agent.Value().c_str(),
               proposal.source_agent.Value().c_str());
   ImGui::Text("Method: %s", method);
+  const bool terminal_read_only =
+      alignment_feedback_->review_state != AlignmentReviewState::kActive;
+  if (terminal_read_only) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                         ImVec4(0.25F, 0.05F, 0.05F, 0.9F));
+    ImGui::BeginChild("alignment_terminal", ImVec2(0, 72.0F), true);
+    ImGui::TextColored(ImVec4(1.0F, 0.4F, 0.4F, 1.0F),
+                       "Alignment review ended");
+    ImGui::TextWrapped("%s",
+                       alignment_feedback_->terminal_message.c_str());
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+  }
+  const auto& attempt = alignment_feedback_->attempt_status;
+  if (attempt.state == AlignmentAttemptState::kRunning) {
+    ImGui::TextColored(ImVec4(0.3F, 0.7F, 1.0F, 1.0F), "%s",
+                       attempt.message.c_str());
+  } else if (attempt.state == AlignmentAttemptState::kFailedRecoverable) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                         ImVec4(0.35F, 0.05F, 0.05F, 0.85F));
+    ImGui::BeginChild("alignment_attempt_failure", ImVec2(0, 72.0F), true);
+    ImGui::TextColored(ImVec4(1.0F, 0.4F, 0.4F, 1.0F),
+                       "Alignment attempt failed");
+    ImGui::TextWrapped("%s", attempt.message.c_str());
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    if (attempt.constraint_diagnostics) {
+      const auto& diagnostic = *attempt.constraint_diagnostics;
+      ImGui::Text("NN: sampled=%zu target=%zu within=%zu threshold=%.3fm",
+                  diagnostic.sampled_source_frames, diagnostic.target_frames,
+                  diagnostic.within_radius, diagnostic.threshold_m);
+      if (std::isfinite(diagnostic.nearest_distance_m)) {
+        ImGui::Text("Nearest target pose: %.3fm",
+                    diagnostic.nearest_distance_m);
+      } else {
+        ImGui::TextUnformatted("Nearest target pose: unavailable");
+      }
+    }
+  }
+  if (!alignment_feedback_->attempt_history.empty() &&
+      ImGui::CollapsingHeader("Attempt history")) {
+    for (const auto& previous : alignment_feedback_->attempt_history) {
+      const char* previous_method =
+          previous.method == AlignmentMethod::kKissMatcher
+              ? "KISS"
+              : previous.method == AlignmentMethod::kDescriptor
+                    ? "Descriptor"
+                    : previous.method == AlignmentMethod::kManual
+                          ? "Manual"
+                          : "Pending";
+      ImGui::TextWrapped("#%llu %s: %s",
+                         static_cast<unsigned long long>(previous.attempt),
+                         previous_method, previous.message.c_str());
+    }
+  }
   if (proposal.method == AlignmentMethod::kDescriptor) {
     const auto& loops = alignment_feedback_->diagnostics.descriptor_loops;
     std::size_t inliers = 0;
@@ -794,11 +1190,16 @@ void IridescenceGui::DrawAlignmentUi() {
     response.request_id = alignment_request_id_;
     response.decision = decision;
     response.manual_target_T_source = std::move(transform);
+    response.session_revision = alignment_session_revision_;
     auto result = services_.respond_to_alignment(model_.Job()->id,
                                                   std::move(response));
     command_error_ = result ? std::string{} : result.GetError().Message();
   };
 
+  const bool attempt_running =
+      attempt.state == AlignmentAttemptState::kRunning;
+  if (terminal_read_only) ImGui::BeginDisabled();
+  if (attempt_running) ImGui::BeginDisabled();
   if (!alignment_manual_mode_) {
     if (proposal.method != AlignmentMethod::kPending) {
       if (ImGui::Button("Accept")) respond(AlignmentDecision::kAccept);
@@ -856,10 +1257,12 @@ void IridescenceGui::DrawAlignmentUi() {
       SetManualAlignmentTransform(proposal.target_T_source);
     }
   }
+  if (attempt_running) ImGui::EndDisabled();
   ImGui::SameLine();
   if (ImGui::Button("Cancel Alignment")) {
     respond(AlignmentDecision::kCancel);
   }
+  if (terminal_read_only) ImGui::EndDisabled();
   ImGui::End();
 }
 
@@ -1177,7 +1580,7 @@ void DestroyGui(void* value) noexcept {
 }
 const OpenLmmPluginApiV1 kGuiApi{
     OPEN_LMM_PLUGIN_ABI_VERSION_V1, "gui", "iridescence",
-    &CreateGui, &DestroyGui, "gui:services-v2", 1, "open-lmm-2.0"};
+    &CreateGui, &DestroyGui, "gui:services-v3", 1, "open-lmm-3.0"};
 }  // namespace
 
 extern "C" const OpenLmmPluginApiV1* open_lmm_plugin_entry() {

@@ -13,8 +13,14 @@ bool GuiEventQueue::IsProgress(const ExecutionEvent& event) {
 
 bool GuiEventQueue::SameProgressStream(const ExecutionEvent& lhs,
                                        const ExecutionEvent& rhs) {
-  return lhs.job_id == rhs.job_id && lhs.stage == rhs.stage &&
-         lhs.node == rhs.node && lhs.agent == rhs.agent;
+  if (lhs.job_id != rhs.job_id || lhs.stage != rhs.stage ||
+      lhs.node != rhs.node || lhs.agent != rhs.agent ||
+      lhs.algorithm_progress.has_value() !=
+          rhs.algorithm_progress.has_value()) {
+    return false;
+  }
+  return !lhs.algorithm_progress ||
+         lhs.algorithm_progress->phase == rhs.algorithm_progress->phase;
 }
 
 bool GuiEventQueue::Push(ExecutionEvent event) {

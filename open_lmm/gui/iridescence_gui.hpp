@@ -2,7 +2,9 @@
 #include <open_lmm/gui/gui_plugin.hpp>
 #include <open_lmm/gui/gui_event_queue.hpp>
 #include <open_lmm/gui/gui_model.hpp>
+#include <open_lmm/gui/map_presentation_state.hpp>
 #include <open_lmm/gui/visualization_repository.hpp>
+#include <open_lmm/gui/visualization_style.hpp>
 #include <open_lmm/gui/visualization_snapshot_worker.hpp>
 #include <guik/model_control.hpp>
 #include <atomic>
@@ -10,6 +12,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <future>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -30,18 +33,29 @@ class IridescenceGui final : public GuiPlugin {
   void DrawAlignmentUi();
   void DrawRuntimeLogsSection();
   void SynchronizeAlignmentFeedback();
+  void ApplyPipelineAlignmentPreview(const AgentId& source_agent,
+                                     const Eigen::Matrix4f& transform);
+  void ResetPipelineAlignmentPreview();
   void SetManualAlignmentTransform(const Eigen::Isometry3d& transform);
   void SynchronizeManualAlignmentTransform();
   void LoadConfigEditor();
   void RefreshDatasetCatalog();
   void LoadAlignmentEditor();
   void SynchronizeModel();
-  void RequestVisualization(AgentId agent);
+  void RequestVisualization(AgentId agent, bool include_points = false);
   void DrainVisualizationSnapshots();
   void UpdateDrawables(
       const std::shared_ptr<const VisualizationSnapshot>& snapshot,
-      const VisualizationUpdate& update);
+      const VisualizationUpdate& update,
+      std::optional<uint64_t> request_generation = std::nullopt);
+  void UpdateLoopDrawables(
+      const std::shared_ptr<const VisualizationSnapshot>& snapshot);
   void ApplyVisualizationColorMode();
+  void DrawAgentVisibilityControls();
+  void SetAgentVisualizationVisible(const AgentId& agent, bool visible);
+  [[nodiscard]] bool IsAgentVisualizationVisible(
+      const AgentId& agent) const;
+  void HideDataLoadPointLayers();
   GuiServices services_;
   std::shared_ptr<GuiEventQueue> event_queue_;
   ExecutionEventSubscription event_subscription_;
@@ -72,19 +86,25 @@ class IridescenceGui final : public GuiPlugin {
   uint64_t config_revision_draft_ = 0;
   double last_gui_work_ms_ = 0.0;
   double max_gui_work_ms_ = 0.0;
-  int visualization_color_mode_ = 0;
+  int visualization_color_mode_ = kDefaultVisualizationColorMode;
+  MapPresentationState map_presentation_;
   std::vector<std::string> runtime_logs_;
   bool runtime_logs_auto_scroll_ = true;
   std::chrono::steady_clock::time_point next_runtime_log_refresh_{};
+  std::chrono::steady_clock::time_point next_data_load_preview_refresh_{};
+  bool data_load_preview_active_ = false;
+  bool alignment_stage_active_ = false;
   std::optional<Eigen::Vector3f> picked_point_;
   std::optional<AlignmentFeedbackSnapshot> alignment_feedback_;
   std::unique_ptr<guik::ModelControl> alignment_model_control_;
   uint64_t alignment_request_id_ = 0;
+  uint64_t alignment_session_revision_ = 0;
   bool alignment_manual_mode_ = false;
   int alignment_gizmo_operation_ = 0;
   int alignment_gizmo_mode_ = 0;
   std::optional<Eigen::Matrix4d> alignment_kiss_transform_;
   std::optional<Eigen::Matrix4d> alignment_descriptor_transform_;
+  std::optional<AgentId> alignment_preview_agent_;
   Eigen::Isometry3d alignment_manual_transform_ = Eigen::Isometry3d::Identity();
   Eigen::Matrix4f alignment_previous_render_matrix_ = Eigen::Matrix4f::Identity();
   std::atomic<bool> stop_requested_{false};

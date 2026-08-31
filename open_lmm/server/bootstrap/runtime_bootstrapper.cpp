@@ -347,7 +347,8 @@ Result<void> WriteAgentManifest(const fs::path& output_directory,
     std::error_code ignored;
     fs::remove(temporary, ignored);
   }
-  return committed;
+  if (!committed) return Result<void>::Failure(committed.GetError());
+  return Result<void>::Ok();
 }
 
 }  // namespace

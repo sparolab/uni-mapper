@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(open_lmm VERSION 2.0.0 LANGUAGES C CXX)
+project(open_lmm VERSION 3.0.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -188,6 +188,7 @@ set(_open_lmm_public_headers
   common/agent_data.hpp
   common/agent_id.hpp
   common/algorithm_execution_context.hpp
+  common/algorithm_progress.hpp
   common/alignment_feedback.hpp
   common/alignment_types.hpp
   common/cancellation.hpp

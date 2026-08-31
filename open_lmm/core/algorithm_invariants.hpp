@@ -53,13 +53,6 @@ inline Result<void> ValidateAgentRawData(const AgentRawData& raw,
         std::string(context) + " scan frame " + std::to_string(index));
     if (!valid_scan) return valid_scan;
   }
-  for (std::size_t index = 0; index < raw.map_points.size(); ++index) {
-    if (!raw.map_points[index].allFinite()) {
-      return Result<void>::Failure(InvariantError(
-          context, "map point " + std::to_string(index) +
-                       " contains a non-finite value"));
-    }
-  }
   return Result<void>::Ok();
 }
 

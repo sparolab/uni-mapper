@@ -34,12 +34,12 @@ class StageExecutor {
                                           uint64_t config_revision);
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
-      const AgentId& agent) const;
+      const VisualizationQuery& query) const;
   Result<void> ValidateReady();
 
  private:
   Result<void> EnsureReady();
-  void PublishVisualization(bool include_maps);
+  void PublishVisualization(VisualizationPhase phase, bool include_maps);
   void PublishEmptyVisualization();
   [[nodiscard]] std::shared_ptr<const RuntimeState> CommittedState() const;
 

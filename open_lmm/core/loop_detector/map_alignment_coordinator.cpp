@@ -1,48 +1,66 @@
 #include "map_alignment_coordinator.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <string>
 
 namespace open_lmm {
 namespace {
 
-Result<std::optional<MapAlignmentProposal>> InvokeProposer(
-    const std::function<Result<std::optional<MapAlignmentProposal>>()>& proposer,
+constexpr std::size_t kMaximumAttemptHistory = 16;
+
+Result<AlignmentProposalAttempt> InvokeProposer(
+    const std::function<Result<AlignmentProposalAttempt>()>& proposer,
     std::string_view name) {
   if (!proposer) {
-    return Result<std::optional<MapAlignmentProposal>>::Ok(std::nullopt);
+    return Result<AlignmentProposalAttempt>::Failure(
+        Error::InvalidArgument(std::string(name) +
+                               " proposer callback is unavailable"));
   }
   try {
     return proposer();
   } catch (const std::exception& error) {
-    return Result<std::optional<MapAlignmentProposal>>::Failure(
+    return Result<AlignmentProposalAttempt>::Failure(
         Error::RegistrationFailed(std::string(name) +
                                   " proposer callback exception: " +
-                                  error.what()));
+                                  error.what())
+            .MarkFatalRuntime());
   } catch (...) {
-    return Result<std::optional<MapAlignmentProposal>>::Failure(
+    return Result<AlignmentProposalAttempt>::Failure(
         Error::RegistrationFailed(std::string(name) +
-                                  " proposer callback exception"));
+                                  " proposer callback exception")
+            .MarkFatalRuntime());
+  }
+}
+
+class ReviewSessionGuard {
+ public:
+  ReviewSessionGuard(std::shared_ptr<AlignmentFeedbackBroker> broker,
+                     AlignmentReviewSessionId session_id)
+      : broker_(std::move(broker)), session_id_(session_id) {}
+  ~ReviewSessionGuard() {
+    if (broker_) (void)broker_->End(session_id_, terminal_error_);
+  }
+  void PreserveTerminal(const Error& error) { terminal_error_ = error; }
+
+ private:
+  std::shared_ptr<AlignmentFeedbackBroker> broker_;
+  AlignmentReviewSessionId session_id_;
+  std::optional<Error> terminal_error_;
+};
+
+void AppendBounded(std::vector<AlignmentAttemptStatus>& history,
+                   const AlignmentAttemptStatus& status) {
+  history.push_back(status);
+  if (history.size() > kMaximumAttemptHistory) {
+    history.erase(history.begin(),
+                  history.begin() +
+                      static_cast<std::ptrdiff_t>(history.size() -
+                                                  kMaximumAttemptHistory));
   }
 }
 
 }  // namespace
-
-Result<AlignmentResponse> MapAlignmentCoordinator::Request(
-    const MapAlignmentCoordinatorInput& input,
-    MapAlignmentProposal proposal) const {
-  if (!input.feedback || !input.feedback->IsEnabled()) {
-    return Result<AlignmentResponse>::Failure(Error::InvalidArgument(
-        "interactive map alignment requires an enabled feedback service"));
-  }
-  AlignmentFeedbackSnapshot snapshot;
-  snapshot.proposal = std::move(proposal);
-  snapshot.target_points = input.target_points;
-  snapshot.source_points = input.source_points;
-  if (input.visualization) snapshot.diagnostics = *input.visualization;
-  return input.feedback->Request(std::move(snapshot), input.cancellation,
-                                 input.feedback_timeout);
-}
 
 MapAlignmentProposal MapAlignmentCoordinator::ManualProposal(
     const MapAlignmentCoordinatorInput& input,
@@ -98,72 +116,141 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::ResolveResponse(
       Error::Cancelled("map alignment cancelled by user"));
 }
 
-Result<MapAlignmentProposal> MapAlignmentCoordinator::ValidateOrRetryManual(
-    const MapAlignmentCoordinatorInput& input,
-    Result<MapAlignmentProposal> result) const {
-  while (result && input.proposal_validator) {
-    auto validation = input.proposal_validator(result.Value());
-    if (validation) return result;
-    if (result.Value().method != AlignmentMethod::kManual) {
-      return Result<MapAlignmentProposal>::Failure(validation.GetError());
-    }
-
-    auto retry = ManualProposal(input, result.Value().target_T_source);
-    auto response = Request(input, retry);
-    if (!response) {
-      return Result<MapAlignmentProposal>::Failure(response.GetError());
-    }
-    result = ResolveResponse(retry, response.Value());
-  }
-  return result;
-}
-
 Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
     const MapAlignmentCoordinatorInput& input) const {
-  if (input.intent == InteractiveAlignmentIntent::kManualOnly) {
-    auto manual = ManualProposal(input, Eigen::Isometry3d::Identity());
-    auto response = Request(input, manual);
-    if (!response) {
-      return Result<MapAlignmentProposal>::Failure(response.GetError());
-    }
-    return ValidateOrRetryManual(input,
-                                 ResolveResponse(manual, response.Value()));
+  if (!input.feedback || !input.feedback->IsEnabled()) {
+    return Result<MapAlignmentProposal>::Failure(Error::InvalidArgument(
+        "interactive map alignment requires an enabled feedback service"));
   }
 
-  MapAlignmentProposal proposal = PendingProposal(input);
+  MapAlignmentProposal proposal =
+      input.intent == InteractiveAlignmentIntent::kManualOnly
+          ? ManualProposal(input, Eigen::Isometry3d::Identity())
+          : PendingProposal(input);
+  AlignmentAttemptStatus status;
+  status.method = proposal.method;
+  std::vector<AlignmentAttemptStatus> history;
+  uint64_t next_attempt = 1;
+
+  const auto snapshot = [&]() {
+    AlignmentFeedbackSnapshot value;
+    value.proposal = proposal;
+    value.target_points = input.target_points;
+    value.source_points = input.source_points;
+    if (input.visualization) value.diagnostics = *input.visualization;
+    value.attempt_status = status;
+    value.attempt_history = history;
+    return value;
+  };
+
+  auto begun = input.feedback->Begin(snapshot());
+  if (!begun) {
+    return Result<MapAlignmentProposal>::Failure(begun.GetError());
+  }
+  const auto session_id = begun.Value();
+  ReviewSessionGuard session(input.feedback, session_id);
+
+  const auto terminal_failure = [&](const Error& error) {
+    session.PreserveTerminal(error);
+    return Result<MapAlignmentProposal>::Failure(error);
+  };
+
+  const auto publish = [&]() -> Result<void> {
+    return input.feedback->Update(session_id, snapshot());
+  };
+  const auto wait = [&]() -> Result<AlignmentResponse> {
+    return input.feedback->WaitDecision(session_id, input.cancellation,
+                                        input.feedback_timeout);
+  };
+  const auto fail_attempt = [&](AlignmentMethod method,
+                                AlignmentAttemptFailure reason,
+                                std::string message,
+                                std::optional<LoopConstraintBuildDiagnostics>
+                                    diagnostics = std::nullopt)
+      -> Result<void> {
+    status = {method, AlignmentAttemptState::kFailedRecoverable, reason,
+              std::move(message), next_attempt++, std::move(diagnostics)};
+    AppendBounded(history, status);
+    return publish();
+  };
+  const auto run_proposer = [&](AlignmentMethod method,
+                                const auto& proposer) -> Result<void> {
+    status = {method, AlignmentAttemptState::kRunning, std::nullopt,
+              method == AlignmentMethod::kKissMatcher
+                  ? "Running KISS Matcher"
+                  : "Running descriptor alignment",
+              next_attempt, std::nullopt};
+    auto updated = publish();
+    if (!updated) return updated;
+    auto attempted = InvokeProposer(
+        proposer, method == AlignmentMethod::kKissMatcher ? "KISS Matcher"
+                                                          : "Descriptor");
+    if (!attempted) {
+      return Result<void>::Failure(attempted.GetError());
+    }
+    if (!attempted.Value().proposal) {
+      const std::string message = attempted.Value().message.empty()
+          ? (method == AlignmentMethod::kKissMatcher
+                 ? "KISS Matcher did not produce an alignment"
+                 : "Descriptor did not produce an alignment")
+          : attempted.Value().message;
+      return fail_attempt(method, attempted.Value().failure, message);
+    }
+    proposal = *attempted.Value().proposal;
+    status = {method, AlignmentAttemptState::kSucceeded, std::nullopt,
+              attempted.Value().message.empty()
+                  ? "Alignment proposal is ready for review"
+                  : attempted.Value().message,
+              next_attempt++, std::nullopt};
+    AppendBounded(history, status);
+    return publish();
+  };
+
   while (true) {
-    auto response = Request(input, proposal);
+    auto response = wait();
     if (!response) {
-      return Result<MapAlignmentProposal>::Failure(response.GetError());
+      return terminal_failure(response.GetError());
     }
     if (response.Value().decision == AlignmentDecision::kTryKissMatcher) {
-      auto kiss = InvokeProposer(input.kiss_proposer, "KISS Matcher");
-      if (!kiss) {
-        return Result<MapAlignmentProposal>::Failure(kiss.GetError());
+      auto attempted =
+          run_proposer(AlignmentMethod::kKissMatcher, input.kiss_proposer);
+      if (!attempted) {
+        return terminal_failure(attempted.GetError());
       }
-      if (!kiss.Value()) {
-        return Result<MapAlignmentProposal>::Failure(
-            Error::RegistrationFailed(
-                "KISS Matcher did not produce an alignment"));
-      }
-      proposal = *kiss.Value();
       continue;
     }
     if (response.Value().decision == AlignmentDecision::kTryDescriptor) {
-      auto descriptor = InvokeProposer(input.descriptor_proposer, "Descriptor");
-      if (!descriptor) {
-        return Result<MapAlignmentProposal>::Failure(descriptor.GetError());
+      auto attempted =
+          run_proposer(AlignmentMethod::kDescriptor,
+                       input.descriptor_proposer);
+      if (!attempted) {
+        return terminal_failure(attempted.GetError());
       }
-      if (!descriptor.Value()) {
-        return Result<MapAlignmentProposal>::Failure(
-            Error::RegistrationFailed(
-                "Descriptor did not produce an alignment"));
-      }
-      proposal = *descriptor.Value();
       continue;
     }
-    return ValidateOrRetryManual(
-        input, ResolveResponse(proposal, response.Value()));
+
+    auto resolved = ResolveResponse(proposal, response.Value());
+    if (!resolved) {
+      return terminal_failure(resolved.GetError());
+    }
+    if (!input.proposal_validator) return resolved;
+
+    auto validation = input.proposal_validator(resolved.Value());
+    if (!validation) {
+      return terminal_failure(validation.GetError());
+    }
+    if (validation.Value().accepted) return resolved;
+
+    proposal = resolved.Value();
+    const std::string message = validation.Value().message.empty()
+        ? "Alignment proposal did not produce valid loop constraints"
+        : validation.Value().message;
+    auto failed = fail_attempt(
+        proposal.method, validation.Value().failure, message,
+        validation.Value().constraint_diagnostics);
+    if (!failed) {
+      return terminal_failure(failed.GetError());
+    }
   }
 }
 

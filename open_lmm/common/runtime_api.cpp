@@ -3,6 +3,23 @@
 #include <utility>
 
 namespace open_lmm {
+namespace {
+thread_local std::shared_ptr<CancellationToken> current_cancellation;
+}  // namespace
+
+CancellationContextScope::CancellationContextScope(
+    std::shared_ptr<CancellationToken> token)
+    : previous_(std::move(current_cancellation)) {
+  current_cancellation = std::move(token);
+}
+
+CancellationContextScope::~CancellationContextScope() {
+  current_cancellation = std::move(previous_);
+}
+
+std::shared_ptr<CancellationToken> CurrentCancellationToken() {
+  return current_cancellation;
+}
 
 ExecutionEventSubscription::ExecutionEventSubscription(
     std::function<void()> unsubscribe)

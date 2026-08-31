@@ -43,6 +43,10 @@ class LoopDetectNode : public PipelineNodeBase {
     algorithm_context.agent = ctx.agent;
     algorithm_context.cancellation = ctx.cancellation;
     algorithm_context.feedback = db.alignment_feedback;
+    if (algorithm_context.progress) {
+      algorithm_context.progress({ctx.agent.id, "loop_detect",
+                                  AlgorithmProgressPhase::kDetectLoops, 0, 1});
+    }
     LoopDetectorProcessInput input{
         .current          = *ctx.raw_data,
         .descriptor_store = db.descriptor_store,
@@ -74,6 +78,10 @@ class LoopDetectNode : public PipelineNodeBase {
     }
     ctx.loop_output =
         std::make_shared<const LoopDetectorOutput>(std::move(output));
+    if (algorithm_context.progress) {
+      algorithm_context.progress({ctx.agent.id, "loop_detect",
+                                  AlgorithmProgressPhase::kDetectLoops, 1, 1});
+    }
 
     return Result<ControlFlow>::Ok(ControlFlow::kContinue);
   }

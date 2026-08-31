@@ -46,7 +46,6 @@ uint64_t ResidentRawDataBytes(const AgentRawData& raw) {
   for (const auto& scan : raw.filtered_scans) {
     if (scan) add(scan->points.capacity() * sizeof(pcl::PointXYZI));
   }
-  add(raw.map_points.capacity() * sizeof(Eigen::Vector3f));
   return std::max<uint64_t>(bytes, 1);
 }
 
@@ -118,7 +117,7 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
           Error::InvalidArgument("DataLoad config document is unavailable"));
     }
     ExecutionContext command{input.cancellation, {},
-                             input.committed->revision};
+                             input.committed->revision, input.progress};
     auto algorithm_context = MakeAlgorithmExecutionContext(
         *input.committed, command, item.agent,
         input.committed->config->documents->data_loader,
@@ -143,6 +142,13 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
     if (!resized) return resized;
     loaded[index] = std::move(owned);
     reserved[index] = std::move(memory);
+    if (input.on_agent_loaded) {
+      try {
+        input.on_agent_loaded(item.agent.id, loaded[index]);
+      } catch (...) {
+        // A best-effort read model must not affect candidate correctness.
+      }
+    }
     return Result<void>::Ok();
   };
 
@@ -277,7 +283,8 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
     return Result<ExecutionCandidate>::Failure(
         Error::InvalidArgument("DataLoad config document is unavailable"));
   }
-  ExecutionContext command{input.cancellation, {}, input.committed->revision};
+  ExecutionContext command{input.cancellation, {}, input.committed->revision,
+                           input.progress};
   auto algorithm_context = MakeAlgorithmExecutionContext(
       *input.committed, command, selected->agent,
       input.committed->config->documents->data_loader,
@@ -309,6 +316,13 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
     if (!replacement_valid) {
       return Result<ExecutionCandidate>::Failure(
           replacement_valid.GetError());
+    }
+  }
+  if (input.on_agent_loaded) {
+    try {
+      input.on_agent_loaded(agent, owned);
+    } catch (...) {
+      // A best-effort read model must not affect candidate correctness.
     }
   }
   selected->raw_data = owned;

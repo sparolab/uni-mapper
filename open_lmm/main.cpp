@@ -1,4 +1,5 @@
 #include <iostream>
+#include <mutex>
 #include <string>
 
 #include <open_lmm/server/runtime_client.hpp>
@@ -19,6 +20,37 @@ int main(int argc, char** argv) {
   auto opened = runtime.Open({argv[1], "batch"});
   if (!opened) {
     open_lmm::LogError(opened.GetError().Message());
+    return 1;
+  }
+  std::mutex progress_mutex;
+  std::string active_progress_stream;
+  auto progress_subscription = runtime.SubscribeEvents(
+      [&progress_mutex, &active_progress_stream](
+          const open_lmm::ExecutionEvent& event) {
+        if (!event.algorithm_progress) return;
+        const auto& progress = *event.algorithm_progress;
+        std::lock_guard lock(progress_mutex);
+        const std::string agent = progress.agent.IsValid()
+                                      ? progress.agent.Value()
+                                      : std::string("runtime");
+        const std::string stream =
+            agent + ":" + std::to_string(static_cast<int>(progress.phase));
+        if (!active_progress_stream.empty() &&
+            active_progress_stream != stream) {
+          std::cerr << '\n';
+        }
+        active_progress_stream = stream;
+        std::cerr << '\r' << '[' << agent << "] "
+                  << open_lmm::FormatAlgorithmProgressStatus(progress);
+        if (!progress.total || progress.current == *progress.total) {
+          std::cerr << '\n';
+          active_progress_stream.clear();
+        } else {
+          std::cerr << std::flush;
+        }
+      });
+  if (!progress_subscription) {
+    open_lmm::LogError(progress_subscription.GetError().Message());
     return 1;
   }
   auto submitted = runtime.SubmitRunAll();

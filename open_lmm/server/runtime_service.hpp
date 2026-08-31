@@ -50,6 +50,8 @@ class RuntimeService {
   Result<RuntimeSnapshot> Snapshot() const;
   Result<std::vector<NodeDescriptor>> NodeDescriptors() const;
   Result<VisualizationSnapshot> Visualization(const AgentId& agent) const;
+  Result<VisualizationSnapshot> Visualization(
+      const VisualizationQuery& query) const;
   Result<std::optional<AlignmentFeedbackSnapshot>> AlignmentFeedback() const;
   Result<void> RespondToAlignment(JobHandle job, AlignmentResponse response);
   Result<void> SetAlignmentFeedbackEnabled(bool enabled);
@@ -91,6 +93,8 @@ class RuntimeService {
   void DispatchEvent(const std::shared_ptr<RuntimeInstance>& instance,
                      const ExecutionEvent& event);
   uint64_t MapPublicJobLocked(uint64_t epoch, JobId local_job);
+  void MarkTerminalPublicJobLocked(uint64_t handle);
+  void ClearPublicJobsLocked();
   static bool IsActive(JobState state);
   static RuntimeStatus DeriveState(
       const RuntimeInstance& instance, const PipelineSnapshot& pipeline);
@@ -107,6 +111,7 @@ class RuntimeService {
   std::optional<std::pair<uint64_t, uint64_t>> pending_public_job_;
   std::map<std::pair<uint64_t, JobId>, uint64_t> public_job_ids_;
   std::map<uint64_t, PublicJob> public_jobs_;
+  std::deque<uint64_t> terminal_public_jobs_;
   uint64_t next_subscriber_id_ = 1;
   std::shared_ptr<SubscriberRegistry> subscribers_;
   bool feedback_enabled_ = false;

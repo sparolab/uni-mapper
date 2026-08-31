@@ -86,12 +86,14 @@ Result<std::optional<MapAlignmentProposal>> AlignmentProposer::Propose(
     return Result<std::optional<MapAlignmentProposal>>::Failure(
         WithAlgorithmContext(
             Error::RegistrationFailed(
-                std::string("alignment proposer exception: ") + error.what()),
+                std::string("alignment proposer exception: ") + error.what())
+                .MarkFatalRuntime(),
             context));
   } catch (...) {
     return Result<std::optional<MapAlignmentProposal>>::Failure(
         WithAlgorithmContext(
-            Error::RegistrationFailed("unknown alignment proposer exception"),
+            Error::RegistrationFailed("unknown alignment proposer exception")
+                .MarkFatalRuntime(),
             context));
   }
 }

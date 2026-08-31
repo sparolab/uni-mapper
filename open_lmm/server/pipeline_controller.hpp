@@ -49,6 +49,8 @@ class PipelineController {
   [[nodiscard]] PipelineSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
       const AgentId& agent) const;
+  [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
+      const VisualizationQuery& query) const;
   [[nodiscard]] std::optional<AlignmentFeedbackSnapshot>
   GetAlignmentFeedbackSnapshot() const;
   Result<void> RespondToAlignment(uint64_t job_id,
@@ -62,6 +64,10 @@ class PipelineController {
   Result<uint64_t> submit(Work work);
   Result<void> runOneStage(uint64_t job_id, StageId stage,
                            const ExecutionContext& context);
+  ExecutionContext withProgress(
+      const ExecutionContext& context, uint64_t job_id, StageId stage,
+      std::optional<NodeId> node,
+      std::optional<AgentId> fallback_agent = std::nullopt);
   bool cancellationRequested() const;
   void emit(ExecutionEvent event);
   void commitTerminal(uint64_t job_id, const Result<void>& result);
@@ -102,6 +108,7 @@ class PipelineController {
   std::shared_ptr<CancellationToken> cancellation_;
   CancellationCapability cancellation_capability_;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback_;
+  bool alignment_feedback_published_ = false;
   uint64_t next_job_id_ = 1;
   uint64_t next_event_sequence_ = 1;
   uint64_t terminal_event_completed_job_id_ = 0;

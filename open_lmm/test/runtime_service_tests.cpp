@@ -208,7 +208,8 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
   const auto feedback = service.AlignmentFeedback().Value();
   Check(service.RespondToAlignment(
             first.Value(), {feedback->proposal.request_id,
-                            AlignmentDecision::kAccept, std::nullopt}) &&
+                            AlignmentDecision::kAccept, std::nullopt,
+                            feedback->session_revision}) &&
             service.Wait(first.Value()),
         "feedback and wait target the same unkeyed job handle");
   const auto last_before_replacement = service.Snapshot().Value()
@@ -234,12 +235,9 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
             ReadText(root / "config/config.json").find("replaced-output") !=
                 std::string::npos,
         "replacement atomically exposes new runtime and persisted root config");
-  Check(!snapshot.Value().pipeline.recent_events.empty() &&
-            snapshot.Value().pipeline.recent_events.back().sequence >=
-                last_before_replacement,
-        "replacement preserves the service event journal and sequence");
-  const auto sequence_after_replacement =
-      snapshot.Value().pipeline.recent_events.back().sequence;
+  Check(snapshot.Value().pipeline.recent_events.empty() &&
+            !snapshot.Value().pipeline.job,
+        "replacement starts an empty current-epoch replay snapshot");
   auto second = service.Submit(one_stage);
   Check(second && second.Value().value != first.Value().value,
         "handles are never reused after controller replacement");
@@ -251,13 +249,14 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
   const auto second_feedback = service.AlignmentFeedback().Value();
   Check(service.RespondToAlignment(
             second.Value(), {second_feedback->proposal.request_id,
-                             AlignmentDecision::kAccept, std::nullopt}) &&
+                             AlignmentDecision::kAccept, std::nullopt,
+                             second_feedback->session_revision}) &&
             service.Wait(second.Value()),
         "new runtime executes through the same public API");
   const auto after_second = service.Snapshot().Value().pipeline.recent_events;
   Check(!after_second.empty() &&
-            after_second.back().sequence > sequence_after_replacement,
-        "replacement events continue the same public sequence");
+            after_second.front().sequence > last_before_replacement,
+        "replacement replay contains only new events with a monotonic sequence");
   subscription.Reset();
   Check(service.Close().IsOk() && !service.IsOpen(), "close retires sole runtime");
   fs::remove_all(root);
@@ -296,8 +295,11 @@ void TestHeadlessFeedbackAndDisableCancellation() {
         "disabling authority cancels the active request");
   Check(!service.Wait(interactive.Value()),
         "cancelled feedback request terminates its waiting command");
-  Check(!service.AlignmentFeedback().Value().has_value(),
-        "disabled authority leaves no active feedback request");
+  const auto terminal = service.AlignmentFeedback().Value();
+  Check(terminal &&
+            terminal->review_state == AlignmentReviewState::kCancelled &&
+            !terminal->terminal_message.empty(),
+        "disabled authority preserves a terminal read-only review");
   Check(service.Close().IsOk(), "headless feedback fixture closes");
   fs::remove_all(root);
 }
@@ -492,6 +494,44 @@ void TestConcurrentOpenReservesTransitionBeforeBootstrap() {
   fs::remove_all(root);
 }
 
+void TestPublicJobRetentionIsBounded() {
+  const auto root =
+      fs::temp_directory_path() / "open_lmm_single_runtime_job_retention";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<SuccessPort>());
+      });
+  Check(service.Open({root / "config", "job-retention"}).IsOk(),
+        "job retention fixture opens");
+  ExecutionRequest request;
+  request.kind = ExecutionRequestKind::kStage;
+  request.stage = StageId::kDataLoad;
+  std::optional<JobHandle> oldest;
+  std::optional<JobHandle> newest;
+  for (size_t i = 0; i < 10000; ++i) {
+    auto submitted = service.Submit(request);
+    Check(submitted.IsOk() && service.Wait(submitted.Value()).IsOk(),
+          "long-running registry fixture completes each sequential job");
+    if (!oldest) oldest = submitted.Value();
+    newest = submitted.Value();
+  }
+  const auto expired = service.Wait(*oldest);
+  Check(!expired &&
+            expired.GetError().Message().find("unknown or expired") !=
+                std::string::npos,
+        "old terminal handle expires from the bounded registry");
+  Check(service.Wait(*newest).IsOk(),
+        "most recent terminal handle remains available");
+  Check(newest->value > oldest->value,
+        "public handles remain monotonic and are never reused");
+  Check(service.Close().IsOk(), "job retention fixture closes");
+  fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -503,6 +543,7 @@ int main() {
   TestSubscriptionResetWaitsForCopiedCallback();
   TestOpenCloseTransitionCancellation();
   TestConcurrentOpenReservesTransitionBeforeBootstrap();
+  TestPublicJobRetentionIsBounded();
   std::cout << "runtime service single-runtime tests passed\n";
   return 0;
 }

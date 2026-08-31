@@ -15,6 +15,20 @@ enum class InteractiveAlignmentIntent : uint8_t {
   kManualOnly,
 };
 
+struct AlignmentProposalAttempt {
+  std::optional<MapAlignmentProposal> proposal;
+  AlignmentAttemptFailure failure = AlignmentAttemptFailure::kNoCandidate;
+  std::string message;
+};
+
+struct AlignmentProposalValidation {
+  bool accepted = true;
+  AlignmentAttemptFailure failure =
+      AlignmentAttemptFailure::kProposalQualityRejected;
+  std::string message;
+  std::optional<LoopConstraintBuildDiagnostics> constraint_diagnostics;
+};
+
 struct MapAlignmentCoordinatorInput {
   InteractiveAlignmentIntent intent =
       InteractiveAlignmentIntent::kChooseMethod;
@@ -24,10 +38,10 @@ struct MapAlignmentCoordinatorInput {
   std::vector<AlignmentVisualizationPoint> target_points;
   std::vector<AlignmentVisualizationPoint> source_points;
   std::shared_ptr<AlignmentVisualizationData> visualization;
-  std::function<Result<std::optional<MapAlignmentProposal>>()> kiss_proposer;
-  std::function<Result<std::optional<MapAlignmentProposal>>()>
-      descriptor_proposer;
-  std::function<Result<void>(const MapAlignmentProposal&)> proposal_validator;
+  std::function<Result<AlignmentProposalAttempt>()> kiss_proposer;
+  std::function<Result<AlignmentProposalAttempt>()> descriptor_proposer;
+  std::function<Result<AlignmentProposalValidation>(
+      const MapAlignmentProposal&)> proposal_validator;
   AgentId target_agent;
   AgentId source_agent;
 };
@@ -41,9 +55,6 @@ class MapAlignmentCoordinator {
       const MapAlignmentCoordinatorInput& input) const;
 
  private:
-  Result<AlignmentResponse> Request(
-      const MapAlignmentCoordinatorInput& input,
-      MapAlignmentProposal proposal) const;
   static MapAlignmentProposal ManualProposal(
       const MapAlignmentCoordinatorInput& input,
       const Eigen::Isometry3d& initial_transform);
@@ -52,9 +63,6 @@ class MapAlignmentCoordinator {
   static Result<MapAlignmentProposal> ResolveResponse(
       const MapAlignmentProposal& proposal,
       const AlignmentResponse& response);
-  Result<MapAlignmentProposal> ValidateOrRetryManual(
-      const MapAlignmentCoordinatorInput& input,
-      Result<MapAlignmentProposal> result) const;
 };
 
 }  // namespace open_lmm

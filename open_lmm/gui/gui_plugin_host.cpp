@@ -11,7 +11,7 @@ GuiPluginHost::~GuiPluginHost() { Stop(); }
 Result<std::unique_ptr<GuiPluginHost>> GuiPluginHost::Load(const std::string& path) {
   auto loaded = load_plugin_v1<GuiPlugin>(
       path, "gui", "{}", nullptr, nullptr,
-      PluginContractExpectation{.exact_capability = "gui:services-v2"});
+      PluginContractExpectation{.exact_capability = "gui:services-v3"});
   if (!loaded) return Result<std::unique_ptr<GuiPluginHost>>::Failure(loaded.GetError());
   return Result<std::unique_ptr<GuiPluginHost>>::Ok(
       std::make_unique<GuiPluginHost>(std::move(loaded).Value()));

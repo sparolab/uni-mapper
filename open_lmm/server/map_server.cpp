@@ -59,7 +59,12 @@ CommittedRuntimeSnapshot MapServer::Snapshot() const {
 
 Result<VisualizationSnapshot> MapServer::Visualization(
     const AgentId& agent) const {
-  return executor_->Visualization(agent);
+  return Visualization(VisualizationQuery{agent});
+}
+
+Result<VisualizationSnapshot> MapServer::Visualization(
+    const VisualizationQuery& query) const {
+  return executor_->Visualization(query);
 }
 
 Result<void> MapServer::InitializeRuntimeRevisions(

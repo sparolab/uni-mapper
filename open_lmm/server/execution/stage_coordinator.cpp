@@ -66,6 +66,13 @@ Result<void> ValidateInvocation(const std::shared_ptr<const RuntimeState>& base,
   return Result<void>::Ok();
 }
 
+Result<void> CommitPending(PendingOutputSet* pending) {
+  if (!pending) return Result<void>::Ok();
+  auto outcome = pending->Commit();
+  return outcome ? Result<void>::Ok()
+                 : Result<void>::Failure(outcome.GetError());
+}
+
 Error OptimizerFactoryError(const Error& source, const RuntimeState& state,
                             const ExecutionContext& command) {
   if (state.config && state.config->documents && state.config->optimizer) {
@@ -86,12 +93,14 @@ Error OptimizerFactoryError(const Error& source, const RuntimeState& state,
 StageCoordinator::StageCoordinator(
     RuntimeStateStore& runtime_states, OutputRepository& outputs,
     std::shared_ptr<ResourceGovernor> governor,
-    std::shared_ptr<const AlgorithmFactory> algorithms)
+    std::shared_ptr<const AlgorithmFactory> algorithms,
+    DataLoadPreviewCallback data_load_preview)
     : runtime_state_store_(runtime_states),
       outputs_(outputs),
       governor_(std::move(governor)),
       algorithms_(algorithms ? std::move(algorithms)
                              : std::make_shared<AlgorithmFactory>()),
+      data_load_preview_(std::move(data_load_preview)),
       alignment_(algorithms_),
       optimize_(algorithms_),
       reconfigurer_(algorithms_) {}
@@ -122,9 +131,8 @@ Result<void> StageCoordinator::CommitCandidate(
   auto finalized = std::move(transaction).Finalize(context.cancellation);
   if (!finalized) return Result<void>::Failure(finalized.GetError());
   return runtime_state_store_.CommitWithBarrier(
-      base, std::move(finalized).Value(), [pending] {
-        return pending ? pending->Commit() : Result<void>::Ok();
-      });
+      base, std::move(finalized).Value(),
+      [pending] { return CommitPending(pending); });
 }
 
 Result<void> StageCoordinator::RecordMapOutputs(
@@ -174,9 +182,16 @@ Result<void> StageCoordinator::ExecuteStage(
     database->alignment_feedback = context.alignment_feedback;
     auto candidate = data_load_.Execute(
         {base, std::move(contexts), std::move(database), governor_,
-         context.cancellation, std::move(optimizer).Value(), algorithms_,
+         context.cancellation, context.progress,
+         std::move(optimizer).Value(), algorithms_,
          base->config->root.parallel_data_load,
-         base->config->root.max_parallel_agents});
+         base->config->root.max_parallel_agents,
+         [this, candidate_revision = base->revision](
+             const AgentId& agent, const AgentRawDataHandle& raw) {
+           if (data_load_preview_) {
+             data_load_preview_(candidate_revision, agent, raw);
+           }
+         }});
     if (!candidate) return Result<void>::Failure(candidate.GetError());
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, nullptr,
@@ -218,7 +233,7 @@ Result<void> StageCoordinator::ExecuteStage(
     }
     auto pending = outputs_.Begin();
     auto candidate = map_update_.Execute(
-        {base, governor_, context.cancellation, algorithms_,
+        {base, governor_, context.cancellation, context.progress, algorithms_,
          base->config->root.output_directory,
          base->config->root.save_voxel_size,
          base->config->root.parallel_map_update,
@@ -260,9 +275,15 @@ Result<void> StageCoordinator::ExecuteNode(
           OptimizerFactoryError(optimizer.GetError(), *base, context));
     }
     auto candidate = data_load_.ExecuteAgent(
-        {base, {}, {}, governor_, context.cancellation,
+        {base, {}, {}, governor_, context.cancellation, context.progress,
          std::move(optimizer).Value(), algorithms_, false,
-         base->config->root.max_parallel_agents},
+         base->config->root.max_parallel_agents,
+         [this, candidate_revision = base->revision](
+             const AgentId& loaded_agent, const AgentRawDataHandle& raw) {
+           if (data_load_preview_) {
+             data_load_preview_(candidate_revision, loaded_agent, raw);
+           }
+         }},
         *agent);
     if (!candidate) return Result<void>::Failure(candidate.GetError());
     return CommitCandidate(
@@ -292,7 +313,7 @@ Result<void> StageCoordinator::ExecuteNode(
   if (node == NodeId::kMapUpdate) {
     auto pending = outputs_.Begin();
     auto candidate = map_update_.ExecuteAgent(
-        {base, governor_, context.cancellation, algorithms_,
+        {base, governor_, context.cancellation, context.progress, algorithms_,
          base->config->root.output_directory,
          base->config->root.save_voxel_size, false,
          base->config->root.max_parallel_agents, &pending},
@@ -426,7 +447,7 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
       committed_state->revision, committed_state->config->revision,
       committed_state->ordered_agents, committed_state->artifacts};
   auto committed = runtime_state_store_.CommitWithBarrier(
-      base, committed_state, [&pending] { return pending.Commit(); });
+      base, committed_state, [&pending] { return CommitPending(&pending); });
   if (!committed)
     return Result<ConfigApplyReceipt>::Failure(committed.GetError());
   return Result<ConfigApplyReceipt>::Ok(
@@ -450,9 +471,8 @@ Result<void> StageCoordinator::CommitSave(
   auto finalized = std::move(transaction).Finalize(context.cancellation);
   if (!finalized) return Result<void>::Failure(finalized.GetError());
   return runtime_state_store_.CommitWithBarrier(
-      base, std::move(finalized).Value(), [&pending] {
-        return pending.Commit();
-      });
+      base, std::move(finalized).Value(),
+      [&pending] { return CommitPending(&pending); });
 }
 
 }  // namespace open_lmm

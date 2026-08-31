@@ -1,5 +1,7 @@
 #include <open_lmm/server/execution/data_load_executor.hpp>
 #include <open_lmm/server/execution/map_update_executor.hpp>
+#include <open_lmm/server/bootstrap/algorithm_factory.hpp>
+#include <open_lmm/core/data_loader/data_loader_base.hpp>
 
 #include <cstdlib>
 #include <iostream>
@@ -15,6 +17,47 @@ void Check(bool condition, const char* message) {
 open_lmm::AgentId Id(const char* value) {
   return open_lmm::AgentId::Parse(value).Value();
 }
+
+class PreviewLoader final : public open_lmm::DataLoaderBase {
+ public:
+  open_lmm::Result<open_lmm::AgentRawData> Process(
+      const open_lmm::AlgorithmExecutionContext& context,
+      const open_lmm::DataLoaderInput&) override {
+    open_lmm::AgentRawData raw;
+    raw.agent_id = context.agent.id;
+    raw.odom_poses.push_back(Eigen::Isometry3d::Identity());
+    return open_lmm::Result<open_lmm::AgentRawData>::Ok(std::move(raw));
+  }
+  open_lmm::Result<std::size_t> VisitRawScanData(
+      const open_lmm::AlgorithmExecutionContext&, const fs::path&,
+      const RawScanVisitor&, open_lmm::AlgorithmProgressPhase) override {
+    return open_lmm::Result<std::size_t>::Ok(0);
+  }
+};
+
+class PreviewFactory final : public open_lmm::AlgorithmFactory {
+ protected:
+  open_lmm::Result<std::unique_ptr<open_lmm::DataLoaderBase>>
+  CreateDataLoaderImpl(const open_lmm::DataLoaderConfig&) const override {
+    return open_lmm::Result<
+        std::unique_ptr<open_lmm::DataLoaderBase>>::Ok(
+        std::make_unique<PreviewLoader>());
+  }
+};
+
+class PreviewOptimizer final : public open_lmm::BackendOptimizerBase {
+ public:
+  open_lmm::Result<open_lmm::BackendOptimizerOutput> Process(
+      const open_lmm::AlgorithmExecutionContext&,
+      const open_lmm::BackendOptimizerInput&) override {
+    return open_lmm::Result<open_lmm::BackendOptimizerOutput>::Ok({});
+  }
+  void Reset() override {}
+  bool HasProcessedAgent(const open_lmm::AgentId&) const override {
+    return false;
+  }
+  std::size_t ProcessedAgentCount() const override { return 0; }
+};
 
 void TestExecutorsRequireExplicitInvocationState() {
   open_lmm::DataLoadExecutor data_load;
@@ -107,6 +150,45 @@ void TestResidentReplacementUsesOnlyRetiringOwnershipAsCredit() {
         "replacement ownership releases normally");
 }
 
+void TestDataLoadPublishesEachCandidateAgent() {
+  auto config = std::make_shared<open_lmm::RuntimeConfig>();
+  config->data_loader =
+      std::make_shared<const open_lmm::DataLoaderConfig>();
+  config->documents = std::make_shared<open_lmm::RuntimeConfigDocuments>();
+  config->root.max_parallel_agents = 1;
+  auto payload = std::make_shared<open_lmm::RuntimePayload>();
+  payload->database = std::make_shared<open_lmm::SharedDatabase>();
+  auto committed = std::make_shared<open_lmm::RuntimeState>();
+  committed->revision = 5;
+  committed->config = std::move(config);
+  committed->payload = std::move(payload);
+
+  std::vector<open_lmm::AgentPipelineCtx> contexts(2);
+  contexts[0].agent = {.id = Id("A"), .role = open_lmm::AgentRole::kAnchor,
+                       .order = 0};
+  contexts[1].agent = {.id = Id("B"), .role = open_lmm::AgentRole::kFollower,
+                       .order = 1};
+  std::vector<open_lmm::AgentId> published;
+  open_lmm::DataLoadExecutor executor;
+  auto result = executor.Execute(
+      {committed, std::move(contexts),
+       std::make_shared<open_lmm::SharedDatabase>(),
+       std::make_shared<open_lmm::ResourceGovernor>(
+           open_lmm::ResourceBudget{1, 1, 1 << 20}),
+       std::make_shared<open_lmm::CancellationToken>(),
+       open_lmm::AlgorithmProgressCallback{},
+       std::make_shared<PreviewOptimizer>(),
+       std::make_shared<PreviewFactory>(), false, 1,
+       [&published](const open_lmm::AgentId& agent,
+                    const open_lmm::AgentRawDataHandle& raw) {
+         Check(raw && raw->agent_id == agent && raw->odom_poses.size() == 1,
+               "candidate callback receives immutable loaded data");
+         published.push_back(agent);
+       }});
+  Check(result && published == std::vector<open_lmm::AgentId>{Id("A"), Id("B")},
+        "DataLoad publishes an odometry candidate after each agent finishes");
+}
+
 }  // namespace
 
 int main() {
@@ -114,6 +196,7 @@ int main() {
   TestResidentReservationMovesWithCandidatePayload();
   TestMapUpdateCandidateSharesExistingReservation();
   TestResidentReplacementUsesOnlyRetiringOwnershipAsCredit();
+  TestDataLoadPublishesEachCandidateAgent();
   std::cout << "stage executor fixture tests passed\n";
   return 0;
 }

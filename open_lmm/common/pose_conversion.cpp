@@ -13,12 +13,3 @@ Eigen::Isometry3d tumPoseToIsometry3d(std::vector<double>& values) {
       Eigen::Quaterniond(values[7], values[4], values[5], values[6]));
   return transform;
 }
-
-// TODO(gil) : add custom pose conversion
-[[maybe_unused]] Eigen::Isometry3d customPoseToIsometry3d(
-    std::vector<double>& values) {
-  for (auto& value : values) {
-    value = 0;
-  }
-  return Eigen::Isometry3d::Identity();
-}

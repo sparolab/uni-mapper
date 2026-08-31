@@ -2,8 +2,6 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
-#include <tqdmcpp/tqdmcpp.hpp>
-
 #include <open_lmm/common/validation.hpp>
 #include <open_lmm/core/algorithm_invariants.hpp>
 
@@ -51,7 +49,7 @@ Result<DynamicRemoverBase::PointCloud::Ptr> DynamicRemoverOffline::Process(
     return Result<PointCloud::Ptr>::Failure(cancellation.GetError());
   }
   try {
-    auto output = ProcessImpl(std::move(input.scans),
+    auto output = ProcessImpl(context, std::move(input.scans),
                               std::move(input.optimized_poses));
     if (!output) {
       return Result<PointCloud::Ptr>::Failure(WithAlgorithmContext(
@@ -75,6 +73,7 @@ Result<DynamicRemoverBase::PointCloud::Ptr> DynamicRemoverOffline::Process(
 }
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::ProcessImpl(
+    const AlgorithmExecutionContext& context,
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
     std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) {
   auto ordered_result = OrderOptimizedPosesByFrameId(
@@ -92,23 +91,27 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOffline::ProcessImpl(
   if (offline_model_->needsRawMap()) {
     pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map =
         genRawMap(scans, optimized_poses);
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kInitializeRemover,
+                            0);
     offline_model_->setRawMap(raw_map);
   }
 
-  auto T = tq::tqdm(scans);
-  T.set_prefix("Dynamic Remover");
-  int idx = 0;
-  for (auto scan : T) {
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunRemover, 0,
+                          scans.size());
+  for (std::size_t idx = 0; idx < scans.size(); ++idx) {
     // pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_scan =
     //     pcl::PointCloud<pcl::PointXYZI>::Ptr(
     //         new pcl::PointCloud<pcl::PointXYZI>());
     // pcl::transformPointCloud(*scan, *transformed_scan,
     //                          optimized_poses[idx].second.matrix());
+    auto scan = scans[idx];
     offline_model_->run(scan, ordered_poses[idx]);
-    idx++;
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunRemover,
+                            idx + 1, scans.size());
   }
-  T.finish();
 
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildStaticMap,
+                          0);
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map =
       offline_model_->getStaticMap();
 
@@ -225,6 +228,8 @@ DynamicRemoverOffline::ProcessStreamingImpl(
       heavy_phase = std::move(admitted).Value();
     }
     auto raw_map = std::make_shared<PointCloud>();
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildRawMap, 0,
+                            scans.size());
     for (std::size_t index = 0; index < scans.size(); ++index) {
       auto active = CheckAlgorithmCancellation(
           context, "while building offline dynamic-remover raw map");
@@ -235,11 +240,17 @@ DynamicRemoverOffline::ProcessStreamingImpl(
       pcl::transformPointCloud(*scans[index], transformed_scan,
                                ordered_poses[index].matrix());
       *raw_map += transformed_scan;
+      ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildRawMap,
+                              index + 1, scans.size());
     }
+    ReportAlgorithmProgress(context,
+                            AlgorithmProgressPhase::kInitializeRemover, 0);
     offline_model_->setRawMap(raw_map);
     heavy_phase.reset();
   }
 
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunRemover, 0,
+                          scans.size());
   for (std::size_t index = 0; index < scans.size(); ++index) {
     auto active = CheckAlgorithmCancellation(
         context, "while running offline dynamic remover");
@@ -249,7 +260,11 @@ DynamicRemoverOffline::ProcessStreamingImpl(
     PointCloud::Ptr mutable_scan = scans[index];
     Eigen::Isometry3d pose = ordered_poses[index];
     offline_model_->run(mutable_scan, pose);
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunRemover,
+                            index + 1, scans.size());
   }
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildStaticMap,
+                          0);
   auto static_map = offline_model_->getStaticMap();
   auto valid_map = ValidatePointCloud(static_map, "offline remover output");
   if (!valid_map) {

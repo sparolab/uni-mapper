@@ -69,8 +69,13 @@ Result<RuntimeSnapshot> RuntimeClient::Snapshot() const {
 Result<std::vector<NodeDescriptor>> RuntimeClient::NodeDescriptors() const {
   return impl_->service.NodeDescriptors();
 }
-Result<VisualizationSnapshot> RuntimeClient::Visualization(const AgentId& agent) const {
-  return impl_->service.Visualization(agent);
+Result<VisualizationSnapshot> RuntimeClient::Visualization(
+    const AgentId& agent) const {
+  return Visualization(VisualizationQuery{agent});
+}
+Result<VisualizationSnapshot> RuntimeClient::Visualization(
+    const VisualizationQuery& query) const {
+  return impl_->service.Visualization(query);
 }
 Result<std::optional<AlignmentFeedbackSnapshot>>
 RuntimeClient::AlignmentFeedback() const { return impl_->service.AlignmentFeedback(); }

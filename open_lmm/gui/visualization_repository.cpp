@@ -4,6 +4,22 @@
 
 namespace open_lmm {
 namespace {
+uint8_t PhaseRank(VisualizationPhase phase) {
+  return static_cast<uint8_t>(phase);
+}
+
+bool IsNewer(const VisualizationSnapshot& current,
+             const VisualizationSnapshot& incoming) {
+  if (incoming.revision != current.revision) {
+    return incoming.revision > current.revision;
+  }
+  if (incoming.phase != current.phase) {
+    return PhaseRank(incoming.phase) > PhaseRank(current.phase);
+  }
+  return (!current.points_complete && incoming.points_complete) ||
+         (incoming.points_complete && !incoming.points.empty());
+}
+
 std::string RevisionName(const std::string& prefix, uint64_t revision) {
   return prefix + "/" + std::to_string(revision);
 }
@@ -12,12 +28,19 @@ std::shared_ptr<const VisualizationSnapshot> MetadataOnly(
   auto snapshot = std::make_shared<VisualizationSnapshot>();
   snapshot->agent = source.agent;
   snapshot->revision = source.revision;
+  snapshot->phase = source.phase;
+  snapshot->pose_kind = source.pose_kind;
+  snapshot->point_kind = source.point_kind;
   snapshot->poses = source.poses;
   snapshot->edges = source.edges;
   snapshot->min_bound = source.min_bound;
   snapshot->max_bound = source.max_bound;
   snapshot->has_bounds = source.has_bounds;
+  snapshot->points_available = source.points_available;
+  snapshot->points_complete = source.points_complete;
   snapshot->map_available = source.map_available;
+  snapshot->displayed_point_count = source.displayed_point_count;
+  snapshot->source_point_count = source.source_point_count;
   return snapshot;
 }
 }  // namespace
@@ -28,7 +51,7 @@ VisualizationUpdate VisualizationRepository::Commit(
   if (!snapshot || !snapshot->agent.IsValid()) return update;
   const auto found = snapshots_.find(snapshot->agent);
   if (found != snapshots_.end()) {
-    if (found->second->revision >= snapshot->revision) return update;
+    if (!IsNewer(*found->second, *snapshot)) return update;
     update.remove_drawables = {
         MapName(snapshot->agent, found->second->revision),
         TrajectoryName(snapshot->agent, found->second->revision),
@@ -77,7 +100,7 @@ std::size_t VisualizationRepository::ApproximateBytes() const {
     bytes += sizeof(VisualizationSnapshot);
     bytes += snapshot->poses.size() * sizeof(VisualizationPose);
     bytes += snapshot->edges.size() * sizeof(VisualizationEdge);
-    bytes += snapshot->points.size() * sizeof(VisualizationPoint);
+    bytes += snapshot->displayed_point_count * sizeof(VisualizationPoint);
   }
   return bytes;
 }

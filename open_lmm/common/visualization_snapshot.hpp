@@ -16,6 +16,25 @@ enum class VisualizationEdgeType : uint8_t {
   kInterLoop,
 };
 
+enum class VisualizationPhase : uint8_t {
+  kDataLoad,
+  kLoopDetection,
+  kOptimization,
+  kMapUpdate,
+  kSave,
+};
+
+enum class VisualizationPoseKind : uint8_t {
+  kOdometry,
+  kOptimized,
+};
+
+enum class VisualizationPointKind : uint8_t {
+  kFilteredScanPreview,
+  kOptimizationMapPreview,
+  kFinalStaticMap,
+};
+
 struct VisualizationPose {
   int index = 0;
   Eigen::Isometry3f transform = Eigen::Isometry3f::Identity();
@@ -41,13 +60,30 @@ struct VisualizationPoint {
 struct VisualizationSnapshot {
   AgentId agent;
   uint64_t revision = 0;
+  VisualizationPhase phase = VisualizationPhase::kDataLoad;
+  VisualizationPoseKind pose_kind = VisualizationPoseKind::kOdometry;
+  VisualizationPointKind point_kind =
+      VisualizationPointKind::kFilteredScanPreview;
   std::vector<VisualizationPose> poses;
   std::vector<VisualizationEdge> edges;
   std::vector<VisualizationPoint> points;
   Eigen::Vector3f min_bound = Eigen::Vector3f::Zero();
   Eigen::Vector3f max_bound = Eigen::Vector3f::Zero();
   bool has_bounds = false;
+  bool points_available = false;
+  bool points_complete = false;
   bool map_available = false;
+  std::size_t displayed_point_count = 0;
+  std::size_t source_point_count = 0;
+};
+
+// Large point payloads are opt-in so routine GUI polling does not rebuild or
+// copy a map. The server clamps and validates caller-provided limits.
+struct VisualizationQuery {
+  AgentId agent;
+  bool include_points = true;
+  float preview_voxel_size_m = 0.4F;
+  std::size_t maximum_points = 1'000'000;
 };
 
 }  // namespace open_lmm

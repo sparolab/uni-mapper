@@ -7,6 +7,7 @@
 #include <open_lmm/server/runtime_payload_builder.hpp>
 #include <open_lmm/utils/config.hpp>
 #include <open_lmm/utils/config_schema.hpp>
+#include <open_lmm/utils/logging.hpp>
 
 namespace open_lmm {
 namespace {
@@ -116,6 +117,22 @@ Result<void> SelectCandidateDocument(
   if (!fs::is_directory(selected.parent_path(), error) || error) {
     return Result<void>::Failure(Error::InvalidArgument(
         "selected config document parent must be an existing directory"));
+  }
+
+  const fs::path canonical_config_directory =
+      fs::weakly_canonical(config_directory, error);
+  if (error) {
+    return Result<void>::Failure(Error::IoError(
+        "failed to resolve config directory for path policy: " +
+        error.message()));
+  }
+  const fs::path relative = selected.lexically_relative(canonical_config_directory);
+  const bool external = relative.empty() ||
+      (!relative.empty() && *relative.begin() == "..");
+  if (external) {
+    LogWarning(
+        "[config/path_policy] external mutable module config is deprecated "
+        "and remains enabled for compatibility: " + selected.string());
   }
 
   auto root_json = nlohmann::json::parse(documents.root.canonical_json);

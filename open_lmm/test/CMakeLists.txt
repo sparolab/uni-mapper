@@ -68,6 +68,16 @@ openlmm_set_global_target_properties(open_lmm_alignment_contract_fixture_tests)
 add_test(NAME open_lmm_alignment_contract_fixture_tests
          COMMAND open_lmm_alignment_contract_fixture_tests)
 
+add_executable(open_lmm_alignment_map_resolution_tests
+  alignment_map_resolution_tests.cpp
+)
+target_link_libraries(open_lmm_alignment_map_resolution_tests PRIVATE
+  open_lmm_loop_detector
+)
+openlmm_set_global_target_properties(open_lmm_alignment_map_resolution_tests)
+add_test(NAME open_lmm_alignment_map_resolution_tests
+         COMMAND open_lmm_alignment_map_resolution_tests)
+
 add_executable(open_lmm_agent_id_tests agent_id_tests.cpp)
 target_link_libraries(open_lmm_agent_id_tests PRIVATE
   open_lmm_common
@@ -148,6 +158,16 @@ target_link_libraries(open_lmm_stage_executor_fixture_tests PRIVATE
 openlmm_set_global_target_properties(open_lmm_stage_executor_fixture_tests)
 add_test(NAME open_lmm_stage_executor_fixture_tests
          COMMAND open_lmm_stage_executor_fixture_tests)
+
+add_executable(open_lmm_visualization_projector_tests
+  visualization_projector_tests.cpp
+)
+target_link_libraries(open_lmm_visualization_projector_tests PRIVATE
+  open_lmm_map_server
+)
+openlmm_set_global_target_properties(open_lmm_visualization_projector_tests)
+add_test(NAME open_lmm_visualization_projector_tests
+         COMMAND open_lmm_visualization_projector_tests)
 
 add_executable(open_lmm_orchestration_executor_fixture_tests
   orchestration_executor_fixture_tests.cpp

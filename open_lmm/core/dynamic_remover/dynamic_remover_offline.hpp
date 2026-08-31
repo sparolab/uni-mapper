@@ -27,6 +27,7 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
 
  private:
   PointCloud::Ptr ProcessImpl(
+      const AlgorithmExecutionContext& context,
       std::vector<PointCloud::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
   Result<PointCloud::Ptr> ProcessStreamingImpl(

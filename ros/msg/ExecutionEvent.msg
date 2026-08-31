@@ -9,6 +9,10 @@ bool has_agent
 string agent
 uint64 progress_current
 uint64 progress_total
+bool has_algorithm_progress
+uint8 progress_phase
+bool progress_total_known
+string progress_operation
 string message
 bool has_error
 string error

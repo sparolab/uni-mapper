@@ -255,6 +255,13 @@ assert_file_excludes(
   "utils/bounded_executor.cpp"
   "std::async"
   ".detach(")
+
+# Normal stage transitions must go through the presentation generation owner.
+# A GUI event handler may request a new snapshot, but must not globally clear the
+# last valid presentation before the replacement is ready.
+assert_file_excludes(
+  "gui/iridescence_gui.cpp"
+  "ClearVisualizationLayers")
 file(READ "${OPEN_LMM_SOURCE_DIR}/server/stage_executor.cpp"
   stage_executor_source)
 file(READ "${OPEN_LMM_SOURCE_DIR}/server/execution/data_load_executor.cpp"

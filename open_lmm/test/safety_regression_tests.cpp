@@ -98,6 +98,47 @@ class RecordingOfflineRemover final : public IOfflineRemoverPlugin {
   std::vector<double> translations;
 };
 
+class RawMapOfflineRemover final : public IOfflineRemoverPlugin {
+ public:
+  explicit RawMapOfflineRemover(std::vector<std::string>& trace)
+      : trace_(trace) {}
+  void run(pcl::PointCloud<pcl::PointXYZI>::Ptr&,
+           Eigen::Isometry3d&) override {
+    trace_.push_back("run");
+  }
+  void setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr&) override {
+    trace_.push_back("set_raw_map");
+  }
+  pcl::PointCloud<pcl::PointXYZI>::Ptr getStaticMap() override {
+    trace_.push_back("get_static_map");
+    return OnePointScan();
+  }
+
+ private:
+  std::vector<std::string>& trace_;
+};
+
+class CancellingOfflineRemover final : public IOfflineRemoverPlugin {
+ public:
+  explicit CancellingOfflineRemover(
+      std::shared_ptr<open_lmm::CancellationToken> cancellation)
+      : cancellation_(std::move(cancellation)) {}
+  void run(pcl::PointCloud<pcl::PointXYZI>::Ptr&,
+           Eigen::Isometry3d&) override {
+    ++calls;
+    cancellation_->Request();
+  }
+  bool needsRawMap() const override { return false; }
+  void setRawMap(pcl::PointCloud<pcl::PointXYZI>::Ptr&) override {}
+  pcl::PointCloud<pcl::PointXYZI>::Ptr getStaticMap() override {
+    return OnePointScan();
+  }
+  int calls = 0;
+
+ private:
+  std::shared_ptr<open_lmm::CancellationToken> cancellation_;
+};
+
 class StubNode final : public PipelineNodeBase {
  public:
   StubNode(ControlFlow flow, int& calls) : flow_(flow), calls_(calls) {}
@@ -192,6 +233,8 @@ void TestFileSetCleanupFailureRequiresRecovery() {
   const auto result = open_lmm::CommitFileSet({{temporary, destination}});
   Expect(result.IsOk(),
          "backup cleanup after installed finals must preserve commit success");
+  Expect(result.Value().recovery_required.has_value(),
+         "cleanup failure must return a structured recovery-required outcome");
   Expect(fs::is_regular_file(destination),
          "cleanup failure must leave the installed candidate authoritative");
   Expect(fs::exists(destination.string() + ".open_lmm_backup/original"),
@@ -321,14 +364,18 @@ void TestAlignedMapRebuildUsesLatestTransform() {
   open_lmm::DescriptorStore store;
   std::vector<Eigen::Vector3f> anchor{{1.0F, 0.0F, 0.0F}};
   std::vector<Eigen::Vector3f> follower{{0.0F, 2.0F, 0.0F}};
-  store.set_agent_map(Id("A"), anchor, Eigen::Isometry3d::Identity(),
-                      open_lmm::AlignmentMethod::kKissMatcher,
-                      open_lmm::AlignmentApproval::kAutomatic, Id("A"), 1);
+  auto stored_anchor = store.set_agent_map(
+      Id("A"), {1.0F, anchor}, Eigen::Isometry3d::Identity(),
+      open_lmm::AlignmentMethod::kKissMatcher,
+      open_lmm::AlignmentApproval::kAutomatic, Id("A"), 1);
+  Expect(stored_anchor.IsOk(), "anchor alignment map must be accepted");
   Eigen::Isometry3d initial = Eigen::Isometry3d::Identity();
   initial.translation() = Eigen::Vector3d(10.0, 0.0, 0.0);
-  store.set_agent_map(Id("B"), follower, initial,
-                      open_lmm::AlignmentMethod::kManual,
-                      open_lmm::AlignmentApproval::kUser, Id("A"), 2);
+  auto stored_follower = store.set_agent_map(
+      Id("B"), {1.0F, follower}, initial,
+      open_lmm::AlignmentMethod::kManual,
+      open_lmm::AlignmentApproval::kUser, Id("A"), 2);
+  Expect(stored_follower.IsOk(), "follower alignment map must be accepted");
   Expect(store.merged_map.size() == 2,
          "aligned map store must rebuild all accepted agent maps");
   Expect(store.merged_map[1].isApprox(Eigen::Vector3f(10.0F, 2.0F, 0.0F)),
@@ -903,6 +950,185 @@ void TestOfflineStreamingFrameIdentity() {
       "extra source frames must fail before offline plugin invocation");
 }
 
+void TestDataLoaderSinglePassProgress() {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() /
+      ("open_lmm_progress_" + std::to_string(std::random_device{}()));
+  fs::create_directories(root / "scans");
+  std::ofstream(root / "poses.txt")
+      << "1 0 0 0 0 1 0 0 0 0 1 0\n"
+      << "1 0 0 1 0 1 0 0 0 0 1 0\n";
+  std::ofstream(root / "scans/000.pcd") << "fixture";
+  std::ofstream(root / "scans/001.pcd") << "fixture";
+
+  open_lmm::DataLoaderConfig config;
+  config.type = "file";
+  config.pose_file_name = "poses.txt";
+  config.pose_format = "kitti";
+  config.scan_type = "pcd";
+  config.scan_dir_name = "scans";
+  config.voxel_size = 0.1F;
+  config.max_range = 100.0F;
+  open_lmm::DataLoaderFile loader(config);
+  int reads = 0;
+  loader.convertScanFunctor = [&](std::string) {
+    ++reads;
+    return OnePointScan(static_cast<float>(reads));
+  };
+  auto context = open_lmm::AlgorithmExecutionContext{};
+  context.agent = {.id = Id("A"), .role = open_lmm::AgentRole::kAnchor,
+                   .order = 0};
+  bool process_returned = false;
+  bool first_frame_before_return = false;
+  std::vector<open_lmm::AlgorithmProgress> progress;
+  context.progress = [&](const open_lmm::AlgorithmProgress& update) {
+    progress.push_back(update);
+    if (update.phase == open_lmm::AlgorithmProgressPhase::kReadAndFilter &&
+        update.current == 1) {
+      first_frame_before_return = !process_returned;
+    }
+  };
+  auto loaded = loader.Process(context, {root});
+  process_returned = true;
+  Expect(loaded.IsOk() && reads == 2,
+         "DataLoader must read and filter each file exactly once");
+  Expect(first_frame_before_return,
+         "first scan progress must arrive before DataLoad completes");
+  const auto read_updates = std::count_if(
+      progress.begin(), progress.end(), [](const auto& update) {
+        return update.phase ==
+               open_lmm::AlgorithmProgressPhase::kReadAndFilter;
+      });
+  Expect(read_updates == 3 && progress.back().current == 2,
+         "DataLoader progress must expose 0/N through N/N");
+
+  int mismatch_reads = 0;
+  open_lmm::DataLoaderFile mismatch_loader(config);
+  mismatch_loader.convertScanFunctor = [&](std::string) {
+    ++mismatch_reads;
+    return OnePointScan();
+  };
+  std::ofstream(root / "poses.txt") << "1 0 0 0 0 1 0 0 0 0 1 0\n";
+  auto mismatch = mismatch_loader.Process(context, {root});
+  Expect(!mismatch && mismatch_reads == 0,
+         "scan/pose mismatch must fail after enumeration and before reads");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
+}
+
+void TestRemoverStreamingProgressBoundaries() {
+  auto pose0 = Eigen::Isometry3d::Identity();
+  auto pose1 = Eigen::Isometry3d::Identity();
+  const std::vector<std::pair<int, Eigen::Isometry3d>> poses{
+      {0, pose0}, {1, pose1}};
+
+  auto online_plugin = std::make_shared<RecordingOnlineRemover>();
+  open_lmm::DynamicRemoverConfig config;
+  open_lmm::DynamicRemoverOnline online(config, online_plugin);
+  bool source_returned = false;
+  bool ran_before_source_return = false;
+  open_lmm::DynamicRemoverBase::RawScanSource online_source =
+      [&](const open_lmm::DynamicRemoverBase::RawScanVisitor& visitor) {
+        auto first = visitor(0, OnePointScan());
+        ran_before_source_return = online_plugin->translations.size() == 1;
+        if (!first) return Result<std::size_t>::Failure(first.GetError());
+        auto second = visitor(1, OnePointScan());
+        source_returned = true;
+        if (!second) return Result<std::size_t>::Failure(second.GetError());
+        return Result<std::size_t>::Ok(2);
+      };
+  open_lmm::AlgorithmExecutionContext online_context;
+  online_context.operation = "test.online_stream";
+  auto online_result = online.ProcessStreaming(
+      online_context, {online_source, poses, {}});
+  Expect(online_result.IsOk() && source_returned && ran_before_source_return,
+         "online remover must run each frame directly from the source");
+
+  std::vector<std::string> trace;
+  auto offline_plugin = std::make_shared<RawMapOfflineRemover>(trace);
+  open_lmm::DynamicRemoverOffline offline(config, offline_plugin);
+  open_lmm::AlgorithmExecutionContext offline_context;
+  offline_context.operation = "test.offline_stream";
+  std::vector<open_lmm::AlgorithmProgress> offline_progress;
+  offline_context.progress = [&](const open_lmm::AlgorithmProgress& update) {
+    offline_progress.push_back(update);
+    std::string item(open_lmm::DescribeAlgorithmProgressPhase(update.phase));
+    item += update.total ? ":determinate" : ":indeterminate";
+    trace.push_back(std::move(item));
+  };
+  bool offline_ran_while_source_active = false;
+  open_lmm::DynamicRemoverBase::RawScanSource offline_source =
+      [&](const open_lmm::DynamicRemoverBase::RawScanVisitor& visitor) {
+        for (std::size_t index = 0; index < 2; ++index) {
+          auto visited = visitor(index, OnePointScan());
+          if (!visited) {
+            return Result<std::size_t>::Failure(visited.GetError());
+          }
+          offline_ran_while_source_active |=
+              std::find(trace.begin(), trace.end(), "run") != trace.end();
+        }
+        return Result<std::size_t>::Ok(2);
+      };
+  auto offline_result = offline.ProcessStreaming(
+      offline_context, {offline_source, poses, {}});
+  Expect(offline_result.IsOk(), "offline progress fixture must complete");
+  Expect(!offline_ran_while_source_active,
+         "offline remover must not invoke the plugin until all input frames "
+         "have been visited");
+  const auto contains = [&](const std::string& item) {
+    return std::find(trace.begin(), trace.end(), item) != trace.end();
+  };
+  Expect(contains("build remover raw map:determinate") &&
+             contains("run remover frame calls:determinate"),
+         "host-owned offline loops must report exact N/N phases");
+  Expect(contains("initialize remover:indeterminate") &&
+             contains("build static map:indeterminate"),
+         "opaque offline plugin calls must remain indeterminate");
+  const auto phase_is_exact = [&](open_lmm::AlgorithmProgressPhase phase,
+                                  bool total_known) {
+    return std::all_of(
+        offline_progress.begin(), offline_progress.end(),
+        [&](const open_lmm::AlgorithmProgress& update) {
+          return update.phase != phase || update.total.has_value() == total_known;
+        });
+  };
+  Expect(phase_is_exact(open_lmm::AlgorithmProgressPhase::kInitializeRemover,
+                        false) &&
+             phase_is_exact(open_lmm::AlgorithmProgressPhase::kBuildStaticMap,
+                            false),
+         "setRawMap/getStaticMap phases must never expose a synthetic total");
+  Expect(std::all_of(
+             offline_progress.begin(), offline_progress.end(),
+             [](const open_lmm::AlgorithmProgress& update) {
+               return !update.total ||
+                      ((update.phase ==
+                            open_lmm::AlgorithmProgressPhase::kBuildRawMap ||
+                        update.phase ==
+                            open_lmm::AlgorithmProgressPhase::kRunRemover) &&
+                       *update.total == 2);
+             }),
+         "offline progress must expose totals only for host-owned loops");
+  Expect(std::find(trace.begin(), trace.end(), "set_raw_map") != trace.end() &&
+             std::find(trace.begin(), trace.end(), "get_static_map") !=
+                 trace.end(),
+         "offline phase reporting must preserve plugin calls");
+
+  auto cancellation = std::make_shared<open_lmm::CancellationToken>();
+  auto cancelling_plugin =
+      std::make_shared<CancellingOfflineRemover>(cancellation);
+  open_lmm::DynamicRemoverOffline cancelling_offline(config,
+                                                       cancelling_plugin);
+  auto cancelling_context = offline_context;
+  cancelling_context.progress = {};
+  cancelling_context.cancellation = cancellation;
+  auto cancelled = cancelling_offline.ProcessStreaming(
+      cancelling_context, {offline_source, poses, {}});
+  Expect(!cancelled &&
+             cancelled.GetError().code == Error::Code::kCancelled &&
+             cancelling_plugin->calls == 1,
+         "offline cancellation must be observed between host frame calls");
+}
+
 }  // namespace
 
 int main() {
@@ -924,6 +1150,8 @@ int main() {
   TestAlgorithmInvariants();
   TestRemoverFrameIdentityAndDownsample();
   TestOfflineStreamingFrameIdentity();
+  TestDataLoaderSinglePassProgress();
+  TestRemoverStreamingProgressBoundaries();
   if (failures != 0) {
     std::cerr << failures << " safety regression test(s) failed\n";
     return 1;

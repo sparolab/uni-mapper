@@ -4,7 +4,9 @@
 #include <open_lmm/server/execution/stage_coordinator.hpp>
 #include <open_lmm/server/output_repository.hpp>
 #include <open_lmm/utils/config_schema.hpp>
+#include <open_lmm/utils/logging.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -122,6 +124,7 @@ int main() {
   std::error_code ignored;
   fs::remove_all(root, ignored);
   const auto initial = MakeBase(root);
+  InitializeLogging();
   const std::string root_on_disk = Read(root / "config.json");
   const std::string root_candidate = R"({
     "global": {
@@ -226,6 +229,28 @@ int main() {
             Read(root / "loop.json") == unrelated_before,
         "domain candidate must not overwrite another module document");
 
+  const fs::path external_root = root.parent_path() / "open_lmm_external_config";
+  fs::remove_all(external_root, ignored);
+  fs::create_directories(external_root);
+  const auto contained_logs = RecentRuntimeLogs();
+  Check(std::none_of(contained_logs.begin(), contained_logs.end(),
+                     [](const std::string& line) {
+                       return line.find("[config/path_policy]") !=
+                              std::string::npos;
+                     }),
+        "contained config documents do not emit a path-policy warning");
+  auto external_candidate =
+      Candidate((external_root / "map.json").string(), 0.95);
+  auto external = coordinator.ApplyConfig(
+      committed, external_candidate, {2, 2}, {cancellation, {}, 2});
+  const auto logs = RecentRuntimeLogs();
+  Check(external && fs::is_regular_file(external_root / "map.json") &&
+            std::any_of(logs.begin(), logs.end(), [](const std::string& line) {
+              return line.find("[config/path_policy]") != std::string::npos;
+            }),
+        "external config remains compatible and emits a path-policy warning");
+  fs::remove_all(external_root, ignored);
+
   // Backup cleanup happens after every final has been installed. A cleanup
   // fault must retain the new state/file-set commit and leave a recovery
   // manifest, rather than report a pre-commit failure with stale state.
@@ -242,10 +267,16 @@ int main() {
   RuntimeStateStore cleanup_sessions(initial);
   auto cleanup_candidate = std::make_shared<RuntimeState>(*initial);
   cleanup_candidate->revision = 2;
+  std::optional<Error> cleanup_recovery;
   auto cleanup_commit = cleanup_sessions.CommitWithBarrier(
-      initial, cleanup_candidate,
-      [&cleanup_pending] { return cleanup_pending.Commit(); });
+      initial, cleanup_candidate, [&cleanup_pending, &cleanup_recovery] {
+        auto outcome = cleanup_pending.Commit();
+        if (!outcome) return Result<void>::Failure(outcome.GetError());
+        cleanup_recovery = outcome.Value().recovery_required;
+        return Result<void>::Ok();
+      });
   Check(cleanup_commit &&
+            cleanup_recovery.has_value() &&
             cleanup_sessions.Snapshot().get() == cleanup_candidate.get() &&
             Read(cleanup_root / "first.final") == "new-one" &&
             Read(cleanup_root / "second.final") == "new-two" &&

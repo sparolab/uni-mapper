@@ -1,4 +1,5 @@
 #include "loop_detector_kdtree.hpp"
+#include "alignment_map_builder.hpp"
 #include "descriptor_alignment_proposer.hpp"
 #include "kiss_alignment_proposer.hpp"
 #include "map_alignment_coordinator.hpp"
@@ -7,11 +8,8 @@
 #include <open_lmm/core/alignment/alignment_proposer.hpp>
 #include <open_lmm/core/alignment/loop_constraint_builder.hpp>
 
-#include <pcl/common/transforms.h>
-#include <pcl/kdtree/kdtree_flann.h>
 #include <tqdmcpp/tqdmcpp.hpp>
 
-#include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/common/profiling.hpp>
 #include <open_lmm/common/rigid_transform.hpp>
 #include <open_lmm/common/validation.hpp>
@@ -20,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -200,7 +199,8 @@ Result<std::vector<LoopPair>> LoopDetectorKdtree::detectInterLoops(
 
 std::optional<MapAlignmentProposal> LoopDetectorKdtree::proposeKissAlignment(
     const AlgorithmExecutionContext& context,
-    const LoopDetectorProcessInput& input) {
+    const LoopDetectorProcessInput& input,
+    const VoxelizedAgentMap& current_map) {
   OPEN_LMM_ZONE_N("LoopDetector.KissMatcher");
   if (context.agent.is_anchor()) return std::nullopt;
 
@@ -208,7 +208,7 @@ std::optional<MapAlignmentProposal> LoopDetectorKdtree::proposeKissAlignment(
                                 ? AgentId{}
                                 : input.all_optimized.begin()->first;
   return KissAlignmentProposer().Propose(
-      input.descriptor_store.merged_map, input.current.map_points,
+      input.descriptor_store.merged_map, current_map.points,
       target_agent, context.agent.id, params_.kiss_voxel_size,
       params_.kiss_use_quatro);
 }
@@ -305,6 +305,27 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
                   input.current.filtered_scans.size());
     database_->setAgentId(context.agent.id);
 
+    auto built_map =
+        BuildAlignmentMap(context, input.current, params_.kiss_voxel_size);
+    if (!built_map) {
+      return Result<LoopDetectorOutput>::Failure(built_map.GetError());
+    }
+    VoxelizedAgentMap current_map = std::move(built_map).Value();
+    OPEN_LMM_PLOT("loop_detector.alignment_map_points",
+                  current_map.points.size());
+    if (!input.descriptor_store.merged_map.empty() &&
+        std::abs(input.descriptor_store.merged_map_voxel_size_m -
+                 current_map.voxel_size_m) >
+            std::numeric_limits<float>::epsilon() *
+                std::max(input.descriptor_store.merged_map_voxel_size_m,
+                         current_map.voxel_size_m) * 4.0F) {
+      return Result<LoopDetectorOutput>::Failure(WithAlgorithmContext(
+          Error::InvalidArgument(
+              "descriptor store alignment-map resolution does not match "
+              "alignment.kiss_voxel_size"),
+          context));
+    }
+
     auto intra_result = detectIntraLoops(
         context, input.current.filtered_scans, context.agent);
     if (!intra_result) {
@@ -337,7 +358,7 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
                                       : input.all_optimized.begin()->first;
     AlignmentProposer kiss([&](const AlignmentProposalRequest&) {
       return Result<std::optional<MapAlignmentProposal>>::Ok(
-          proposeKissAlignment(context, input));
+          proposeKissAlignment(context, input, current_map));
     });
     AlignmentProposer descriptor([&](const AlignmentProposalRequest&) {
       auto detected = detectInterLoops(
@@ -355,13 +376,15 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
     });
 
     const auto build_constraints = [&](const StoredAlignment& accepted,
-                                       AlignmentAcceptanceSource source)
+                                       AlignmentAcceptanceSource source,
+                                       LoopConstraintBuildDiagnostics*
+                                           diagnostics = nullptr)
         -> Result<ValidatedLoopConstraints> {
       return LoopConstraintBuilder().Build(
           context,
           {accepted, source, input.current, input.all_raw_data,
            input.all_optimized, params_.pose_nn_distance_threshold,
-           params_.inter_loop_keyframe_spacing_m});
+           params_.inter_loop_keyframe_spacing_m, diagnostics});
     };
 
     if (!context.agent.is_anchor() && !input.stored_alignment &&
@@ -417,15 +440,28 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
       coordinator_input.target_points =
           AlignmentPoints(input.descriptor_store.merged_map);
       coordinator_input.source_points =
-          AlignmentPoints(input.current.map_points);
+          AlignmentPoints(current_map.points);
       coordinator_input.visualization = alignment_visualization;
       coordinator_input.target_agent = target_agent;
       coordinator_input.source_agent = context.agent.id;
-      coordinator_input.kiss_proposer = [&] {
+      coordinator_input.kiss_proposer = [&]()
+          -> Result<AlignmentProposalAttempt> {
         *alignment_visualization = {};
         auto result = kiss.Propose(context, {target_agent, context.agent.id});
-        if (result) kiss_proposal = result.Value();
-        return result;
+        if (!result) {
+          return Result<AlignmentProposalAttempt>::Failure(result.GetError());
+        }
+        kiss_proposal = result.Value();
+        if (!kiss_proposal) {
+          return Result<AlignmentProposalAttempt>::Ok(
+              {.proposal = std::nullopt,
+               .failure = AlignmentAttemptFailure::kInsufficientInliers,
+               .message =
+                   "KISS Matcher found no solution with enough final inliers"});
+        }
+        return Result<AlignmentProposalAttempt>::Ok(
+            {.proposal = kiss_proposal,
+             .message = "KISS Matcher proposal is ready for review"});
       };
       AlignmentProposer interactive_descriptor(
           [&](const AlignmentProposalRequest&)
@@ -454,17 +490,60 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
         return Result<std::optional<MapAlignmentProposal>>::Ok(
             descriptor_proposal);
       });
-      coordinator_input.descriptor_proposer = [&] {
-        return interactive_descriptor.Propose(
+      coordinator_input.descriptor_proposer = [&]()
+          -> Result<AlignmentProposalAttempt> {
+        auto proposed = interactive_descriptor.Propose(
             context, {target_agent, context.agent.id});
+        if (!proposed) {
+          return Result<AlignmentProposalAttempt>::Failure(
+              proposed.GetError());
+        }
+        if (!proposed.Value()) {
+          const auto failure = descriptor_loops.empty()
+              ? AlignmentAttemptFailure::kNoCandidate
+              : AlignmentAttemptFailure::kNoConsistentClique;
+          return Result<AlignmentProposalAttempt>::Ok(
+              {.proposal = std::nullopt,
+               .failure = failure,
+               .message = descriptor_loops.empty()
+                   ? "Descriptor query produced no inter-agent candidates"
+                   : "Descriptor candidates produced no consistent clique"});
+        }
+        return Result<AlignmentProposalAttempt>::Ok(
+            {.proposal = proposed.Value(),
+             .message = "Descriptor proposal is ready for review"});
       };
-      coordinator_input.proposal_validator = [&](const auto& proposal) {
+      coordinator_input.proposal_validator = [&](const auto& proposal)
+          -> Result<AlignmentProposalValidation> {
         StoredAlignment accepted{proposal, AlignmentApproval::kUser, 0};
+        LoopConstraintBuildDiagnostics diagnostics;
         auto built = build_constraints(
-            accepted, AlignmentAcceptanceSource::kInteractive);
-        if (!built) return Result<void>::Failure(built.GetError());
+            accepted, AlignmentAcceptanceSource::kInteractive, &diagnostics);
+        if (!built) {
+          if (!diagnostics.search_completed) {
+            return Result<AlignmentProposalValidation>::Failure(
+                built.GetError());
+          }
+          std::ostringstream message;
+          message << diagnostics.within_radius << " / "
+                  << diagnostics.sampled_source_frames
+                  << " sampled source keyframes found a target within "
+                  << diagnostics.threshold_m << "m";
+          if (std::isfinite(diagnostics.nearest_distance_m)) {
+            message << "; nearest was " << diagnostics.nearest_distance_m
+                    << "m";
+          } else {
+            message << "; no target pose was available";
+          }
+          message << " (target frames=" << diagnostics.target_frames << ')';
+          return Result<AlignmentProposalValidation>::Ok(
+              {.accepted = false,
+               .failure = AlignmentAttemptFailure::kNoPoseNeighbor,
+               .message = message.str(),
+               .constraint_diagnostics = diagnostics});
+        }
         built_constraints = std::move(built).Value();
-        return Result<void>::Ok();
+        return Result<AlignmentProposalValidation>::Ok({.accepted = true});
       };
       auto alignment = MapAlignmentCoordinator().Align(coordinator_input);
       if (!alignment) {
@@ -502,12 +581,6 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
       }
       inter_loops = std::move(built_constraints->loops);
     }
-    auto transformed_map_points = context.agent.is_anchor()
-        ? input.current.map_points
-        : transformEigenPoints(
-              input.current.map_points,
-              accepted.proposal.target_T_source.matrix().cast<float>());
-
     OPEN_LMM_PLOT("loop_detector.intra_loops", intra_loops.size());
     OPEN_LMM_PLOT("loop_detector.inter_loops", inter_loops.size());
     return publish(LoopDetectorOutput{
@@ -515,7 +588,7 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
         .inter_loops = std::move(inter_loops),
         .agent_descriptors = std::make_shared<const DatabaseKdtree>(
             std::move(database_.value())),
-        .transformed_map_points = std::move(transformed_map_points),
+        .alignment_map = std::move(current_map),
         .accepted_global_T_agent = accepted.proposal.target_T_source,
         .accepted_alignment_method = accepted.proposal.method,
         .accepted_alignment_approval = accepted.approval,

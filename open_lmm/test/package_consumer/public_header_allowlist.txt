@@ -2,6 +2,7 @@ common/agent_context.hpp
 common/agent_data.hpp
 common/agent_id.hpp
 common/algorithm_execution_context.hpp
+common/algorithm_progress.hpp
 common/alignment_feedback.hpp
 common/alignment_types.hpp
 common/cancellation.hpp

@@ -68,6 +68,13 @@ open_lmm_ros::msg::ExecutionEvent ToRosEvent(const ExecutionEvent& event) {
   if (event.agent) result.agent = event.agent->Value();
   result.progress_current = event.progress_current;
   result.progress_total = event.progress_total;
+  result.has_algorithm_progress = event.algorithm_progress.has_value();
+  if (event.algorithm_progress) {
+    result.progress_phase =
+        static_cast<uint8_t>(event.algorithm_progress->phase);
+    result.progress_total_known = event.algorithm_progress->total.has_value();
+    result.progress_operation = event.algorithm_progress->operation;
+  }
   result.message = event.message;
   result.has_error = event.error.has_value();
   if (event.error) result.error = event.error->Message();

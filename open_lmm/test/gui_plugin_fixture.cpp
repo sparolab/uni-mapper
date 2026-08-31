@@ -48,7 +48,7 @@ constexpr const char* kCapability = "";
 #elif OPEN_LMM_GUI_PLUGIN_FIXTURE_MODE == 3
 constexpr const char* kCapability = nullptr;
 #else
-constexpr const char* kCapability = "gui:services-v2";
+constexpr const char* kCapability = "gui:services-v3";
 #endif
 
 const OpenLmmPluginApiV1 kApi{

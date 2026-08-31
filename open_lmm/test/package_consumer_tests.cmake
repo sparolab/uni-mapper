@@ -124,8 +124,8 @@ set(versioned_runtime_libraries
 find_program(OPEN_LMM_READELF readelf REQUIRED)
 foreach(library IN LISTS versioned_runtime_libraries)
   set(library_base "lib${library}.so")
-  set(library_major "${install_prefix}/lib/${library_base}.2")
-  set(library_full "${install_prefix}/lib/${library_base}.2.0.0")
+  set(library_major "${install_prefix}/lib/${library_base}.3")
+  set(library_full "${install_prefix}/lib/${library_base}.3.0.0")
   if(NOT EXISTS "${library_major}" OR NOT EXISTS "${library_full}")
     message(FATAL_ERROR
       "versioned runtime library is missing: ${library_base}")
@@ -135,7 +135,7 @@ foreach(library IN LISTS versioned_runtime_libraries)
     RESULT_VARIABLE readelf_result
     OUTPUT_VARIABLE dynamic_section)
   if(NOT readelf_result EQUAL 0 OR
-     NOT dynamic_section MATCHES "SONAME.*\\[${library_base}\\.2\\]")
+     NOT dynamic_section MATCHES "SONAME.*\\[${library_base}\\.3\\]")
     message(FATAL_ERROR
       "runtime library has an unexpected SONAME: ${library_full}")
   endif()
@@ -146,7 +146,7 @@ if(NOT EXISTS "${install_prefix}/lib/libopen_lmm_alignment.a")
 endif()
 
 foreach(plugin IN ITEMS create_scan_context create_free_dom)
-  if(NOT EXISTS "${install_prefix}/lib/lib${plugin}.so.2.0.0")
+  if(NOT EXISTS "${install_prefix}/lib/lib${plugin}.so.3.0.0")
     message(FATAL_ERROR "versioned plugin entry is missing: ${plugin}")
   endif()
 endforeach()

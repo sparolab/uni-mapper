@@ -20,9 +20,13 @@ namespace open_lmm {
 // configuration values are read from the command's immutable base snapshot.
 class StageCoordinator {
  public:
+  using DataLoadPreviewCallback =
+      std::function<void(uint64_t, const AgentId&, const AgentRawDataHandle&)>;
+
   StageCoordinator(RuntimeStateStore& runtime_states, OutputRepository& outputs,
                    std::shared_ptr<ResourceGovernor> governor,
-                   std::shared_ptr<const AlgorithmFactory> algorithms = {});
+                   std::shared_ptr<const AlgorithmFactory> algorithms = {},
+                   DataLoadPreviewCallback data_load_preview = {});
 
   Result<void> ExecuteStage(std::shared_ptr<const RuntimeState> base,
                             StageId stage,
@@ -64,6 +68,7 @@ class StageCoordinator {
   OutputRepository& outputs_;
   std::shared_ptr<ResourceGovernor> governor_;
   std::shared_ptr<const AlgorithmFactory> algorithms_;
+  DataLoadPreviewCallback data_load_preview_;
   DataLoadExecutor data_load_;
   AlignmentExecutor alignment_;
   OptimizeExecutor optimize_;

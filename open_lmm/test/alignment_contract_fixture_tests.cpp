@@ -2,6 +2,7 @@
 #include <open_lmm/core/alignment/loop_constraint_builder.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -257,12 +258,38 @@ void TestTransformDirectionOrdinalAndMultipleTargets() {
   }
 }
 
+void TestNoNeighborDiagnostics() {
+  const AgentId source = Id("A");
+  const AgentId target = Id("B");
+  const auto source_raw = Raw(source);
+  const auto target_raw = Raw(target);
+  AgentRawDataMap raw{{source, source_raw}, {target, target_raw}};
+  AgentOptimizedDataMap optimized{{target, Optimized(target)}};
+  StoredAlignment accepted{
+      Proposal(target, source, AlignmentMethod::kManual),
+      AlignmentApproval::kUser, 0};
+  accepted.proposal.target_T_source.translation().x() = 5.0;
+  LoopConstraintBuildDiagnostics diagnostics;
+  auto built = LoopConstraintBuilder().Build(
+      Context(source),
+      {accepted, AlignmentAcceptanceSource::kInteractive, *source_raw, raw,
+       optimized, 1.0, 10.0, &diagnostics});
+  Check(!built && diagnostics.search_completed &&
+            diagnostics.sampled_source_frames == 2 &&
+            diagnostics.target_frames == 3 &&
+            diagnostics.within_radius == 0 &&
+            std::abs(diagnostics.nearest_distance_m - 5.0) < 1.0e-6 &&
+            diagnostics.threshold_m == 1.0,
+        "empty manual NN search returns complete numeric diagnostics");
+}
+
 }  // namespace
 
 int main() {
   TestProposerBoundary();
   TestAllApprovalPathsShareConstraintBuilder();
   TestTransformDirectionOrdinalAndMultipleTargets();
+  TestNoNeighborDiagnostics();
   std::cout << "Alignment contract fixture tests passed\n";
   return EXIT_SUCCESS;
 }

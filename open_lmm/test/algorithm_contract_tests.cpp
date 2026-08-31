@@ -80,7 +80,7 @@ class Loader final : public DataLoaderBase {
   }
   Result<std::size_t> VisitRawScanData(
       const AlgorithmExecutionContext&, const fs::path&,
-      const RawScanVisitor&) override {
+      const RawScanVisitor&, AlgorithmProgressPhase) override {
     return Result<std::size_t>::Ok(0);
   }
 };

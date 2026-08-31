@@ -190,7 +190,8 @@ Result<void> RollBack(std::vector<Entry>& entries) {
 }
 }  // namespace
 
-Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
+Result<FileSetCommitOutcome> CommitFileSet(
+    const std::vector<FileReplacement>& replacements) {
   std::vector<Entry> entries;
   entries.reserve(replacements.size());
   std::set<fs::path> temporaries;
@@ -200,34 +201,35 @@ Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
     auto temporary_key = PathKey(temporary, "temporary");
     auto final_key = PathKey(final, "destination");
     if (!temporary_key)
-      return Result<void>::Failure(temporary_key.GetError());
-    if (!final_key) return Result<void>::Failure(final_key.GetError());
+      return Result<FileSetCommitOutcome>::Failure(temporary_key.GetError());
+    if (!final_key)
+      return Result<FileSetCommitOutcome>::Failure(final_key.GetError());
     const fs::path backup = final_key.Value().string() + ".open_lmm_backup";
     if (!temporaries.insert(temporary_key.Value()).second) {
-      return Result<void>::Failure(
+      return Result<FileSetCommitOutcome>::Failure(
           Error::InvalidArgument("duplicate temporary file in transaction: " +
                                  temporary_key.Value().string()));
     }
     if (!destinations.insert(final_key.Value()).second) {
-      return Result<void>::Failure(Error::InvalidArgument(
+      return Result<FileSetCommitOutcome>::Failure(Error::InvalidArgument(
           "duplicate destination file in transaction: " +
           final_key.Value().string()));
     }
     if (!backups.insert(backup).second) {
-      return Result<void>::Failure(Error::InvalidArgument(
+      return Result<FileSetCommitOutcome>::Failure(Error::InvalidArgument(
           "duplicate backup file in transaction: " + backup.string()));
     }
   }
   for (const auto& path : temporaries) {
     if (destinations.contains(path) || backups.contains(path)) {
-      return Result<void>::Failure(Error::InvalidArgument(
+      return Result<FileSetCommitOutcome>::Failure(Error::InvalidArgument(
           "temporary file aliases a transaction destination or backup: " +
           path.string()));
     }
   }
   for (const auto& path : destinations) {
     if (backups.contains(path)) {
-      return Result<void>::Failure(Error::InvalidArgument(
+      return Result<FileSetCommitOutcome>::Failure(Error::InvalidArgument(
           "destination file aliases a transaction backup: " + path.string()));
     }
   }
@@ -236,27 +238,28 @@ Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
     std::error_code error;
     const bool temporary_is_regular = fs::is_regular_file(temporary, error);
     if (error) {
-      return Result<void>::Failure(Error::IoError(
+      return Result<FileSetCommitOutcome>::Failure(Error::IoError(
           "failed to inspect temporary file " + temporary.string() + ": " +
           error.message()));
     }
     if (!temporary_is_regular) {
-      return Result<void>::Failure(Error::FileNotFound(temporary.string()));
+      return Result<FileSetCommitOutcome>::Failure(
+          Error::FileNotFound(temporary.string()));
     }
     Entry entry{temporary, final, final.string() + ".open_lmm_backup"};
     const bool backup_exists = fs::exists(entry.backup, error);
     if (error) {
-      return Result<void>::Failure(Error::IoError(
+      return Result<FileSetCommitOutcome>::Failure(Error::IoError(
           "failed to inspect file backup " + entry.backup.string() + ": " +
           error.message()));
     }
     if (backup_exists) {
-      return Result<void>::Failure(Error::IoError(
+      return Result<FileSetCommitOutcome>::Failure(Error::IoError(
           "stale file backup blocks commit: " + entry.backup.string()));
     }
     entry.had_original = fs::exists(final, error);
     if (error) {
-      return Result<void>::Failure(Error::IoError(
+      return Result<FileSetCommitOutcome>::Failure(Error::IoError(
           "failed to inspect destination " + final.string() + ": " +
           error.message()));
     }
@@ -269,8 +272,9 @@ Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
     fs::rename(entry.final, entry.backup, error);
     if (error) {
       auto rollback = RollBack(entries);
-      if (!rollback) return rollback;
-      return Result<void>::Failure(Error::IoError(
+      if (!rollback)
+        return Result<FileSetCommitOutcome>::Failure(rollback.GetError());
+      return Result<FileSetCommitOutcome>::Failure(Error::IoError(
           "failed to preserve existing file: " + error.message()));
     }
   }
@@ -279,8 +283,9 @@ Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
     fs::rename(entry.temporary, entry.final, error);
     if (error) {
       auto rollback = RollBack(entries);
-      if (!rollback) return rollback;
-      return Result<void>::Failure(Error::IoError(
+      if (!rollback)
+        return Result<FileSetCommitOutcome>::Failure(rollback.GetError());
+      return Result<FileSetCommitOutcome>::Failure(Error::IoError(
           "failed to commit file set: " + error.message()));
     }
     entry.installed = true;
@@ -308,8 +313,9 @@ Result<void> CommitFileSet(const std::vector<FileReplacement>& replacements) {
     // backups; a later transaction remains blocked until they are reconciled.
     const Error recovery = RecoveryRequired(cleanup_failures.str(), entries);
     LogError("[file_transaction/recovery_required] " + recovery.Message());
+    return Result<FileSetCommitOutcome>::Ok({recovery});
   }
-  return Result<void>::Ok();
+  return Result<FileSetCommitOutcome>::Ok({});
 }
 
 }  // namespace open_lmm

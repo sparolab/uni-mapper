@@ -2,8 +2,6 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
-#include <tqdmcpp/tqdmcpp.hpp>
-
 #include <open_lmm/common/pointcloud_utils.hpp>
 #include <open_lmm/core/algorithm_invariants.hpp>
 #include <open_lmm/utils/logging.hpp>
@@ -25,8 +23,10 @@ Result<DynamicRemoverBase::PointCloud::Ptr> DynamicRemoverOnline::Process(
     return Result<PointCloud::Ptr>::Failure(cancellation.GetError());
   }
   try {
-    auto output = ProcessImpl(std::move(input.scans),
-                              std::move(input.optimized_poses));
+    auto processed = ProcessImpl(context, std::move(input.scans),
+                                 std::move(input.optimized_poses));
+    if (!processed) return processed;
+    auto output = std::move(processed).Value();
     if (!output) {
       return Result<PointCloud::Ptr>::Failure(WithAlgorithmContext(
           Error::InvalidArgument("dynamic remover returned a null point cloud"),
@@ -48,41 +48,127 @@ Result<DynamicRemoverBase::PointCloud::Ptr> DynamicRemoverOnline::Process(
   }
 }
 
-pcl::PointCloud<pcl::PointXYZI>::Ptr DynamicRemoverOnline::ProcessImpl(
+Result<DynamicRemoverBase::PointCloud::Ptr>
+DynamicRemoverOnline::ProcessImpl(
+    const AlgorithmExecutionContext& context,
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
     std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses) {
   auto ordered_result = OrderOptimizedPosesByFrameId(
       optimized_poses, scans.size(), "online dynamic remover");
   if (!ordered_result) {
-    throw std::invalid_argument(ordered_result.GetError().Message());
+    return Result<PointCloud::Ptr>::Failure(ordered_result.GetError());
   }
   PoseVec ordered_poses = std::move(ordered_result).Value();
   for (std::size_t index = 0; index < scans.size(); ++index) {
     auto valid = ValidatePointCloud(
         scans[index], "online dynamic remover scan " + std::to_string(index));
-    if (!valid) throw std::invalid_argument(valid.GetError().Message());
+    if (!valid) return Result<PointCloud::Ptr>::Failure(valid.GetError());
   }
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_scan(
       new pcl::PointCloud<pcl::PointXYZI>);
 
-  auto T = tq::tqdm(scans);
-  T.set_prefix("Dynamic Remover");
-  int idx = 0;
-  for (auto scan : T) {
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunRemover, 0,
+                          scans.size());
+  for (std::size_t idx = 0; idx < scans.size(); ++idx) {
+    auto active = CheckAlgorithmCancellation(
+        context, "while running online dynamic remover");
+    if (!active) return Result<PointCloud::Ptr>::Failure(active.GetError());
     static_scan = online_model_->run(scans[idx], ordered_poses[idx]);
-    idx++;
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunRemover,
+                            idx + 1, scans.size());
   }
-  T.finish();
 
   LogInfo("[dynamic_remover] building static map from " +
           std::to_string(scans.size()) + " scans");
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildStaticMap,
+                          0);
   pcl::PointCloud<pcl::PointXYZI>::Ptr static_map =
       online_model_->getStaticMap();
 
   // TODO(gil) : hardcoded voxel leaf size
   static_map = downsampleWithRangeFilter(static_map, 0.2F, 0.0F, 0.0F, false);
 
-  return static_map;
+  return Result<PointCloud::Ptr>::Ok(std::move(static_map));
+}
+
+Result<DynamicRemoverBase::PointCloud::Ptr>
+DynamicRemoverOnline::ProcessStreaming(
+    const AlgorithmExecutionContext& context,
+    const DynamicRemoverStreamingInput& input) {
+  AlgorithmExecutionTimer timer(context);
+  auto active =
+      CheckAlgorithmCancellation(context, "before online map removal");
+  if (!active) return Result<PointCloud::Ptr>::Failure(active.GetError());
+  try {
+    auto ordered = OrderOptimizedPosesByFrameId(
+        input.optimized_poses, input.optimized_poses.size(),
+        "online streaming dynamic remover");
+    if (!ordered) {
+      return Result<PointCloud::Ptr>::Failure(
+          WithAlgorithmContext(ordered.GetError(), context));
+    }
+    PoseVec poses = std::move(ordered).Value();
+    std::size_t visited = 0;
+    auto loaded = input.source(
+        [&](std::size_t index, const PointCloud::Ptr& source_scan) {
+          auto current = CheckAlgorithmCancellation(
+              context, "while streaming online map-removal input");
+          if (!current) return current;
+          if (index != visited) {
+            return Result<void>::Failure(Error::InvalidArgument(
+                "online dynamic remover source expected frame " +
+                std::to_string(visited) + ", got " +
+                std::to_string(index)));
+          }
+          if (index >= poses.size()) {
+            return Result<void>::Failure(Error::InvalidArgument(
+                "online dynamic remover source has more scans than poses"));
+          }
+          auto valid = ValidatePointCloud(
+              source_scan, "online dynamic remover source frame " +
+                               std::to_string(index));
+          if (!valid) return valid;
+          PointCloud::Ptr scan = source_scan;
+          Eigen::Isometry3d pose = poses[index];
+          (void)online_model_->run(scan, pose);
+          ++visited;
+          return Result<void>::Ok();
+        });
+    if (!loaded) {
+      return Result<PointCloud::Ptr>::Failure(
+          WithAlgorithmContext(loaded.GetError(), context));
+    }
+    if (loaded.Value() != visited || visited != poses.size()) {
+      return Result<PointCloud::Ptr>::Failure(WithAlgorithmContext(
+          Error::InvalidArgument(
+              "online dynamic remover scan/pose count mismatch: " +
+              std::to_string(visited) + " scans, " +
+              std::to_string(poses.size()) + " poses"),
+          context));
+    }
+    ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildStaticMap,
+                            0);
+    auto static_map = online_model_->getStaticMap();
+    auto valid = ValidatePointCloud(static_map, "online remover output");
+    if (!valid) {
+      return Result<PointCloud::Ptr>::Failure(
+          WithAlgorithmContext(valid.GetError(), context));
+    }
+    static_map = downsampleWithRangeFilter(
+        static_map, 0.2F, 0.0F, 0.0F, false);
+    return Result<PointCloud::Ptr>::Ok(std::move(static_map));
+  } catch (const std::exception& error) {
+    return Result<PointCloud::Ptr>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument(
+            std::string("online dynamic remover streaming exception: ") +
+            error.what()),
+        context));
+  } catch (...) {
+    return Result<PointCloud::Ptr>::Failure(WithAlgorithmContext(
+        Error::InvalidArgument(
+            "unknown online dynamic remover streaming exception"),
+        context));
+  }
 }
 
 Result<std::shared_ptr<IOnlineRemoverPlugin>> DynamicRemoverOnline::loadModule(

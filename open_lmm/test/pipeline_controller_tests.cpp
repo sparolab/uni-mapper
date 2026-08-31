@@ -7,7 +7,9 @@
 #include <future>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <mutex>
+#include <stdexcept>
 #include <vector>
 #include <thread>
 
@@ -42,6 +44,29 @@ class FakeRunner final : public test::RuntimePortFixture {
                               const ExecutionContext& context) override {
     cancellation = context.cancellation;
     alignment_feedback = context.alignment_feedback;
+    if (emit_algorithm_progress && context.progress) {
+      context.progress(AlgorithmProgress{
+          Id("A"), "fixture.progress", AlgorithmProgressPhase::kReadAndFilter,
+          1, 2});
+    }
+    if (emit_parallel_progress && context.progress) {
+      std::thread first([&] {
+        for (uint64_t current = 0; current <= 3; ++current) {
+          context.progress(AlgorithmProgress{
+              Id("A"), "fixture.parallel",
+              AlgorithmProgressPhase::kReadAndFilter, current, 3});
+        }
+      });
+      std::thread second([&] {
+        for (uint64_t current = 0; current <= 3; ++current) {
+          context.progress(AlgorithmProgress{
+              Id("B"), "fixture.parallel",
+              AlgorithmProgressPhase::kReadAndFilter, current, 3});
+        }
+      });
+      first.join();
+      second.join();
+    }
     switch (command.kind) {
       case ExecutionCommandKind::kStage:
         return RunStage(*command.stage);
@@ -106,14 +131,25 @@ class FakeRunner final : public test::RuntimePortFixture {
       input.feedback_timeout = alignment_timeout;
       input.target_agent = Id("A");
       input.source_agent = Id("B");
-      input.kiss_proposer = [] {
+      input.kiss_proposer = [this] {
+        if (coordinate_kiss_fatal) {
+          return Result<AlignmentProposalAttempt>::Failure(
+              Error::PluginLoadFailed("fixture KISS plugin failure")
+                  .WithExecution("alignment", "kiss", Id("B")));
+        }
+        if (coordinate_kiss_failure) {
+          return Result<AlignmentProposalAttempt>::Ok(
+              {.proposal = std::nullopt,
+               .failure = AlignmentAttemptFailure::kInsufficientInliers,
+               .message = "fixture KISS insufficient inliers"});
+        }
         MapAlignmentProposal proposal;
         proposal.target_agent = Id("A");
         proposal.source_agent = Id("B");
         proposal.method = AlignmentMethod::kKissMatcher;
         proposal.target_T_source.translation().x() = 1;
-        return Result<std::optional<MapAlignmentProposal>>::Ok(
-            std::optional<MapAlignmentProposal>(std::move(proposal)));
+        return Result<AlignmentProposalAttempt>::Ok(
+            {.proposal = std::move(proposal)});
       };
       input.descriptor_proposer = [] {
         MapAlignmentProposal proposal;
@@ -121,8 +157,8 @@ class FakeRunner final : public test::RuntimePortFixture {
         proposal.source_agent = Id("B");
         proposal.method = AlignmentMethod::kDescriptor;
         proposal.target_T_source.translation().x() = 2;
-        return Result<std::optional<MapAlignmentProposal>>::Ok(
-            std::optional<MapAlignmentProposal>(std::move(proposal)));
+        return Result<AlignmentProposalAttempt>::Ok(
+            {.proposal = std::move(proposal)});
       };
       auto coordinated = MapAlignmentCoordinator().Align(input);
       if (!coordinated) {
@@ -200,12 +236,16 @@ class FakeRunner final : public test::RuntimePortFixture {
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
   bool request_alignment_feedback = false;
   bool coordinate_alignment = false;
+  bool coordinate_kiss_failure = false;
+  bool coordinate_kiss_fatal = false;
   std::chrono::milliseconds alignment_timeout{};
   std::optional<MapAlignmentProposal> coordinated_alignment;
   bool hold_mutex_during_feedback = false;
   std::atomic<bool> feedback_mutex_held{false};
   std::atomic<bool> allow_feedback_notification{false};
   std::function<void()> on_agent_ids;
+  bool emit_algorithm_progress = false;
+  bool emit_parallel_progress = false;
 };
 
 class ManagedSessionRunner final : public test::RuntimePortFixture {
@@ -268,6 +308,54 @@ void TestRunAllAndArtifacts() {
         "map alignment artifact ready");
   Check(StateOf(snapshot, ArtifactType::kPoseFile, Id("B")) == ArtifactState::kReady,
         "pose artifact ready");
+}
+
+void TestAlgorithmProgressEventBridge() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->emit_algorithm_progress = true;
+  PipelineController controller(runner);
+  std::vector<ExecutionEvent> observed;
+  auto throwing = controller.SubscribeEvents([](const ExecutionEvent& event) {
+    if (event.algorithm_progress) throw std::runtime_error("observer fault");
+  });
+  auto recording = controller.SubscribeEvents(
+      [&](const ExecutionEvent& event) {
+        if (event.algorithm_progress) observed.push_back(event);
+      });
+  auto job = controller.SubmitStage(StageId::kDataLoad);
+  Check(job && controller.Wait(job.Value()),
+        "progress observer failures must not affect execution");
+  Check(controller.WaitForEventCallbacks().IsOk(),
+        "progress callbacks must drain");
+  Check(observed.size() == 1,
+        "controller must bridge each typed algorithm progress update");
+  const auto& event = observed.front();
+  Check(event.stage == StageId::kDataLoad && event.agent == Id("A") &&
+            event.progress_current == 1 && event.progress_total == 2 &&
+            event.algorithm_progress->phase ==
+                AlgorithmProgressPhase::kReadAndFilter,
+        "progress bridge must preserve stage, agent, phase, and exact N/N");
+}
+
+void TestParallelAgentProgressStreamsRemainMonotonic() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->emit_parallel_progress = true;
+  PipelineController controller(runner);
+  std::map<AgentId, std::vector<uint64_t>> observed;
+  auto subscription = controller.SubscribeEvents(
+      [&](const ExecutionEvent& event) {
+        if (event.algorithm_progress && event.agent) {
+          observed[*event.agent].push_back(event.algorithm_progress->current);
+        }
+      });
+  auto job = controller.SubmitStage(StageId::kDataLoad);
+  Check(job && controller.Wait(job.Value()) &&
+            controller.WaitForEventCallbacks(),
+        "parallel progress fixture must complete");
+  for (const AgentId& agent : {Id("A"), Id("B")}) {
+    Check(observed[agent] == std::vector<uint64_t>({0, 1, 2, 3}),
+          "parallel agent progress must remain monotonic per stream");
+  }
 }
 
 void TestMalformedExecutionReceiptsCannotPublishSuccess() {
@@ -761,7 +849,8 @@ void TestAlignmentFeedbackAcceptAndStaleResponse() {
             JobState::kWaitingForAlignmentFeedback,
         "job waits for alignment feedback");
   AlignmentResponse response{request->proposal.request_id,
-                             AlignmentDecision::kAccept, std::nullopt};
+                             AlignmentDecision::kAccept, std::nullopt,
+                             request->session_revision};
   Check(controller.RespondToAlignment(job.Value(), response).IsOk(),
         "alignment response accepted");
   Check(controller.Wait(job.Value()).IsOk(), "alignment resumes after feedback");
@@ -789,7 +878,7 @@ void TestAlignmentFeedbackCanRespondFromRequestCallback() {
             controller.RespondToAlignment(
                 event.job_id,
                 {request->proposal.request_id, AlignmentDecision::kAccept,
-                 std::nullopt}).IsOk();
+                 std::nullopt, request->session_revision}).IsOk();
       });
 
   const auto job = controller.SubmitStage(StageId::kAlignment);
@@ -820,6 +909,16 @@ void TestAlignmentFeedbackCancellation() {
   Check(!controller.Wait(job.Value()), "cancelled feedback job fails wait");
   Check(controller.Snapshot().job->state == JobState::kCancelled,
         "feedback cancellation reaches cancelled state");
+  const auto terminal = controller.GetAlignmentFeedbackSnapshot();
+  Check(terminal &&
+            terminal->review_state == AlignmentReviewState::kCancelled &&
+            !terminal->terminal_message.empty(),
+        "feedback cancellation preserves a terminal read-only review");
+  Check(!controller.RespondToAlignment(
+            job.Value(), {terminal->proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt,
+                          terminal->session_revision}),
+        "cancelled terminal review rejects controller responses");
 }
 
 void TestSnapshotDoesNotInvokeRunnerWhileControllerLocked() {
@@ -873,7 +972,8 @@ void TestSnapshotDuringFeedbackNotificationDoesNotDeadlock() {
   Check(request.has_value(), "feedback notification completes after Snapshot");
   Check(controller.RespondToAlignment(
             job.Value(), {request->proposal.request_id,
-                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+                          AlignmentDecision::kAccept, std::nullopt,
+                          request->session_revision}).IsOk(),
         "feedback response accepted after concurrent Snapshot");
   Check(controller.Wait(job.Value()).IsOk(),
         "feedback job completes without lock inversion");
@@ -990,14 +1090,18 @@ void TestControllerCoordinatorFullFallbackIntegration() {
     std::this_thread::yield();
   }
   const uint64_t kiss_request = request->proposal.request_id;
+  const uint64_t kiss_revision = request->session_revision;
   Check(controller.RespondToAlignment(
             job.Value(), {kiss_request, AlignmentDecision::kTryDescriptor,
-                          std::nullopt}).IsOk(),
+                          std::nullopt, kiss_revision}).IsOk(),
         "integration rejects KISS");
   do {
     request = controller.GetAlignmentFeedbackSnapshot();
     std::this_thread::yield();
-  } while (!request || request->proposal.request_id == kiss_request);
+  } while (!request || request->session_revision == kiss_revision ||
+           request->proposal.method != AlignmentMethod::kDescriptor);
+  Check(request->proposal.request_id == kiss_request,
+        "integration keeps one review session");
   Check(request->proposal.method == AlignmentMethod::kDescriptor,
         "integration reaches Descriptor");
 
@@ -1005,7 +1109,8 @@ void TestControllerCoordinatorFullFallbackIntegration() {
   invalid.linear()(0, 0) = 2;
   Check(!controller.RespondToAlignment(
             job.Value(), {request->proposal.request_id,
-                          AlignmentDecision::kManual, invalid}),
+                          AlignmentDecision::kManual, invalid,
+                          request->session_revision}),
         "integration rejects invalid Manual transform");
   Check(controller.Snapshot().job->state ==
             JobState::kWaitingForAlignmentFeedback,
@@ -1015,13 +1120,64 @@ void TestControllerCoordinatorFullFallbackIntegration() {
   manual.translation().z() = 9;
   Check(controller.RespondToAlignment(
             job.Value(), {request->proposal.request_id,
-                          AlignmentDecision::kManual, manual}).IsOk(),
+                          AlignmentDecision::kManual, manual,
+                          request->session_revision}).IsOk(),
         "integration accepts valid Manual transform");
   Check(controller.Wait(job.Value()).IsOk(), "integration job completes");
   Check(runner->coordinated_alignment &&
             runner->coordinated_alignment->method == AlignmentMethod::kManual &&
             runner->coordinated_alignment->target_T_source.translation().z() == 9,
         "integration preserves Manual result");
+}
+
+void TestControllerKeepsWaitingAfterRecoverableAttempt() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->coordinate_alignment = true;
+  runner->coordinate_kiss_failure = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "recoverable coordinator integration submitted");
+
+  std::optional<AlignmentFeedbackSnapshot> request;
+  while (!(request = controller.GetAlignmentFeedbackSnapshot())) {
+    std::this_thread::yield();
+  }
+  const auto session_id = request->proposal.request_id;
+  const auto initial_revision = request->session_revision;
+  Check(controller.RespondToAlignment(
+            job.Value(), {session_id, AlignmentDecision::kTryKissMatcher,
+                          std::nullopt, initial_revision}).IsOk(),
+        "recoverable integration requests KISS");
+  do {
+    request = controller.GetAlignmentFeedbackSnapshot();
+    std::this_thread::yield();
+  } while (!request || request->session_revision == initial_revision ||
+           request->attempt_status.state !=
+               AlignmentAttemptState::kFailedRecoverable);
+  Check(request->proposal.request_id == session_id &&
+            request->attempt_status.reason ==
+                AlignmentAttemptFailure::kInsufficientInliers &&
+            controller.Snapshot().job->state ==
+                JobState::kWaitingForAlignmentFeedback,
+        "recoverable KISS failure keeps the job waiting in the same session");
+
+  const auto failed_revision = request->session_revision;
+  Check(controller.RespondToAlignment(
+            job.Value(), {session_id, AlignmentDecision::kTryDescriptor,
+                          std::nullopt, failed_revision}).IsOk(),
+        "recoverable integration retries Descriptor");
+  do {
+    request = controller.GetAlignmentFeedbackSnapshot();
+    std::this_thread::yield();
+  } while (!request || request->session_revision == failed_revision ||
+           request->proposal.method != AlignmentMethod::kDescriptor);
+  Check(controller.RespondToAlignment(
+            job.Value(), {session_id, AlignmentDecision::kAccept,
+                          std::nullopt, request->session_revision}).IsOk(),
+        "recoverable integration accepts Descriptor");
+  Check(controller.Wait(job.Value()).IsOk(),
+        "recoverable integration completes without rerunning the pipeline");
 }
 
 void TestControllerCoordinatorTimeoutIntegration() {
@@ -1035,14 +1191,53 @@ void TestControllerCoordinatorTimeoutIntegration() {
   Check(!controller.Wait(job.Value()), "timeout integration fails job");
   Check(controller.Snapshot().job->state == JobState::kFailed,
         "timeout integration reaches failed state");
-  Check(!controller.GetAlignmentFeedbackSnapshot(),
-        "timeout integration clears feedback request");
+  const auto terminal = controller.GetAlignmentFeedbackSnapshot();
+  Check(terminal && terminal->review_state == AlignmentReviewState::kFailed &&
+            terminal->terminal_message.find("timed out") != std::string::npos,
+        "timeout integration preserves terminal feedback diagnostics");
+  Check(!controller.RespondToAlignment(
+            job.Value(), {terminal->proposal.request_id,
+                          AlignmentDecision::kAccept, std::nullopt,
+                          terminal->session_revision}),
+        "timeout terminal review rejects controller responses");
+}
+
+void TestControllerCoordinatorFatalProposerIntegration() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->coordinate_alignment = true;
+  runner->coordinate_kiss_fatal = true;
+  PipelineController controller(runner);
+  controller.SetAlignmentFeedbackEnabled(true);
+  const auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job.IsOk(), "fatal proposer integration submitted");
+  std::optional<AlignmentFeedbackSnapshot> request;
+  while (!(request = controller.GetAlignmentFeedbackSnapshot())) {
+    std::this_thread::yield();
+  }
+  Check(controller.RespondToAlignment(
+            job.Value(), {request->proposal.request_id,
+                          AlignmentDecision::kTryKissMatcher, std::nullopt,
+                          request->session_revision}).IsOk(),
+        "fatal proposer integration starts KISS");
+  Check(!controller.Wait(job.Value()), "fatal proposer fails the job");
+  const auto terminal = controller.GetAlignmentFeedbackSnapshot();
+  Check(terminal && terminal->review_state == AlignmentReviewState::kFailed &&
+            terminal->terminal_message.find("fixture KISS plugin failure") !=
+                std::string::npos,
+        "fatal proposer leaves its last review diagnostic visible");
+  Check(!controller.RespondToAlignment(
+            job.Value(), {terminal->proposal.request_id,
+                          AlignmentDecision::kCancel, std::nullopt,
+                          terminal->session_revision}),
+        "fatal proposer terminal review rejects cancellation input");
 }
 
 }  // namespace
 
 int main() {
   TestRunAllAndArtifacts();
+  TestAlgorithmProgressEventBridge();
+  TestParallelAgentProgressStreamsRemainMonotonic();
   TestMalformedExecutionReceiptsCannotPublishSuccess();
   TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession();
   TestMalformedConfigCandidateReceiptsPoisonCommittedSession();
@@ -1066,7 +1261,9 @@ int main() {
   TestTerminalCommitPrecedesWaitAndReentrantCallback();
   TestTerminalCallbackRejectsWorkerLifecycleCommands();
   TestControllerCoordinatorFullFallbackIntegration();
+  TestControllerKeepsWaitingAfterRecoverableAttempt();
   TestControllerCoordinatorTimeoutIntegration();
+  TestControllerCoordinatorFatalProposerIntegration();
   std::cout << "pipeline controller tests passed\n";
   return 0;
 }

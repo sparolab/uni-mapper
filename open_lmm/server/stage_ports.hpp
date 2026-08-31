@@ -1,6 +1,7 @@
 #pragma once
 
 #include <open_lmm/common/alignment_feedback.hpp>
+#include <open_lmm/common/algorithm_progress.hpp>
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/visualization_snapshot.hpp>
@@ -66,6 +67,7 @@ struct ExecutionContext {
   std::shared_ptr<CancellationToken> cancellation;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback;
   uint64_t base_revision = 0;
+  AlgorithmProgressCallback progress;
 };
 
 struct ExecutionReceipt {
@@ -96,7 +98,7 @@ class RuntimeQueryPort {
   virtual ~RuntimeQueryPort() = default;
   [[nodiscard]] virtual CommittedRuntimeSnapshot Snapshot() const = 0;
   [[nodiscard]] virtual Result<VisualizationSnapshot> Visualization(
-      const AgentId& agent) const = 0;
+      const VisualizationQuery& query) const = 0;
 };
 
 class StageRuntimePort : public StageCommandPort, public RuntimeQueryPort {

@@ -3,6 +3,16 @@
 #include <algorithm>
 
 namespace open_lmm {
+namespace {
+
+void ClearProgress(GuiStageView& stage) {
+  stage.progress_current = 0;
+  stage.progress_total = 0;
+  stage.agent_progress.clear();
+  stage.latest_progress_agent.reset();
+}
+
+}  // namespace
 
 GuiModel::GuiModel() {
   for (StageId stage : {StageId::kDataLoad, StageId::kAlignment,
@@ -76,6 +86,10 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
     case EventType::kJobCancelled:
       job_->state = JobState::kCancelled;
       job_->active_stage.reset();
+      for (auto& [stage_id, stage] : stages_) {
+        (void)stage_id;
+        ClearProgress(stage);
+      }
       break;
     case EventType::kJobCompleted:
       job_->state = event.message.empty() ? JobState::kSucceeded
@@ -90,10 +104,18 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
         auto& stage = stages_[*event.stage];
         stage.progress_current = event.progress_current;
         stage.progress_total = event.progress_total;
+        if (event.algorithm_progress && event.agent) {
+          stage.agent_progress[*event.agent] = *event.algorithm_progress;
+          stage.latest_progress_agent = *event.agent;
+        }
       }
       break;
     case EventType::kStageCompleted:
-      if (event.stage) stages_[*event.stage].state = GuiStageState::kSucceeded;
+      if (event.stage) {
+        auto& stage = stages_[*event.stage];
+        stage.state = GuiStageState::kSucceeded;
+        ClearProgress(stage);
+      }
       break;
     case EventType::kStageFailed:
     case EventType::kNodeFailed:
@@ -101,6 +123,7 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
         auto& stage = stages_[*event.stage];
         stage.state = GuiStageState::kFailed;
         stage.message = event.error ? event.error->Message() : event.message;
+        ClearProgress(stage);
       }
       break;
     case EventType::kArtifactCommitted:

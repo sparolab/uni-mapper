@@ -15,59 +15,90 @@
 
 namespace open_lmm {
 
+using AlignmentReviewSessionId = uint64_t;
+
 class AlignmentFeedbackBroker {
  public:
   using Notification = std::function<void(const AlignmentFeedbackSnapshot&)>;
 
-  Result<AlignmentResponse> Request(
-      AlignmentFeedbackSnapshot snapshot,
-      const std::shared_ptr<CancellationToken>& cancellation,
-      std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
+  Result<AlignmentReviewSessionId> Begin(AlignmentFeedbackSnapshot snapshot) {
+    Notification notification;
+    AlignmentFeedbackSnapshot published;
+    AlignmentReviewSessionId session_id = 0;
+    {
+      std::lock_guard lock(mutex_);
+      if (active_) {
+        return Result<AlignmentReviewSessionId>::Failure(
+            Error::InvalidArgument("another alignment review is active"));
+      }
+      session_id = next_session_id_++;
+      snapshot.proposal.request_id = session_id;
+      snapshot.session_revision = 1;
+      snapshot.review_state = AlignmentReviewState::kActive;
+      snapshot.terminal_message.clear();
+      terminal_.reset();
+      active_ = std::move(snapshot);
+      response_.reset();
+      accepting_response_ = true;
+      published = *active_;
+      notification = notification_;
+    }
+    auto notified = Notify(notification, published);
+    if (!notified) {
+      ClearSession(session_id);
+      return Result<AlignmentReviewSessionId>::Failure(notified.GetError());
+    }
+    return Result<AlignmentReviewSessionId>::Ok(session_id);
+  }
+
+  Result<void> Update(AlignmentReviewSessionId session_id,
+                      AlignmentFeedbackSnapshot snapshot) {
     Notification notification;
     AlignmentFeedbackSnapshot published;
     {
       std::lock_guard lock(mutex_);
-      if (active_) {
-        return Result<AlignmentResponse>::Failure(
-            Error::InvalidArgument("another alignment request is active"));
+      if (!active_ || active_->proposal.request_id != session_id) {
+        return Result<void>::Failure(
+            Error::InvalidArgument("stale or unknown alignment review"));
       }
-      snapshot.proposal.request_id = next_request_id_++;
+      snapshot.proposal.request_id = session_id;
+      snapshot.session_revision = active_->session_revision + 1;
+      snapshot.review_state = AlignmentReviewState::kActive;
+      snapshot.terminal_message.clear();
       active_ = std::move(snapshot);
-      // Publish the request before notifying observers. Notifications are
-      // synchronous and may immediately inspect or answer the request.
-      active_published_ = true;
+      accepting_response_ = !response_ &&
+          active_->attempt_status.state != AlignmentAttemptState::kRunning;
       published = *active_;
-      response_.reset();
       notification = notification_;
     }
-    try {
-      if (notification) notification(published);
-    } catch (const std::exception& error) {
-      ClearRequest(published.proposal.request_id);
-      return Result<AlignmentResponse>::Failure(Error::InvalidArgument(
-          std::string("alignment feedback notification failed: ") +
-          error.what()));
-    } catch (...) {
-      ClearRequest(published.proposal.request_id);
-      return Result<AlignmentResponse>::Failure(Error::InvalidArgument(
-          "alignment feedback notification failed: unknown exception"));
+    auto notified = Notify(notification, published);
+    if (!notified) {
+      ClearSession(session_id);
+      return notified;
     }
+    return Result<void>::Ok();
+  }
 
+  Result<AlignmentResponse> WaitDecision(
+      AlignmentReviewSessionId session_id,
+      const std::shared_ptr<CancellationToken>& cancellation,
+      std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
     std::unique_lock lock(mutex_);
     const auto deadline = timeout.count() > 0
                               ? std::chrono::steady_clock::now() + timeout
                               : std::chrono::steady_clock::time_point::max();
     while (!response_) {
+      if (!active_ || active_->proposal.request_id != session_id) {
+        return Result<AlignmentResponse>::Failure(
+            Error::Cancelled("alignment review ended while waiting"));
+      }
       if (cancellation && cancellation->IsCancellationRequested()) {
-        active_.reset();
-        active_published_ = false;
-        condition_.notify_all();
+        accepting_response_ = false;
         return Result<AlignmentResponse>::Failure(
             Error::Cancelled("alignment feedback cancelled"));
       }
       if (std::chrono::steady_clock::now() >= deadline) {
-        active_.reset();
-        active_published_ = false;
+        accepting_response_ = false;
         return Result<AlignmentResponse>::Failure(
             Error::InvalidArgument("alignment feedback timed out"));
       }
@@ -75,22 +106,95 @@ class AlignmentFeedbackBroker {
     }
     AlignmentResponse response = std::move(*response_);
     response_.reset();
-    active_.reset();
-    active_published_ = false;
+    accepting_response_ = false;
+    if (response.request_id != session_id) {
+      return Result<AlignmentResponse>::Failure(
+          Error::InvalidArgument("alignment response session mismatch"));
+    }
     return Result<AlignmentResponse>::Ok(std::move(response));
+  }
+
+  Result<void> End(AlignmentReviewSessionId session_id,
+                   std::optional<Error> terminal_error = std::nullopt) {
+    Notification notification;
+    std::optional<AlignmentFeedbackSnapshot> published;
+    {
+      std::lock_guard lock(mutex_);
+      if (!active_) {
+        if (terminal_ && terminal_->proposal.request_id == session_id) {
+          return Result<void>::Ok();
+        }
+        return Result<void>::Ok();
+      }
+      if (active_->proposal.request_id != session_id) {
+        return Result<void>::Failure(
+            Error::InvalidArgument("stale or unknown alignment review"));
+      }
+      if (terminal_error) {
+        active_->review_state =
+            terminal_error->code == Error::Code::kCancelled
+                ? AlignmentReviewState::kCancelled
+                : AlignmentReviewState::kFailed;
+        active_->terminal_message = terminal_error->Message();
+        ++active_->session_revision;
+        terminal_ = *active_;
+        published = terminal_;
+        notification = notification_;
+      }
+      response_.reset();
+      accepting_response_ = false;
+      active_.reset();
+      condition_.notify_all();
+    }
+    if (published) {
+      auto notified = Notify(notification, *published);
+      if (!notified) return notified;
+    }
+    return Result<void>::Ok();
+  }
+
+  // Compatibility adapter for callers that need a single request/response.
+  Result<AlignmentResponse> Request(
+      AlignmentFeedbackSnapshot snapshot,
+      const std::shared_ptr<CancellationToken>& cancellation,
+      std::chrono::milliseconds timeout = std::chrono::milliseconds::zero()) {
+    auto begun = Begin(std::move(snapshot));
+    if (!begun) {
+      return Result<AlignmentResponse>::Failure(begun.GetError());
+    }
+    const auto session_id = begun.Value();
+    auto response = WaitDecision(session_id, cancellation, timeout);
+    if (response && response.Value().decision == AlignmentDecision::kCancel) {
+      (void)End(session_id,
+                Error::Cancelled("alignment feedback cancelled"));
+    } else if (response) {
+      (void)End(session_id);
+    } else {
+      (void)End(session_id, response.GetError());
+    }
+    return response;
   }
 
   Result<void> Respond(AlignmentResponse response) {
     std::lock_guard lock(mutex_);
-    if (!active_ || !active_published_ ||
-        active_->proposal.request_id != response.request_id) {
+    if (!active_ || active_->proposal.request_id != response.request_id) {
       return Result<void>::Failure(
           Error::InvalidArgument("stale or unknown alignment request"));
     }
+    if (response.session_revision != active_->session_revision) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "stale alignment response revision"));
+    }
+    if ((!accepting_response_ &&
+         response.decision != AlignmentDecision::kCancel) || response_) {
+      return Result<void>::Failure(
+          Error::InvalidArgument(
+              "alignment review is not accepting a response"));
+    }
     if (response.decision == AlignmentDecision::kManual) {
       if (!response.manual_target_T_source) {
-        return Result<void>::Failure(
-            Error::InvalidArgument("manual alignment requires a finite rigid transform"));
+        return Result<void>::Failure(Error::InvalidArgument(
+            "manual alignment requires a finite rigid transform"));
       }
       auto valid = ValidateRigidTransform(*response.manual_target_T_source,
                                           "manual alignment");
@@ -100,20 +204,23 @@ class AlignmentFeedbackBroker {
           "only a manual alignment response may include a transform"));
     }
     response_ = std::move(response);
+    accepting_response_ = false;
     condition_.notify_all();
     return Result<void>::Ok();
   }
 
   [[nodiscard]] std::optional<AlignmentFeedbackSnapshot> Snapshot() const {
     std::lock_guard lock(mutex_);
-    return active_published_ ? active_ : std::nullopt;
+    return active_ ? active_ : terminal_;
   }
 
   void Cancel() {
     std::lock_guard lock(mutex_);
-    if (!active_) return;
+    if (!active_ || response_) return;
     response_ = AlignmentResponse{active_->proposal.request_id,
-                                  AlignmentDecision::kCancel, std::nullopt};
+                                  AlignmentDecision::kCancel, std::nullopt,
+                                  active_->session_revision};
+    accepting_response_ = false;
     condition_.notify_all();
   }
 
@@ -125,9 +232,11 @@ class AlignmentFeedbackBroker {
   void SetEnabled(bool enabled) {
     std::lock_guard lock(mutex_);
     enabled_ = enabled;
-    if (!enabled && active_) {
+    if (!enabled && active_ && !response_) {
       response_ = AlignmentResponse{active_->proposal.request_id,
-                                    AlignmentDecision::kCancel, std::nullopt};
+                                    AlignmentDecision::kCancel, std::nullopt,
+                                    active_->session_revision};
+      accepting_response_ = false;
       condition_.notify_all();
     }
   }
@@ -138,21 +247,41 @@ class AlignmentFeedbackBroker {
   }
 
  private:
-  void ClearRequest(uint64_t request_id) {
+  static Result<void> Notify(const Notification& notification,
+                             const AlignmentFeedbackSnapshot& published) {
+    try {
+      if (notification) notification(published);
+      return Result<void>::Ok();
+    } catch (const std::exception& error) {
+      return Result<void>::Failure(
+          Error::InvalidArgument(
+              std::string("alignment feedback notification failed: ") +
+              error.what())
+              .MarkFatalRuntime());
+    } catch (...) {
+      return Result<void>::Failure(
+          Error::InvalidArgument(
+              "alignment feedback notification failed: unknown exception")
+              .MarkFatalRuntime());
+    }
+  }
+
+  void ClearSession(AlignmentReviewSessionId session_id) {
     std::lock_guard lock(mutex_);
-    if (!active_ || active_->proposal.request_id != request_id) return;
+    if (!active_ || active_->proposal.request_id != session_id) return;
     response_.reset();
+    accepting_response_ = false;
     active_.reset();
-    active_published_ = false;
     condition_.notify_all();
   }
 
   mutable std::mutex mutex_;
   std::condition_variable condition_;
-  uint64_t next_request_id_ = 1;
+  AlignmentReviewSessionId next_session_id_ = 1;
   std::optional<AlignmentFeedbackSnapshot> active_;
-  bool active_published_ = false;
+  std::optional<AlignmentFeedbackSnapshot> terminal_;
   std::optional<AlignmentResponse> response_;
+  bool accepting_response_ = false;
   Notification notification_;
   bool enabled_ = false;
 };

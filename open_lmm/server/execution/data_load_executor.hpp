@@ -1,10 +1,12 @@
 #pragma once
 
 #include <map>
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include <open_lmm/common/alignment_feedback.hpp>
+#include <open_lmm/common/algorithm_progress.hpp>
 #include <open_lmm/server/resource_governor.hpp>
 #include <open_lmm/server/execution/execution_candidate.hpp>
 #include <open_lmm/server/runtime_state.hpp>
@@ -21,10 +23,15 @@ struct DataLoadExecutionContext {
   std::shared_ptr<SharedDatabase> database;
   std::shared_ptr<ResourceGovernor> governor;
   std::shared_ptr<CancellationToken> cancellation;
+  AlgorithmProgressCallback progress;
   std::shared_ptr<BackendOptimizerBase> optimizer;
   std::shared_ptr<const AlgorithmFactory> algorithms;
   bool parallel = false;
   std::size_t max_parallel_agents = 1;
+  // Candidate-only read-model notification. The handle remains owned by the
+  // execution candidate and must never be inserted into committed state here.
+  std::function<void(const AgentId&, const AgentRawDataHandle&)>
+      on_agent_loaded;
 };
 
 class DataLoadExecutor {

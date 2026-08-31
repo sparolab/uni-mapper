@@ -22,6 +22,7 @@ struct LoopConstraintBuildInput {
   const AgentOptimizedDataMap& optimized_agents;
   double pose_nn_distance_threshold = 10.0;
   double minimum_source_separation = 10.0;
+  LoopConstraintBuildDiagnostics* diagnostics = nullptr;
 };
 
 struct ValidatedLoopConstraints {

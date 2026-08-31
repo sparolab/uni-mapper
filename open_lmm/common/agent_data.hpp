@@ -3,12 +3,16 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
 #include <open_lmm/common/alignment_types.hpp>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/descriptor_index.hpp>
+#include <open_lmm/common/result.hpp>
 #include <vector>
 
 namespace open_lmm {
@@ -18,7 +22,11 @@ struct AgentRawData {
   AgentId agent_id;
   PoseVec odom_poses;
   ScanVec filtered_scans;
-  std::vector<Eigen::Vector3f> map_points;  // 2m voxel 다운샘플 맵 (KISSMatcher용)
+};
+
+struct VoxelizedAgentMap {
+  float voxel_size_m = 0.0F;
+  std::vector<Eigen::Vector3f> points;
 };
 
 // BackendOptimizer의 출력
@@ -39,7 +47,7 @@ struct LoopDetectorOutput {
   LoopPairVec intra_loops;
   LoopPairVec inter_loops;
   DescriptorIndexHandle agent_descriptors;
-  std::vector<Eigen::Vector3f> transformed_map_points;
+  VoxelizedAgentMap alignment_map;
   std::optional<Eigen::Isometry3d> accepted_global_T_agent;
   std::optional<AlignmentMethod> accepted_alignment_method;
   std::optional<AlignmentApproval> accepted_alignment_approval;
@@ -50,7 +58,7 @@ struct LoopDetectorOutput {
 
 struct AlignedAgentMap {
   AgentId agent_id;
-  std::vector<Eigen::Vector3f> original_map;
+  VoxelizedAgentMap original_map;
   Eigen::Isometry3d global_T_agent = Eigen::Isometry3d::Identity();
   AlignmentMethod accepted_method = AlignmentMethod::kKissMatcher;
   AlignmentApproval approval = AlignmentApproval::kAutomatic;
@@ -65,6 +73,7 @@ struct DescriptorStore {
   std::map<AgentId, DescriptorIndexHandle> per_agent_db;
   std::vector<AgentId> descriptor_order;
   std::vector<Eigen::Vector3f> merged_map;  // KISSMatcher용 누적 맵 포인트
+  float merged_map_voxel_size_m = 0.0F;
   std::map<AgentId, AlignedAgentMap> aligned_maps;
 
   ~DescriptorStore() {
@@ -76,6 +85,7 @@ struct DescriptorStore {
     per_agent_db.clear();
     descriptor_order.clear();
     merged_map.clear();
+    merged_map_voxel_size_m = 0.0F;
     aligned_maps.clear();
   }
 
@@ -110,10 +120,38 @@ struct DescriptorStore {
     total_db = DescriptorIndexHandle(std::move(rebuilt));
   }
 
-  void set_agent_map(AgentId agent_id, std::vector<Eigen::Vector3f> original_map,
-                     const Eigen::Isometry3d& global_T_agent,
-                     AlignmentMethod method, AlignmentApproval approval,
-                     AgentId target_agent, uint64_t accepted_at_unix_ms) {
+  [[nodiscard]] Result<void> validate_agent_map(
+      const VoxelizedAgentMap& original_map) const {
+    if (!std::isfinite(original_map.voxel_size_m) ||
+        original_map.voxel_size_m <= 0.0F || original_map.points.empty()) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "aligned agent map requires a finite positive voxel size and points"));
+    }
+    for (const auto& point : original_map.points) {
+      if (!point.allFinite()) {
+        return Result<void>::Failure(Error::InvalidArgument(
+            "aligned agent map contains a non-finite point"));
+      }
+    }
+    if (!aligned_maps.empty() && merged_map_voxel_size_m > 0.0F &&
+        std::abs(merged_map_voxel_size_m - original_map.voxel_size_m) >
+            std::numeric_limits<float>::epsilon() *
+                std::max(merged_map_voxel_size_m,
+                         original_map.voxel_size_m) * 4.0F) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "aligned agent map voxel size does not match the descriptor store"));
+    }
+    return Result<void>::Ok();
+  }
+
+  Result<void> set_agent_map(AgentId agent_id, VoxelizedAgentMap original_map,
+                             const Eigen::Isometry3d& global_T_agent,
+                             AlignmentMethod method,
+                             AlignmentApproval approval,
+                             AgentId target_agent,
+                             uint64_t accepted_at_unix_ms) {
+    auto valid = validate_agent_map(original_map);
+    if (!valid) return valid;
     auto& state = aligned_maps[agent_id];
     state.agent_id = agent_id;
     state.original_map = std::move(original_map);
@@ -124,6 +162,7 @@ struct DescriptorStore {
     state.accepted_at_unix_ms = accepted_at_unix_ms;
     ++state.revision;
     rebuild_merged_map();
+    return Result<void>::Ok();
   }
 
   void update_transform(const AgentId& agent_id,
@@ -152,14 +191,17 @@ struct DescriptorStore {
     std::size_t point_count = 0;
     for (const auto& [id, state] : aligned_maps) {
       (void)id;
-      point_count += state.original_map.size();
+      point_count += state.original_map.points.size();
     }
     merged_map.clear();
+    merged_map_voxel_size_m = aligned_maps.empty()
+        ? 0.0F
+        : aligned_maps.begin()->second.original_map.voxel_size_m;
     merged_map.reserve(point_count);
     for (const auto& [id, state] : aligned_maps) {
       (void)id;
       const Eigen::Matrix4f transform = state.global_T_agent.matrix().cast<float>();
-      for (const auto& point : state.original_map) {
+      for (const auto& point : state.original_map.points) {
         merged_map.push_back((transform * point.homogeneous()).head<3>());
       }
     }

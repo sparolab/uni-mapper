@@ -1,6 +1,7 @@
 #pragma once
 
 #include <open_lmm/common/cancellation.hpp>
+#include <open_lmm/common/algorithm_progress.hpp>
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/runtime_contracts.hpp>
 
@@ -39,6 +40,7 @@ struct ExecutionEvent {
   std::optional<Error> error;
   std::optional<CancellationTelemetry> cancellation;
   std::vector<AgentId> affected_agents;
+  std::optional<AlgorithmProgress> algorithm_progress;
 };
 
 struct JobSnapshot {

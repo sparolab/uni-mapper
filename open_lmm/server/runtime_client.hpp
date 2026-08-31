@@ -37,6 +37,8 @@ class RuntimeClient {
   Result<RuntimeSnapshot> Snapshot() const;
   Result<std::vector<NodeDescriptor>> NodeDescriptors() const;
   Result<VisualizationSnapshot> Visualization(const AgentId& agent) const;
+  Result<VisualizationSnapshot> Visualization(
+      const VisualizationQuery& query) const;
   Result<std::optional<AlignmentFeedbackSnapshot>> AlignmentFeedback() const;
   Result<void> RespondToAlignment(JobHandle job, AlignmentResponse response);
   Result<void> SetAlignmentFeedbackEnabled(bool enabled);

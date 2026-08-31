@@ -333,6 +333,7 @@ Result<void> RuntimeService::Open(const BootstrapRequest& request) {
   }
   active_ = built.Value();
   epoch_ = next_epoch;
+  recent_public_events_.clear();
   FinishTransitionLocked(generation, LifecycleState::kReady);
   return Result<void>::Ok();
 }
@@ -377,6 +378,7 @@ Result<void> RuntimeService::Open(const BootstrapRequest& request,
   }
   active_ = built.Value();
   epoch_ = next_epoch;
+  recent_public_events_.clear();
   FinishTransitionLocked(generation, LifecycleState::kReady);
   return Result<void>::Ok();
 }
@@ -492,6 +494,8 @@ Result<RuntimeReplaceReceipt> RuntimeService::ReplaceRootConfig(
     }
     active_ = candidate;
     epoch_ = next_epoch;
+    ClearPublicJobsLocked();
+    recent_public_events_.clear();
     FinishTransitionLocked(generation, LifecycleState::kReady);
   }
   previous->event_source.Reset();
@@ -513,6 +517,29 @@ uint64_t RuntimeService::MapPublicJobLocked(uint64_t epoch, JobId local_job) {
   public_job_ids_.emplace(key, handle);
   public_jobs_.insert_or_assign(handle, PublicJob{epoch, local_job});
   return handle;
+}
+
+void RuntimeService::MarkTerminalPublicJobLocked(uint64_t handle) {
+  constexpr size_t kMaxRetainedTerminalJobs = 256;
+  if (std::find(terminal_public_jobs_.begin(), terminal_public_jobs_.end(),
+                handle) == terminal_public_jobs_.end()) {
+    terminal_public_jobs_.push_back(handle);
+  }
+  while (terminal_public_jobs_.size() > kMaxRetainedTerminalJobs) {
+    const uint64_t expired = terminal_public_jobs_.front();
+    terminal_public_jobs_.pop_front();
+    const auto job = public_jobs_.find(expired);
+    if (job == public_jobs_.end()) continue;
+    public_job_ids_.erase(std::make_pair(job->second.epoch, job->second.local_job));
+    public_jobs_.erase(job);
+  }
+}
+
+void RuntimeService::ClearPublicJobsLocked() {
+  public_job_ids_.clear();
+  public_jobs_.clear();
+  terminal_public_jobs_.clear();
+  pending_public_job_.reset();
 }
 
 Result<JobHandle> RuntimeService::Submit(const ExecutionRequest& request) {
@@ -561,8 +588,11 @@ Result<RuntimeService::PublicJob> RuntimeService::ResolveJob(JobHandle job)
     const {
   std::lock_guard lock(mutex_);
   const auto found = public_jobs_.find(job.value);
-  if (found == public_jobs_.end() || !active_ ||
-      found->second.epoch != active_->epoch) {
+  if (found == public_jobs_.end()) {
+    return Result<PublicJob>::Failure(
+        Error::InvalidArgument("job handle is unknown or expired"));
+  }
+  if (!active_ || found->second.epoch != active_->epoch) {
     return Result<PublicJob>::Failure(Error::InvalidArgument(
         "job belongs to a retired runtime epoch"));
   }
@@ -608,13 +638,12 @@ Result<RuntimeSnapshot> RuntimeService::Snapshot() const {
       return Result<RuntimeSnapshot>::Failure(Error::InvalidArgument(
           "runtime changed during snapshot"));
     }
-    const auto translate = [&](uint64_t& local) {
+    if (pipeline.job) {
       const auto found = public_job_ids_.find(
-          std::make_pair(instance->epoch, static_cast<JobId>(local)));
-      if (found != public_job_ids_.end()) local = found->second;
-    };
-    if (pipeline.job) translate(pipeline.job->id);
-    for (auto& event : pipeline.recent_events) translate(event.job_id);
+          std::make_pair(instance->epoch,
+                         static_cast<JobId>(pipeline.job->id)));
+      if (found != public_job_ids_.end()) pipeline.job->id = found->second;
+    }
     pipeline.recent_events.assign(recent_public_events_.begin(),
                                   recent_public_events_.end());
   }
@@ -632,8 +661,13 @@ Result<std::vector<NodeDescriptor>> RuntimeService::NodeDescriptors() const {
 
 Result<VisualizationSnapshot> RuntimeService::Visualization(
     const AgentId& agent) const {
+  return Visualization(VisualizationQuery{agent});
+}
+
+Result<VisualizationSnapshot> RuntimeService::Visualization(
+    const VisualizationQuery& query) const {
   auto lease = AcquireOperation(false);
-  return lease ? lease.Value().instance->controller->GetVisualizationSnapshot(agent)
+  return lease ? lease.Value().instance->controller->GetVisualizationSnapshot(query)
                : Result<VisualizationSnapshot>::Failure(lease.GetError());
 }
 
@@ -691,6 +725,10 @@ void RuntimeService::DispatchEvent(const std::shared_ptr<RuntimeInstance>& insta
     if (active_ != instance) return;
     if (event.job_id != 0) {
       event.job_id = MapPublicJobLocked(instance->epoch, event.job_id);
+      if (event.type == EventType::kJobCompleted ||
+          event.type == EventType::kJobCancelled) {
+        MarkTerminalPublicJobLocked(event.job_id);
+      }
     }
     event.sequence = next_public_event_sequence_++;
     recent_public_events_.push_back(event);
@@ -853,7 +891,10 @@ Result<void> RuntimeService::Close(CloseMode mode) {
   instance->event_source.Reset();
   {
     std::lock_guard lock(mutex_);
-    if (active_ == instance) active_.reset();
+    if (active_ == instance) {
+      active_.reset();
+      ClearPublicJobsLocked();
+    }
     lifecycle_ = LifecycleState::kClosed;
     transition_cancellation_.reset();
     lifecycle_changed_.notify_all();

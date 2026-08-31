@@ -24,7 +24,8 @@ struct GuiServices {
   std::function<std::vector<NodeDescriptor>()> node_descriptors;
   std::function<Result<RuntimeSnapshot>()> runtime_snapshot;
   std::function<PipelineSnapshot()> snapshot;
-  std::function<Result<VisualizationSnapshot>(const AgentId&)> visualization_snapshot;
+  std::function<Result<VisualizationSnapshot>(const VisualizationQuery&)>
+      visualization_snapshot;
   std::function<std::optional<AlignmentFeedbackSnapshot>()>
       alignment_feedback_snapshot;
   std::function<Result<void>(uint64_t, AlignmentResponse)>

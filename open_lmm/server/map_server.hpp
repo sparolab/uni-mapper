@@ -36,7 +36,9 @@ class MapServer final : public StageRuntimePort {
       const ExecutionContext& context) override;
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const override;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
-      const AgentId& agent) const override;
+      const AgentId& agent) const;
+  [[nodiscard]] Result<VisualizationSnapshot> Visualization(
+      const VisualizationQuery& query) const override;
   Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
                                           uint64_t config_revision) override;
   Result<void> ValidateReady();

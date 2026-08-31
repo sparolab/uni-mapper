@@ -131,7 +131,8 @@ void FeedbackAndSnapshotHaveNoLockInversion() {
   Check(request.has_value(), "feedback request was not published");
   Check(controller.RespondToAlignment(
             job.Value(), {request->proposal.request_id,
-                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+                          AlignmentDecision::kAccept, std::nullopt,
+                          request->session_revision}).IsOk(),
         "feedback response failed");
   Check(controller.Wait(job.Value()).IsOk(), "alignment job did not finish");
 }
@@ -146,7 +147,8 @@ void FeedbackPublishesBeforeSynchronousNotification() {
           "feedback was not published before synchronous notification");
     observed_request_id = notified.proposal.request_id;
     Check(broker.Respond({notified.proposal.request_id,
-                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+                          AlignmentDecision::kAccept, std::nullopt,
+                          notified.session_revision}).IsOk(),
           "synchronous feedback response was rejected");
   });
   const auto response = broker.Request(FeedbackSnapshot(), nullptr);
@@ -171,12 +173,67 @@ void ThrowingFeedbackNotificationRecoversForNextRequest() {
   broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
     retry_request_id = notified.proposal.request_id;
     Check(broker.Respond({notified.proposal.request_id,
-                          AlignmentDecision::kAccept, std::nullopt}).IsOk(),
+                          AlignmentDecision::kAccept, std::nullopt,
+                          notified.session_revision}).IsOk(),
           "response after notification failure was rejected");
   });
   const auto retried = broker.Request(FeedbackSnapshot(), nullptr);
   Check(retried && retry_request_id > 1 && !broker.Snapshot(),
         "feedback request was not reusable after callback failure");
+}
+
+void FeedbackUpdateNotifiesOutsideBrokerLock() {
+  AlignmentFeedbackBroker broker;
+  std::atomic<int> notifications{0};
+  broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
+    ++notifications;
+    const auto published = broker.Snapshot();
+    Check(published && published->session_revision ==
+                           notified.session_revision,
+          "feedback update callback cannot re-enter Snapshot");
+    if (notified.session_revision > 1) {
+      Check(broker.Respond({notified.proposal.request_id,
+                            AlignmentDecision::kAccept, std::nullopt,
+                            notified.session_revision}).IsOk(),
+            "feedback update callback cannot synchronously respond");
+    }
+  });
+  auto begun = broker.Begin(FeedbackSnapshot());
+  Check(begun.IsOk(), "feedback session did not begin");
+  auto updated = FeedbackSnapshot();
+  updated.attempt_status.state = AlignmentAttemptState::kSucceeded;
+  Check(broker.Update(begun.Value(), std::move(updated)).IsOk(),
+        "feedback session did not update");
+  const auto response = broker.WaitDecision(begun.Value(), nullptr);
+  Check(response && response.Value().decision == AlignmentDecision::kAccept &&
+            notifications.load() == 2,
+        "feedback update notification did not complete outside the lock");
+  Check(broker.End(begun.Value()).IsOk(),
+        "feedback session did not end cleanly");
+}
+
+void TerminalFeedbackNotifiesOutsideBrokerLock() {
+  AlignmentFeedbackBroker broker;
+  std::atomic<bool> saw_terminal{false};
+  broker.SetNotification([&](const AlignmentFeedbackSnapshot& notified) {
+    const auto published = broker.Snapshot();
+    Check(published && published->session_revision ==
+                           notified.session_revision,
+          "terminal callback cannot re-enter Snapshot");
+    if (notified.review_state == AlignmentReviewState::kFailed) {
+      saw_terminal = true;
+      Check(!broker.Respond({notified.proposal.request_id,
+                             AlignmentDecision::kAccept, std::nullopt,
+                             notified.session_revision}),
+            "terminal callback cannot mutate its read-only review");
+    }
+  });
+  const auto begun = broker.Begin(FeedbackSnapshot());
+  Check(begun.IsOk(), "terminal notification session did not begin");
+  Check(broker.End(begun.Value(), Error::PluginLoadFailed("fixture failure"))
+            .IsOk(),
+        "terminal notification did not complete outside the lock");
+  Check(saw_terminal.load(), "terminal notification was not observed");
 }
 
 }  // namespace
@@ -186,6 +243,8 @@ int main() {
   FeedbackAndSnapshotHaveNoLockInversion();
   FeedbackPublishesBeforeSynchronousNotification();
   ThrowingFeedbackNotificationRecoversForNextRequest();
+  FeedbackUpdateNotifiesOutsideBrokerLock();
+  TerminalFeedbackNotifiesOutsideBrokerLock();
   std::cout << "controller concurrency tests passed\n";
   return 0;
 }

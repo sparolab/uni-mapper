@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <optional>
 #include <vector>
 
@@ -30,6 +31,39 @@ enum class AlignmentDecision : uint8_t {
 enum class AlignmentApproval : uint8_t {
   kAutomatic,
   kUser,
+};
+
+enum class AlignmentAttemptState : uint8_t {
+  kIdle,
+  kRunning,
+  kSucceeded,
+  kFailedRecoverable,
+};
+
+enum class AlignmentAttemptFailure : uint8_t {
+  kNoCandidate,
+  kInsufficientInliers,
+  kNoConsistentClique,
+  kNoPoseNeighbor,
+  kProposalQualityRejected,
+};
+
+struct LoopConstraintBuildDiagnostics {
+  std::size_t sampled_source_frames = 0;
+  std::size_t target_frames = 0;
+  std::size_t within_radius = 0;
+  double nearest_distance_m = 0.0;
+  double threshold_m = 0.0;
+  bool search_completed = false;
+};
+
+struct AlignmentAttemptStatus {
+  AlignmentMethod method = AlignmentMethod::kPending;
+  AlignmentAttemptState state = AlignmentAttemptState::kIdle;
+  std::optional<AlignmentAttemptFailure> reason;
+  std::string message;
+  uint64_t attempt = 0;
+  std::optional<LoopConstraintBuildDiagnostics> constraint_diagnostics;
 };
 
 struct AlignmentMetrics {
@@ -56,6 +90,13 @@ struct AlignmentResponse {
   uint64_t request_id = 0;
   AlignmentDecision decision = AlignmentDecision::kCancel;
   std::optional<Eigen::Isometry3d> manual_target_T_source;
+  uint64_t session_revision = 0;
+};
+
+enum class AlignmentReviewState : uint8_t {
+  kActive,
+  kCancelled,
+  kFailed,
 };
 
 struct AlignmentVisualizationPoint {
@@ -81,6 +122,11 @@ struct AlignmentFeedbackSnapshot {
   std::vector<AlignmentVisualizationPoint> target_points;
   std::vector<AlignmentVisualizationPoint> source_points;
   AlignmentVisualizationData diagnostics;
+  AlignmentAttemptStatus attempt_status;
+  std::vector<AlignmentAttemptStatus> attempt_history;
+  uint64_t session_revision = 0;
+  AlignmentReviewState review_state = AlignmentReviewState::kActive;
+  std::string terminal_message;
 };
 
 struct StoredAlignment {

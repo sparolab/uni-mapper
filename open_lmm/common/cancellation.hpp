@@ -95,6 +95,22 @@ class CancellationException final : public std::runtime_error {
       : std::runtime_error(std::move(detail)) {}
 };
 
+// Carries cooperative cancellation through an existing synchronous call chain
+// without changing every provider signature. The state lives in the contracts
+// DSO so callers and providers in different OpenLMM DSOs share one TLS slot.
+class CancellationContextScope {
+ public:
+  explicit CancellationContextScope(std::shared_ptr<CancellationToken> token);
+  ~CancellationContextScope();
+  CancellationContextScope(const CancellationContextScope&) = delete;
+  CancellationContextScope& operator=(const CancellationContextScope&) = delete;
+
+ private:
+  std::shared_ptr<CancellationToken> previous_;
+};
+
+[[nodiscard]] std::shared_ptr<CancellationToken> CurrentCancellationToken();
+
 inline void ThrowIfCancellationRequested(
     const std::shared_ptr<CancellationToken>& token, std::string_view detail) {
   if (token && token->IsCancellationRequested()) {

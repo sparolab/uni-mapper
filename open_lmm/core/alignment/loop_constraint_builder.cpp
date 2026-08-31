@@ -1,6 +1,7 @@
 #include "loop_constraint_builder.hpp"
 
 #include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -67,12 +68,34 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
         WithAlgorithmContext(accepted.GetError(), context));
   }
 
+  LoopConstraintBuildDiagnostics diagnostics;
+  diagnostics.threshold_m = input.pose_nn_distance_threshold;
+  diagnostics.nearest_distance_m =
+      std::numeric_limits<double>::infinity();
+  const auto publish_diagnostics = [&] {
+    if (input.diagnostics) *input.diagnostics = diagnostics;
+  };
+  publish_diagnostics();
+
   try {
     PoseVec transformed;
     transformed.reserve(input.source.odom_poses.size());
     for (const auto& pose : input.source.odom_poses) {
       transformed.push_back(input.accepted.proposal.target_T_source * pose);
     }
+
+    std::vector<std::size_t> sampled_source_frames;
+    Eigen::Vector3d previous = transformed.front().translation();
+    for (std::size_t source_frame = 0; source_frame < transformed.size();
+         ++source_frame) {
+      const Eigen::Vector3d current = transformed[source_frame].translation();
+      if ((current - previous).norm() < input.minimum_source_separation) {
+        continue;
+      }
+      previous = current;
+      sampled_source_frames.push_back(source_frame);
+    }
+    diagnostics.sampled_source_frames = sampled_source_frames.size();
 
     LoopPairVec loops;
     for (const auto& [target_id, optimized_handle] : input.optimized_agents) {
@@ -105,17 +128,13 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
                             static_cast<float>(pose.translation().z())));
         }
       }
+      diagnostics.target_frames += target_points->size();
+      if (target_points->empty()) continue;
       pcl::KdTreeFLANN<pcl::PointXYZ> nearest;
       nearest.setInputCloud(target_points);
 
-      Eigen::Vector3d previous = transformed.front().translation();
-      for (std::size_t source_frame = 0; source_frame < transformed.size();
-           ++source_frame) {
+      for (const std::size_t source_frame : sampled_source_frames) {
         const Eigen::Vector3d current = transformed[source_frame].translation();
-        if ((current - previous).norm() < input.minimum_source_separation) {
-          continue;
-        }
-        previous = current;
 
         std::vector<int> indices(1);
         std::vector<float> squared_distances(1);
@@ -124,6 +143,11 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
                           static_cast<float>(current.y()),
                           static_cast<float>(current.z())),
             1, indices, squared_distances);
+        if (found == 1 && !squared_distances.empty()) {
+          diagnostics.nearest_distance_m = std::min(
+              diagnostics.nearest_distance_m,
+              std::sqrt(static_cast<double>(squared_distances.front())));
+        }
         if (found != 1 || indices.front() < 0 ||
             static_cast<std::size_t>(indices.front()) >=
                 optimized_handle->optimized_poses.size() ||
@@ -132,6 +156,7 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
                 input.pose_nn_distance_threshold) {
           continue;
         }
+        ++diagnostics.within_radius;
         const auto& best = optimized_handle->optimized_poses[
             static_cast<std::size_t>(indices.front())];
         auto relative = TargetFromSourceScanTransform(
@@ -149,6 +174,8 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
         });
       }
     }
+    diagnostics.search_completed = true;
+    publish_diagnostics();
     if (loops.empty()) {
       return Result<ValidatedLoopConstraints>::Failure(WithAlgorithmContext(
           Error::RegistrationFailed(
@@ -165,11 +192,13 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
   } catch (const std::exception& error) {
     return Result<ValidatedLoopConstraints>::Failure(WithAlgorithmContext(
         Error::RegistrationFailed(
-            std::string("loop constraint builder exception: ") + error.what()),
+            std::string("loop constraint builder exception: ") + error.what())
+            .MarkFatalRuntime(),
         context));
   } catch (...) {
     return Result<ValidatedLoopConstraints>::Failure(WithAlgorithmContext(
-        Error::RegistrationFailed("unknown loop constraint builder exception"),
+        Error::RegistrationFailed("unknown loop constraint builder exception")
+            .MarkFatalRuntime(),
         context));
   }
 }
