@@ -74,6 +74,30 @@ class LifetimeTests(unittest.TestCase):
         self.assertIsNone(subscription_reference())
         runtime.close()
 
+    def test_last_runtime_owner_can_be_collected_in_terminal_callback(
+        self,
+    ) -> None:
+        runtime = open_lmm.Runtime(1)
+        runtime.open(self.fixture.config, label="callback-retirement")
+        runtime_reference = weakref.ref(runtime)
+        owner = {"runtime": runtime}
+        completed = threading.Event()
+
+        def callback(event: open_lmm.ExecutionEvent) -> None:
+            if event.type != open_lmm.EventType.JOB_COMPLETED:
+                return
+            owner.pop("runtime", None)
+            gc.collect()
+            completed.set()
+
+        subscription = runtime.subscribe_events(callback)
+        runtime.run_stage(open_lmm.Stage.DATA_LOAD)
+        del runtime
+        self.assertTrue(completed.wait(5.0))
+        gc.collect()
+        self.assertIsNone(runtime_reference())
+        subscription.close()
+
     def test_process_exit_drains_active_job_and_subscription(self) -> None:
         process_exit_timeout = float(
             os.environ.get(

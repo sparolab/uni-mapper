@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <open_lmm/common/plugin_api.h>
 #include <open_lmm/common/result.hpp>
@@ -23,11 +24,11 @@ struct PluginMetadata {
   std::string build_version;
 };
 
-// Most ABI-v1 plugin capabilities are descriptive metadata.  A host that
-// passes this expectation opts into an exact, kind-specific contract check
-// before the plugin's create function is ever invoked.
 struct PluginContractExpectation {
   std::optional<std::string_view> exact_capability;
+  std::optional<std::string_view> exact_plugin_name;
+  std::optional<uint32_t> exact_config_schema_version;
+  std::optional<std::string_view> exact_build_generation;
 };
 
 namespace detail {
@@ -47,6 +48,80 @@ inline std::string PluginString(const char* value) {
 }
 
 }  // namespace detail
+
+inline Result<PluginMetadata> validate_plugin_v1(
+    const OpenLmmPluginApiV1* api, const std::string& so_name,
+    const std::string& expected_kind,
+    PluginContractExpectation expectation = {}) {
+  if (!api) {
+    return Result<PluginMetadata>::Failure(
+        Error::PluginLoadFailed("plugin entry returned nullptr in " + so_name)
+            .WithPlugin(so_name));
+  }
+  if (api->abi_version != OPEN_LMM_PLUGIN_ABI_VERSION_V1) {
+    return Result<PluginMetadata>::Failure(
+        Error::PluginLoadFailed(
+            "ABI version mismatch in " + so_name + ": expected '" +
+            std::to_string(OPEN_LMM_PLUGIN_ABI_VERSION_V1) + "', got '" +
+            std::to_string(api->abi_version) + "'")
+            .WithPlugin(so_name));
+  }
+  if (!api->plugin_kind || !api->plugin_name || !api->create ||
+      !api->destroy) {
+    return Result<PluginMetadata>::Failure(
+        Error::PluginLoadFailed(
+            "plugin ABI-v1 entry is incomplete in " + so_name)
+            .WithPlugin(so_name));
+  }
+
+  PluginMetadata metadata{
+      api->abi_version,
+      detail::PluginString(api->plugin_kind),
+      detail::PluginString(api->plugin_name),
+      detail::PluginString(api->capability),
+      api->config_schema_version,
+      detail::PluginString(api->build_version)};
+  const auto mismatch = [&](std::string_view field, std::string expected,
+                            std::string actual) {
+    return Result<PluginMetadata>::Failure(
+        Error::PluginLoadFailed(
+            "plugin " + std::string(field) + " mismatch in " + so_name +
+            ": expected '" + expected + "', got '" + actual + "'")
+            .WithPlugin(so_name)
+            .WithValidation("/metadata/" + std::string(field),
+                            std::move(expected), std::move(actual),
+                            metadata.config_schema_version));
+  };
+  if (metadata.kind != expected_kind) {
+    return mismatch("kind", expected_kind, metadata.kind);
+  }
+  if (expectation.exact_capability &&
+      metadata.capability != *expectation.exact_capability) {
+    return mismatch("capability",
+                    std::string(*expectation.exact_capability),
+                    metadata.capability);
+  }
+  if (expectation.exact_plugin_name &&
+      metadata.name != *expectation.exact_plugin_name) {
+    return mismatch("name", std::string(*expectation.exact_plugin_name),
+                    metadata.name);
+  }
+  if (expectation.exact_config_schema_version &&
+      metadata.config_schema_version !=
+          *expectation.exact_config_schema_version) {
+    return mismatch(
+        "config_schema_version",
+        std::to_string(*expectation.exact_config_schema_version),
+        std::to_string(metadata.config_schema_version));
+  }
+  if (expectation.exact_build_generation &&
+      metadata.build_version != *expectation.exact_build_generation) {
+    return mismatch("build_generation",
+                    std::string(*expectation.exact_build_generation),
+                    metadata.build_version);
+  }
+  return Result<PluginMetadata>::Ok(std::move(metadata));
+}
 
 // Validates a runtime plugin without constructing an algorithm instance. This
 // is used during session creation so an unavailable/incorrect plugin fails
@@ -82,36 +157,7 @@ inline Result<PluginMetadata> inspect_plugin_v1(
         Error::PluginLoadFailed("plugin entry threw an exception in " + so_name)
             .WithPlugin(so_name));
   }
-  if (!api || api->abi_version != OPEN_LMM_PLUGIN_ABI_VERSION_V1 ||
-      !api->plugin_kind || !api->plugin_name || !api->create ||
-      !api->destroy) {
-    return Result<PluginMetadata>::Failure(
-        Error::PluginLoadFailed(
-            "plugin ABI-v1 entry is incomplete or incompatible in " + so_name)
-            .WithPlugin(so_name));
-  }
-  const std::string actual_kind = detail::PluginString(api->plugin_kind);
-  if (actual_kind != expected_kind) {
-    return Result<PluginMetadata>::Failure(
-        Error::PluginLoadFailed("plugin kind mismatch in " + so_name +
-                                ": expected '" + expected_kind + "', got '" +
-                                actual_kind + "'")
-            .WithPlugin(so_name));
-  }
-  const std::string actual_capability = detail::PluginString(api->capability);
-  if (expectation.exact_capability &&
-      actual_capability != *expectation.exact_capability) {
-    return Result<PluginMetadata>::Failure(
-        Error::PluginLoadFailed("plugin capability mismatch in " + so_name +
-                                ": expected '" +
-                                std::string(*expectation.exact_capability) +
-                                "', got '" + actual_capability + "'")
-            .WithPlugin(so_name));
-  }
-  return Result<PluginMetadata>::Ok(
-      {api->abi_version, actual_kind, detail::PluginString(api->plugin_name),
-       actual_capability, api->config_schema_version,
-       detail::PluginString(api->build_version)});
+  return validate_plugin_v1(api, so_name, expected_kind, expectation);
 }
 
 // ABI v1 keeps the algorithm interface as a C++ virtual object and therefore
@@ -153,43 +199,12 @@ Result<std::shared_ptr<Module>> load_plugin_v1(
         Error::PluginLoadFailed("plugin entry threw an exception in " + so_name)
             .WithPlugin(so_name));
   }
-  if (!api) {
-    return Result<std::shared_ptr<Module>>::Failure(
-        Error::PluginLoadFailed("plugin entry returned nullptr in " + so_name)
-            .WithPlugin(so_name));
+  auto validated = validate_plugin_v1(api, so_name, expected_kind,
+                                      expectation);
+  if (!validated) {
+    return Result<std::shared_ptr<Module>>::Failure(validated.GetError());
   }
-  if (api->abi_version != OPEN_LMM_PLUGIN_ABI_VERSION_V1) {
-    return Result<std::shared_ptr<Module>>::Failure(
-        Error::PluginLoadFailed(
-            "ABI version mismatch in " + so_name + ": expected " +
-            std::to_string(OPEN_LMM_PLUGIN_ABI_VERSION_V1) + ", got " +
-            std::to_string(api->abi_version))
-            .WithPlugin(so_name));
-  }
-  const std::string actual_kind = detail::PluginString(api->plugin_kind);
-  if (actual_kind != expected_kind) {
-    return Result<std::shared_ptr<Module>>::Failure(
-        Error::PluginLoadFailed("plugin kind mismatch in " + so_name +
-                                ": expected '" + expected_kind + "', got '" +
-                                actual_kind + "'")
-            .WithPlugin(so_name));
-  }
-  const std::string actual_capability = detail::PluginString(api->capability);
-  if (expectation.exact_capability &&
-      actual_capability != *expectation.exact_capability) {
-    return Result<std::shared_ptr<Module>>::Failure(
-        Error::PluginLoadFailed("plugin capability mismatch in " + so_name +
-                                ": expected '" +
-                                std::string(*expectation.exact_capability) +
-                                "', got '" + actual_capability + "'")
-            .WithPlugin(so_name));
-  }
-  if (!api->plugin_name || !api->create || !api->destroy) {
-    return Result<std::shared_ptr<Module>>::Failure(
-        Error::PluginLoadFailed(
-            "plugin API has missing name/create/destroy in " + so_name)
-            .WithPlugin(so_name));
-  }
+  PluginMetadata validated_metadata = std::move(validated).Value();
 
   OpenLmmPluginConfigV1 config{
       static_cast<uint32_t>(sizeof(OpenLmmPluginConfigV1)),
@@ -209,13 +224,7 @@ Result<std::shared_ptr<Module>> load_plugin_v1(
   }
 
   if (metadata) {
-    *metadata = PluginMetadata{
-        api->abi_version,
-        actual_kind,
-        detail::PluginString(api->plugin_name),
-        actual_capability,
-        api->config_schema_version,
-        detail::PluginString(api->build_version)};
+    *metadata = std::move(validated_metadata);
   }
 
   // destroy runs while the captured handle is alive. dlclose occurs only when

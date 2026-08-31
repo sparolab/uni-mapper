@@ -1,6 +1,6 @@
 #pragma once
 
-#include "goal_admission.hpp"
+#include "goal_coordinator.hpp"
 #include <open_lmm/server/runtime_client.hpp>
 #include <open_lmm_ros/action/execute_pipeline.hpp>
 #include <open_lmm_ros/msg/execution_event.hpp>
@@ -61,8 +61,7 @@ class OpenLMMROS : public rclcpp::Node {
   rclcpp::Service<GetRuntimeStatus>::SharedPtr status_service_;
   mutable std::mutex action_mutex_;
   std::weak_ptr<GoalHandleExecutePipeline> active_goal_;
-  GoalAdmissionGate goal_admission_;
-  std::optional<JobHandle> active_job_;
+  RosGoalCoordinator goal_coordinator_;
   std::jthread action_worker_;
 };
 

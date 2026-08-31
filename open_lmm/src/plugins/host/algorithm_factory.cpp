@@ -1,7 +1,9 @@
 #include "algorithm_factory.hpp"
 
 #include <exception>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include <domain/optimization/backend_optimizer_incremental.hpp>
 #include <domain/data_loader/data_loader_file.hpp>
@@ -12,6 +14,7 @@
 #include <domain/descriptor/built_in_descriptor_engine.hpp>
 #include <plugins/host/load_module.hpp>
 #include <foundation/logging/logging.hpp>
+#include <open_lmm/plugin_build_generation.hpp>
 
 namespace open_lmm {
 namespace {
@@ -50,6 +53,19 @@ Result<std::unique_ptr<LoopDetectorBase>> MakeLoopDetector(
           config, std::move(engine).Value()));
 }
 
+PluginContractExpectation DescriptorContract(std::string_view model) {
+  return {{"descriptor:kdtree-v3"}, model, 1, kPluginBuildGeneration};
+}
+
+PluginContractExpectation RemoverContract(std::string_view model,
+                                          bool online) {
+  return {online ? std::optional<std::string_view>{
+                       "dynamic_remover:online-v3"}
+                 : std::optional<std::string_view>{
+                       "dynamic_remover:offline-v3"},
+          model, 1, kPluginBuildGeneration};
+}
+
 }  // namespace
 
 Result<void> AlgorithmFactory::Preflight(
@@ -64,7 +80,8 @@ Result<void> AlgorithmFactory::PreflightDescriptor(
     const LoopDetectorConfig& loop_detector) const {
   const std::string library =
       "libcreate_" + loop_detector.model + ".so";
-  auto descriptor = inspect_plugin_v1(library, "descriptor");
+  auto descriptor = inspect_plugin_v1(
+      library, "descriptor", DescriptorContract(loop_detector.model));
   if (!descriptor) {
     return Result<void>::Failure(descriptor.GetError());
   }
@@ -76,8 +93,9 @@ Result<void> AlgorithmFactory::PreflightRemover(
   const std::string remover_kind = remover.type == "online"
                                        ? "dynamic_remover_online"
                                        : "dynamic_remover_offline";
-  auto remover_plugin =
-      inspect_plugin_v1("libcreate_" + remover.model + ".so", remover_kind);
+  auto remover_plugin = inspect_plugin_v1(
+      "libcreate_" + remover.model + ".so", remover_kind,
+      RemoverContract(remover.model, remover.type == "online"));
   if (!remover_plugin) {
     return Result<void>::Failure(remover_plugin.GetError());
   }
@@ -117,7 +135,8 @@ AlgorithmFactory::CreateLoopDetectorImpl(
   }
   const std::string library = "libcreate_" + config.model + ".so";
   auto module = load_plugin_v1<IDescriptorKdtree>(
-      library, "descriptor", config.plugin_config_json);
+      library, "descriptor", config.plugin_config_json, nullptr, nullptr,
+      DescriptorContract(config.model));
   if (!module) {
     return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
         module.GetError());
@@ -156,7 +175,8 @@ AlgorithmFactory::CreateDynamicRemoverImpl(
   if (config.type == "offline") {
     auto module = load_plugin_v1<IOfflineRemoverPlugin>(
         "libcreate_" + config.model + ".so", "dynamic_remover_offline",
-        config.plugin_config_json);
+        config.plugin_config_json, nullptr, nullptr,
+        RemoverContract(config.model, false));
     if (!module) {
       return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
           module.GetError());
@@ -168,7 +188,8 @@ AlgorithmFactory::CreateDynamicRemoverImpl(
   if (config.type == "online") {
     auto module = load_plugin_v1<IOnlineRemoverPlugin>(
         "libcreate_" + config.model + ".so", "dynamic_remover_online",
-        config.plugin_config_json);
+        config.plugin_config_json, nullptr, nullptr,
+        RemoverContract(config.model, true));
     if (!module) {
       return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
           module.GetError());

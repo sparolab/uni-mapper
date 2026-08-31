@@ -14,7 +14,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -68,14 +67,10 @@ class RuntimeHolder {
       delete retiring;
       return;
     }
-    // RuntimeClient destruction can wait for a Python event callback. Never
-    // hold the GIL while that drain occurs. Explicit close/atexit remains the
-    // deterministic path; this is the GC safety fallback.
-    try {
-      std::thread([retiring] { delete retiring; }).detach();
-    } catch (...) {
-      // A bounded process-exit leak is safer than a GIL/callback deadlock.
-    }
+    // The core owns callback-safe retirement. Release the GIL for the normal
+    // synchronous path so a Python callback can finish while Close drains it.
+    py::gil_scoped_release release;
+    delete retiring;
   }
 
   RuntimeClient& Client() { return *client_; }

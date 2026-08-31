@@ -76,11 +76,16 @@ soak::ProcessSeries Run(const soak::RunOptions& options,
   for (uint64_t iteration = 0; iteration < options.iterations; ++iteration) {
     if (built_in) {
       auto built_in_metadata = open_lmm::inspect_plugin_v1(
-          built_in->string(), "descriptor", {{"descriptor:kdtree"}});
+          built_in->string(), "descriptor",
+          {{"descriptor:kdtree-v3"}, {"scan_context"}, 1,
+           {"open-lmm-3.0.0"}});
       Require(
           built_in_metadata &&
               built_in_metadata.Value().name == "scan_context" &&
-              built_in_metadata.Value().capability == "descriptor:kdtree" &&
+              built_in_metadata.Value().capability ==
+                  "descriptor:kdtree-v3" &&
+              built_in_metadata.Value().build_version ==
+                  "open-lmm-3.0.0" &&
               MappingCount(*built_in) == 0,
           "built-in plugin inspection or unload contract failed");
     }

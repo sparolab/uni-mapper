@@ -19,16 +19,35 @@ Result<void> BoundedTaskHandle::Wait() const {
 
 BoundedExecutor::BoundedExecutor(std::size_t worker_count,
                                  std::size_t queue_capacity,
-                                 SubmissionWaitNotification wait_notification)
+                                 SubmissionWaitNotification wait_notification,
+                                 ThreadLauncher thread_launcher)
     : queue_capacity_(queue_capacity),
       wait_notification_(std::move(wait_notification)) {
   if (worker_count == 0 || queue_capacity == 0) {
     throw std::invalid_argument(
         "bounded executor worker and queue counts must be positive");
   }
+  if (!thread_launcher) {
+    throw std::invalid_argument("bounded executor thread launcher is empty");
+  }
   workers_.reserve(worker_count);
-  for (std::size_t index = 0; index < worker_count; ++index) {
-    workers_.emplace_back([this] { workerLoop(); });
+  try {
+    for (std::size_t index = 0; index < worker_count; ++index) {
+      workers_.emplace_back(
+          thread_launcher([this] { workerLoop(); }));
+    }
+  } catch (...) {
+    {
+      std::lock_guard lock(mutex_);
+      accepting_ = false;
+      stopping_ = true;
+    }
+    work_available_.notify_all();
+    queue_space_.notify_all();
+    for (auto& worker : workers_) {
+      if (worker.joinable()) worker.join();
+    }
+    throw;
   }
 }
 

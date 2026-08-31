@@ -1,45 +1,56 @@
 #include <open_lmm/server/runtime_client.hpp>
 
+#include "runtime_retirement_coordinator.hpp"
+
 #include <runtime/service/runtime_service.hpp>
 
-#include <thread>
 #include <utility>
 
 namespace open_lmm {
 
 struct RuntimeClient::Impl {
-  explicit Impl(std::size_t max_agent_tasks) : service(max_agent_tasks) {}
+  explicit Impl(std::size_t max_agent_tasks) : service(max_agent_tasks) {
+    retirement.owner = this;
+    retirement.destroy = [](void* owner) noexcept {
+      delete static_cast<Impl*>(owner);
+    };
+  }
+
+  RuntimeRetirementNode retirement;
   RuntimeService service;
 };
 
-RuntimeClient::RuntimeClient(std::size_t max_agent_tasks)
-    : impl_(std::make_unique<Impl>(max_agent_tasks)) {}
+namespace {
+
+template <typename ImplType>
+void RetireOrDelete(ImplType* retiring) noexcept {
+  if (!retiring) return;
+  if (!retiring->service.IsInEventCallback()) {
+    delete retiring;
+    return;
+  }
+  GlobalRuntimeRetirementCoordinator().Retire(retiring->retirement);
+}
+
+}  // namespace
+
+RuntimeClient::RuntimeClient(std::size_t max_agent_tasks) {
+  // Construct the process coordinator first. Reverse static destruction order
+  // then keeps it alive for every RuntimeClient::Impl created afterwards.
+  (void)GlobalRuntimeRetirementCoordinator();
+  impl_ = std::make_unique<Impl>(max_agent_tasks);
+}
 
 RuntimeClient::~RuntimeClient() {
-  if (!impl_ || !impl_->service.IsInEventCallback()) return;
-  // Controller workers must never join themselves.  Move assignment below
-  // shares this same destruction path by routing the old Impl through this
-  // destructor when necessary.
-  Impl* deferred = impl_.release();
-  try {
-    std::thread([deferred] { delete deferred; }).detach();
-  } catch (...) {
-    // A leak is preferable to self-join during process teardown failure.
-  }
+  RetireOrDelete(impl_.release());
 }
 
 RuntimeClient::RuntimeClient(RuntimeClient&&) noexcept = default;
 RuntimeClient& RuntimeClient::operator=(RuntimeClient&& other) noexcept {
   if (this == &other) return *this;
-  auto retiring = std::move(impl_);
+  Impl* retiring = impl_.release();
   impl_ = std::move(other.impl_);
-  if (!retiring || !retiring->service.IsInEventCallback()) return *this;
-  Impl* deferred = retiring.release();
-  try {
-    std::thread([deferred] { delete deferred; }).detach();
-  } catch (...) {
-    // A leak is preferable to joining the emitting controller worker.
-  }
+  RetireOrDelete(retiring);
   return *this;
 }
 

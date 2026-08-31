@@ -9,6 +9,7 @@ target_link_libraries(open_lmm_plugin_host_objects PRIVATE
   open_lmm_algorithm_config
   open_lmm_utils
   open_lmm_profiling
+  open_lmm_plugin_build_contract
   nlohmann_json::nlohmann_json
 )
 openlmm_set_global_target_properties(open_lmm_plugin_host_objects)

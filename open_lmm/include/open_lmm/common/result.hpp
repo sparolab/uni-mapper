@@ -21,6 +21,7 @@ struct Error {
     kIoError,
     kCancelled,
     kAgentExcluded,
+    kResourceExhausted,
   };
 
   enum class Severity : uint8_t { kRecoverable, kFatalRuntime };
@@ -137,6 +138,10 @@ struct Error {
   static Error AgentExcluded(std::string_view detail) {
     return {Code::kAgentExcluded,
             "Agent excluded: " + std::string(detail)};
+  }
+  static Error ResourceExhausted(std::string_view detail) {
+    return {Code::kResourceExhausted,
+            "Resource exhausted: " + std::string(detail)};
   }
 };
 

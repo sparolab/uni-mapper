@@ -5,6 +5,7 @@
 #include <foundation/diagnostics/profiling.hpp>
 #include <exception>
 #include <map>
+#include <system_error>
 
 namespace open_lmm {
 
@@ -92,16 +93,55 @@ thread_local const ExecutionEventSubscriberSlot* active_event_subscriber =
     nullptr;
 thread_local const PipelineController* active_event_controller = nullptr;
 
+enum class PipelineStartState { kPending, kCommitted, kAborted };
+
+struct PipelineStartGate {
+  bool WaitForCommit() {
+    std::unique_lock lock(mutex);
+    changed.wait(lock, [this] { return state != PipelineStartState::kPending; });
+    return state == PipelineStartState::kCommitted;
+  }
+
+  void Set(PipelineStartState next) noexcept {
+    {
+      std::lock_guard lock(mutex);
+      if (state != PipelineStartState::kPending) return;
+      state = next;
+    }
+    changed.notify_all();
+  }
+
+  std::mutex mutex;
+  std::condition_variable changed;
+  PipelineStartState state = PipelineStartState::kPending;
+};
+
+struct PipelineExecutionWorker {
+  std::thread thread;
+  std::optional<Result<void>> result;
+};
+
 PipelineController::PipelineController(std::shared_ptr<StageRuntimePort> port)
     : PipelineController(port, port) {}
 
 PipelineController::PipelineController(
     std::shared_ptr<StageCommandPort> command_port,
     std::shared_ptr<RuntimeQueryPort> query_port)
+    : PipelineController(std::move(command_port), std::move(query_port),
+                         DefaultThreadLauncher()) {}
+
+PipelineController::PipelineController(
+    std::shared_ptr<StageCommandPort> command_port,
+    std::shared_ptr<RuntimeQueryPort> query_port,
+    ThreadLauncher thread_launcher)
     : command_port_(std::move(command_port)),
       query_port_(std::move(query_port)),
       event_subscribers_(std::make_shared<ExecutionEventSubscriberRegistry>()),
-      alignment_feedback_(std::make_shared<AlignmentFeedbackBroker>()) {
+      alignment_feedback_(std::make_shared<AlignmentFeedbackBroker>()),
+      thread_launcher_(std::move(thread_launcher)) {
+  if (!thread_launcher_) {
+    throw std::invalid_argument("pipeline thread launcher is empty");
+  }
   alignment_feedback_->SetNotification(
       [this](const AlignmentFeedbackSnapshot& snapshot) {
         uint64_t job_id = 0;
@@ -310,12 +350,12 @@ Result<uint64_t> PipelineController::submit(Work work) {
     return Result<uint64_t>::Failure(Error::InvalidArgument(
         "cannot submit a pipeline job from its event callback"));
   }
+  std::unique_lock command_lock(command_mutex_);
   std::thread finished_worker;
-  uint64_t id;
+  uint64_t id = 0;
   std::shared_ptr<CancellationToken> cancellation;
   ExecutionContext execution_context;
   {
-    std::lock_guard command_lock(command_mutex_);
     std::lock_guard state_lock(mutex_);
     if (!command_port_ || !query_port_) {
       return Result<uint64_t>::Failure(
@@ -336,56 +376,59 @@ Result<uint64_t> PipelineController::submit(Work work) {
           Error::InvalidArgument("another pipeline job is already running"));
     }
     if (worker_.joinable()) finished_worker = std::move(worker_);
-    id = next_job_id_++;
+    id = next_job_id_;
     cancellation =
         std::make_shared<CancellationToken>(cancellation_capability_);
-    job_ = JobSnapshot{id, JobState::kQueued, std::nullopt, {},
-                       CancellationTelemetry{cancellation_capability_}};
-    terminal_event_completed_job_id_ = 0;
-    alignment_feedback_published_ = false;
-    cancel_requested_ = false;
-    cancellation_ = cancellation;
     execution_context = {
         cancellation, alignment_feedback_, committed_runtime_revision_};
   }
 
-  // Joining is deliberately outside both controller mutexes. The queued job
-  // reserves the ports against replacement while the external call is active.
+  // Joining is deliberately outside the state/event mutexes. The command
+  // admission lock reserves the ports while startup is prepared.
   if (finished_worker.joinable()) finished_worker.join();
-  emit({id, EventType::kJobQueued, std::nullopt, {}});
-  auto start_worker = std::make_shared<std::atomic<bool>>(false);
-  auto work_result = std::make_shared<std::optional<Result<void>>>();
-  std::thread execution_worker(
-      [this, id, work = std::move(work), start_worker, cancellation,
-       execution_context = std::move(execution_context), work_result]() mutable {
-    while (!start_worker->load(std::memory_order_acquire)) {
-      std::this_thread::yield();
-    }
-    OPEN_LMM_THREAD_NAME("open_lmm.pipeline");
-    OPEN_LMM_ZONE_N("PipelineController.Job");
-    OPEN_LMM_PLOT("job.id", id);
-    {
-      std::lock_guard lock(mutex_);
-      if (job_ && job_->id == id && job_->state == JobState::kQueued) {
-        job_->state = JobState::kRunning;
+  auto start_gate = std::make_shared<PipelineStartGate>();
+  auto execution_worker = std::make_shared<PipelineExecutionWorker>();
+  try {
+    execution_worker->thread = thread_launcher_([this, id,
+        work = std::move(work), start_gate, cancellation,
+        execution_context = std::move(execution_context),
+        execution_worker]() mutable {
+      if (!start_gate->WaitForCommit()) return;
+      OPEN_LMM_THREAD_NAME("open_lmm.pipeline");
+      OPEN_LMM_ZONE_N("PipelineController.Job");
+      OPEN_LMM_PLOT("job.id", id);
+      {
+        std::lock_guard lock(mutex_);
+        if (job_ && job_->id == id && job_->state == JobState::kQueued) {
+          job_->state = JobState::kRunning;
+        }
       }
-    }
-    emit({id, EventType::kJobStarted, std::nullopt, {}});
-    Result<void> result = Result<void>::Ok();
-    try {
-      result = work(id, execution_context);
-    } catch (const std::exception& e) {
-      result = Result<void>::Failure(Error::InvalidArgument(e.what()));
-    } catch (...) {
-      result = Result<void>::Failure(
-          Error::InvalidArgument("unknown pipeline exception"));
-    }
-    work_result->emplace(std::move(result));
-  });
-  std::thread lifecycle_worker(
-      [this, id, cancellation, work_result,
-       execution_worker = std::move(execution_worker)]() mutable {
-        execution_worker.join();
+      emit({id, EventType::kJobStarted, std::nullopt, {}});
+      Result<void> result = Result<void>::Ok();
+      try {
+        result = work(id, execution_context);
+      } catch (const std::exception& e) {
+        result = Result<void>::Failure(Error::InvalidArgument(e.what()));
+      } catch (...) {
+        result = Result<void>::Failure(
+            Error::InvalidArgument("unknown pipeline exception"));
+      }
+      execution_worker->result.emplace(std::move(result));
+    });
+  } catch (const std::system_error& error) {
+    return Result<uint64_t>::Failure(Error::ResourceExhausted(
+        std::string("pipeline execution thread launch failed: ") +
+        error.what()));
+  } catch (...) {
+    return Result<uint64_t>::Failure(Error::InvalidArgument(
+        "pipeline execution thread launcher threw an unknown exception"));
+  }
+
+  std::thread lifecycle_worker;
+  try {
+    lifecycle_worker = thread_launcher_(
+      [this, id, cancellation, execution_worker]() mutable {
+        execution_worker->thread.join();
         cancellation->Complete();
         {
           std::lock_guard lock(mutex_);
@@ -393,13 +436,33 @@ Result<uint64_t> PipelineController::submit(Work work) {
             job_->cancellation = cancellation->Telemetry();
           }
         }
-        commitTerminal(id, **work_result);
+        commitTerminal(id, *execution_worker->result);
       });
+  } catch (const std::system_error& error) {
+    start_gate->Set(PipelineStartState::kAborted);
+    if (execution_worker->thread.joinable()) execution_worker->thread.join();
+    return Result<uint64_t>::Failure(Error::ResourceExhausted(
+        std::string("pipeline lifecycle thread launch failed: ") +
+        error.what()));
+  } catch (...) {
+    start_gate->Set(PipelineStartState::kAborted);
+    if (execution_worker->thread.joinable()) execution_worker->thread.join();
+    return Result<uint64_t>::Failure(Error::InvalidArgument(
+        "pipeline lifecycle thread launcher threw an unknown exception"));
+  }
   {
-    std::lock_guard command_lock(command_mutex_);
+    std::lock_guard state_lock(mutex_);
+    ++next_job_id_;
+    job_ = JobSnapshot{id, JobState::kQueued, std::nullopt, {},
+                       CancellationTelemetry{cancellation_capability_}};
+    terminal_event_completed_job_id_ = 0;
+    alignment_feedback_published_ = false;
+    cancel_requested_ = false;
+    cancellation_ = cancellation;
     worker_ = std::move(lifecycle_worker);
   }
-  start_worker->store(true, std::memory_order_release);
+  emit({id, EventType::kJobQueued, std::nullopt, {}});
+  start_gate->Set(PipelineStartState::kCommitted);
   return Result<uint64_t>::Ok(id);
 }
 

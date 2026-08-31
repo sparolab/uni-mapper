@@ -83,13 +83,14 @@ if(BUILD_TESTING)
 
   add_executable(open_lmm_ros_goal_admission_tests
     test/contract/goal_admission_tests.cpp)
-  target_link_libraries(open_lmm_ros_goal_admission_tests PRIVATE
+  ament_target_dependencies(open_lmm_ros_goal_admission_tests rclcpp_action)
+  target_link_libraries(open_lmm_ros_goal_admission_tests
     Threads::Threads
     open_lmm::client)
   openlmm_add_test(
     NAME open_lmm_ros_goal_admission_tests
     TARGET open_lmm_ros_goal_admission_tests
-    LAYER L5 MODULE adapters.ros OWNER GoalAdmissionGate
+    LAYER L5 MODULE adapters.ros OWNER RosGoalCoordinator
     INVARIANTS INV-13 INV-17 LANES pr SANITIZERS tsan)
 
   ament_auto_add_executable(open_lmm_ros_control_panel_model_tests

@@ -20,6 +20,8 @@ class ErrorTests(unittest.TestCase):
             open_lmm.ErrorCode.IO_ERROR: open_lmm.OpenLMMIOError,
             open_lmm.ErrorCode.CANCELLED: open_lmm.OpenLMMCancelledError,
             open_lmm.ErrorCode.AGENT_EXCLUDED: open_lmm.OpenLMMAgentExcludedError,
+            open_lmm.ErrorCode.RESOURCE_EXHAUSTED:
+                open_lmm.OpenLMMResourceExhaustedError,
             open_lmm.ErrorCode.INTERNAL: open_lmm.OpenLMMInternalError,
         }
         for code, exception_type in expected.items():

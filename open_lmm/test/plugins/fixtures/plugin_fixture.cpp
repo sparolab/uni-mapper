@@ -65,6 +65,8 @@ const OpenLmmPluginApiV1 kApi{
 #endif
 #if OPEN_LMM_PLUGIN_FIXTURE_MODE == 6
     nullptr,
+#elif OPEN_LMM_PLUGIN_FIXTURE_MODE == 12
+    "stale_fixture",
 #else
     "fixture",
 #endif
@@ -81,7 +83,19 @@ const OpenLmmPluginApiV1 kApi{
 #else
     "test:lifecycle",
 #endif
-    1, "fixture-1"};
+#if OPEN_LMM_PLUGIN_FIXTURE_MODE == 13
+    2,
+#else
+    1,
+#endif
+#if OPEN_LMM_PLUGIN_FIXTURE_MODE == 14
+    "fixture-old"
+#elif OPEN_LMM_PLUGIN_FIXTURE_MODE == 15
+    nullptr
+#else
+    "fixture-1"
+#endif
+};
 
 }  // namespace
 

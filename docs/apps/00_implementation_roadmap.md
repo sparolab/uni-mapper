@@ -33,6 +33,15 @@ P7-C2 Interactive Alignment — PLANNED
 P7-C3 Transactional Config Form — PLANNED
 ```
 
+위 application phase와 별도로 production hardening은 다음 순서로 진행한다.
+
+```text
+H1 thread safety
+  → RuntimeClient cleanup ownership
+  → ROS early-cancel
+  → algorithm plugin generation validation — IMPLEMENTED / GO
+```
+
 최종 목표 구조는 다음과 같다.
 
 ```text
@@ -111,6 +120,7 @@ library 구현을 위해 내부적으로 실행되는 private worker는 user-fac
 | P7-C3 | [구현명세](12_ros_transactional_config_implementation_spec.md) | **PLANNED** — expected-revision 기반 주요 config form |
 | DX-1 | [09_core_gui_developer_entrypoint_implementation_spec.md](09_core_gui_developer_entrypoint_implementation_spec.md) | **GO** — `make core-build`, `make cli`, `make gui` C++ 개발 진입점; P7/Goal 09와 독립 |
 | DX-2 | [Python developer entrypoint](../../bindings/python/README.md#local-wheel-build) | **GO** — 전용 wheel-profile core와 venv를 보존하는 `make python*` 개발 진입점 |
+| H1 | [13_production_hardening_implementation_spec.md](13_production_hardening_implementation_spec.md) · [결과](results/13_production_hardening_result.md) | **IMPLEMENTED / GO** — thread rollback, client retirement, ROS early-cancel, stale plugin generation 차단 |
 
 ## 5. 전역 admission rule
 

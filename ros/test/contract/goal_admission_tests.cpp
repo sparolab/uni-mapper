@@ -1,29 +1,65 @@
-#include "../../ros2/open_lmm_ros/runtime_adapter/goal_admission.hpp"
+#include "../../ros2/open_lmm_ros/runtime_adapter/goal_coordinator.hpp"
 #include "../../ros2/open_lmm_ros/runtime_adapter/action_terminal.hpp"
 
-#include <atomic>
 #include <cstdlib>
 #include <iostream>
-#include <thread>
-#include <vector>
 
 int main() {
-  open_lmm::GoalAdmissionGate gate;
-  std::atomic<int> accepted{0};
-  std::vector<std::thread> contenders;
-  for (int index = 0; index < 32; ++index) {
-    contenders.emplace_back([&] {
-      if (gate.TryReserve()) accepted.fetch_add(1);
-    });
-  }
-  for (auto& contender : contenders) contender.join();
-  if (accepted.load() != 1 || !gate.IsReserved()) {
-    std::cerr << "concurrent goal admission accepted more than one goal\n";
+  rclcpp_action::GoalUUID first{};
+  rclcpp_action::GoalUUID other{};
+  first[0] = 1;
+  other[0] = 2;
+  open_lmm::RosGoalCoordinator goals;
+  if (!goals.TryAccept(first) || goals.TryAccept(other)) {
+    std::cerr << "goal admission did not preserve a single exact UUID\n";
     return EXIT_FAILURE;
   }
-  gate.Release();
-  if (!gate.TryReserve()) {
-    std::cerr << "terminal release did not reopen goal admission\n";
+  if (goals.RequestCancel(other).accepted) {
+    std::cerr << "cancel for another UUID reached the reserved goal\n";
+    return EXIT_FAILURE;
+  }
+  const auto accepted_cancel = goals.RequestCancel(first);
+  if (!accepted_cancel.accepted || accepted_cancel.job ||
+      !goals.CancelPending(first)) {
+    std::cerr << "accept-to-submit cancellation was not retained\n";
+    return EXIT_FAILURE;
+  }
+  if (!goals.BeginSubmit(first)) {
+    std::cerr << "accepted goal did not enter pending-submit phase\n";
+    return EXIT_FAILURE;
+  }
+  const auto pending_cancel = goals.RequestCancel(first);
+  if (!pending_cancel.accepted || pending_cancel.job) {
+    std::cerr << "submit-to-job-publication cancellation was not retained\n";
+    return EXIT_FAILURE;
+  }
+  const open_lmm::JobHandle job{41};
+  const auto publication = goals.PublishJob(first, job);
+  if (!publication.matched || !publication.cancel_pending) {
+    std::cerr << "job publication did not atomically inherit cancellation\n";
+    return EXIT_FAILURE;
+  }
+  const auto active_cancel = goals.RequestCancel(first);
+  if (!active_cancel.accepted || !active_cancel.job ||
+      active_cancel.job->value != job.value) {
+    std::cerr << "active cancellation did not target the exact public job\n";
+    return EXIT_FAILURE;
+  }
+  goals.MarkTerminal(other);
+  if (goals.Phase() != open_lmm::RosGoalPhase::kActiveJob) {
+    std::cerr << "wrong-goal terminal cleanup cleared the active goal\n";
+    return EXIT_FAILURE;
+  }
+  if (!goals.MarkTerminal(first) ||
+      goals.Phase() != open_lmm::RosGoalPhase::kTerminal ||
+      goals.TryAccept(other)) {
+    std::cerr << "terminal phase did not retain exact goal ownership\n";
+    return EXIT_FAILURE;
+  }
+  goals.ReleaseTerminal(first);
+  if (goals.Phase() != open_lmm::RosGoalPhase::kIdle ||
+      !goals.TryAccept(other)) {
+    std::cerr << "exact terminal cleanup did not reopen goal admission\n";
     return EXIT_FAILURE;
   }
 

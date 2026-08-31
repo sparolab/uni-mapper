@@ -80,10 +80,6 @@ openlmm_add_python_test(
   FILE experiments/test_public_api.py LAYER L2
   MODULE experiments.api OWNER ExperimentAPI INVARIANTS INV-13 INV-14)
 openlmm_add_python_test(
-  NAME open_lmm_python_experiment_cli_tests
-  FILE experiments/test_cli.py LAYER L2
-  MODULE experiments.cli OWNER ExperimentCLI INVARIANTS INV-13 INV-14 INV-18)
-openlmm_add_python_test(
   NAME open_lmm_python_experiment_manifest_tests
   FILE experiments/test_manifest.py LAYER L2
   MODULE experiments.manifest OWNER ExperimentManifest

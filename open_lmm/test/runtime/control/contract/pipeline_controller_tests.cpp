@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <system_error>
 #include <vector>
 #include <thread>
 
@@ -26,6 +27,36 @@ void Check(bool condition, const char* message) {
     std::exit(1);
   }
 }
+
+class ThreadLaunchProbe {
+ public:
+  explicit ThreadLaunchProbe(std::size_t fail_on) : fail_on_(fail_on) {}
+
+  ThreadLauncher Launcher() {
+    return [this](ThreadTask task) {
+      const auto call = ++calls_;
+      if (call == fail_on_) {
+        throw std::system_error(
+            std::make_error_code(std::errc::resource_unavailable_try_again),
+            "injected thread launch failure");
+      }
+      return std::thread([this, task = std::move(task)]() mutable {
+        ++started_;
+        task();
+        ++completed_;
+      });
+    };
+  }
+
+  [[nodiscard]] std::size_t Started() const { return started_.load(); }
+  [[nodiscard]] std::size_t Completed() const { return completed_.load(); }
+
+ private:
+  const std::size_t fail_on_;
+  std::atomic<std::size_t> calls_{0};
+  std::atomic<std::size_t> started_{0};
+  std::atomic<std::size_t> completed_{0};
+};
 
 class FakeRunner final : public test::RuntimePortFixture {
  public:
@@ -1326,6 +1357,47 @@ void TestTerminalCallbackRejectsWorkerLifecycleCommands() {
         "worker lifecycle command was not safely rejected in callback");
 }
 
+void TestThreadLaunchFailureDoesNotPublishPartialJob() {
+  for (const std::size_t failed_worker : {std::size_t{1}, std::size_t{2}}) {
+    ThreadLaunchProbe probe(2 + failed_worker);
+    {
+      auto runner = std::make_shared<FakeRunner>();
+      PipelineController controller(runner, runner, probe.Launcher());
+      const auto seed = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+      Check(seed && seed.Value() == 1 && controller.Wait(seed.Value()),
+            "thread failure fixture publishes a terminal baseline");
+      const auto before = controller.Snapshot();
+
+      const auto failed = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+      Check(!failed &&
+                failed.GetError().code ==
+                    Error::Code::kResourceExhausted,
+            "thread launch failure is a typed resource error");
+      const auto after = controller.Snapshot();
+      Check(before.job && after.job &&
+                before.job->id == after.job->id &&
+                before.job->state == after.job->state &&
+                before.job->message == after.job->message &&
+                before.job->cancellation.cancel_requested_at_unix_ns ==
+                    after.job->cancellation.cancel_requested_at_unix_ns &&
+                before.recent_events.size() == after.recent_events.size() &&
+                before.recent_events.back().sequence ==
+                    after.recent_events.back().sequence &&
+                before.runtime_revision == after.runtime_revision &&
+                before.config_revision == after.config_revision,
+            "failed startup preserves terminal job, event, and revision state");
+      Check(probe.Completed() == 2 + failed_worker - 1,
+            "partial execution workers are joined before submit returns");
+
+      const auto retry = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+      Check(retry && retry.Value() == 2 && controller.Wait(retry.Value()),
+            "failed startup preserves the next job id and retry admission");
+    }
+    Check(probe.Started() == probe.Completed(),
+          "all launched pipeline workers finish before controller teardown");
+  }
+}
+
 void TestControllerCoordinatorFullFallbackIntegration() {
   auto runner = std::make_shared<FakeRunner>();
   runner->coordinate_alignment = true;
@@ -1533,6 +1605,7 @@ int main() {
   TestEventCallbackCanUnsubscribeReenterAndThrow();
   TestTerminalCommitPrecedesWaitAndReentrantCallback();
   TestTerminalCallbackRejectsWorkerLifecycleCommands();
+  TestThreadLaunchFailureDoesNotPublishPartialJob();
 #elif OPEN_LMM_PIPELINE_CONTROLLER_SUITE == 3
   TestAlignmentFeedbackAcceptAndStaleResponse();
   TestAlignmentFeedbackCanRespondFromRequestCallback();

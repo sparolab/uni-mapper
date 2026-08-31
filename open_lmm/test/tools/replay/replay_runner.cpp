@@ -222,6 +222,7 @@ const char* ErrorCodeName(open_lmm::Error::Code code) {
     case Code::kIoError: return "io_error";
     case Code::kCancelled: return "cancelled";
     case Code::kAgentExcluded: return "agent_excluded";
+    case Code::kResourceExhausted: return "resource_exhausted";
   }
   return "unknown";
 }

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -21,6 +22,58 @@ void Check(bool condition, const char* message) {
   if (condition) return;
   std::cerr << "FAIL: " << message << '\n';
   std::exit(1);
+}
+
+class ThreadLaunchProbe {
+ public:
+  explicit ThreadLaunchProbe(std::size_t fail_on) : fail_on_(fail_on) {}
+
+  ThreadLauncher Launcher() {
+    return [this](ThreadTask task) {
+      const auto call = ++calls_;
+      if (call == fail_on_) {
+        throw std::system_error(
+            std::make_error_code(std::errc::resource_unavailable_try_again),
+            "injected bounded executor launch failure");
+      }
+      return std::thread([this, task = std::move(task)]() mutable {
+        ++started_;
+        task();
+        ++completed_;
+      });
+    };
+  }
+
+  [[nodiscard]] std::size_t Started() const { return started_.load(); }
+  [[nodiscard]] std::size_t Completed() const { return completed_.load(); }
+
+ private:
+  const std::size_t fail_on_;
+  std::atomic<std::size_t> calls_{0};
+  std::atomic<std::size_t> started_{0};
+  std::atomic<std::size_t> completed_{0};
+};
+
+void TestPartialConstructionJoinsEveryWorker() {
+  for (const std::size_t fail_on :
+       {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
+    ThreadLaunchProbe probe(fail_on);
+    bool threw = false;
+    try {
+      BoundedExecutor executor(3, 2, {}, probe.Launcher());
+    } catch (const std::system_error&) {
+      threw = true;
+    }
+    Check(threw, "injected executor construction failure is propagated");
+    Check(probe.Started() == fail_on - 1 &&
+              probe.Completed() == probe.Started(),
+          "partially constructed executor wakes and joins every worker");
+
+    BoundedExecutor retry(2, 1, {}, probe.Launcher());
+    const auto task = retry.Submit([] { return Result<void>::Ok(); });
+    Check(task && task.Value().Wait(),
+          "a fresh executor works after injected construction failure");
+  }
 }
 
 void TestConcurrencyBoundAndCompletionOrder() {
@@ -234,6 +287,7 @@ int main() {
   TestConcurrencyBoundAndCompletionOrder();
   TestQueuedCancellationAndExceptionConversion();
   TestBackpressuredSubmissionCancellation();
+  TestPartialConstructionJoinsEveryWorker();
 #else
 #error "OPEN_LMM_RESOURCE_SUITE must select a layer suite"
 #endif

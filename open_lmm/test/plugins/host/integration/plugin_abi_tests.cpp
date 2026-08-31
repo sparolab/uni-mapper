@@ -12,7 +12,9 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -28,6 +30,20 @@ std::string CanonicalConfig(open_lmm::ConfigDocumentKind kind,
       kind, document, "plugin ABI fixture");
   Check(validated.IsOk(), "built-in plugin fixture config must validate");
   return validated.Value().CanonicalJson();
+}
+
+open_lmm::PluginContractExpectation DescriptorContract(
+    std::string_view model) {
+  return {{"descriptor:kdtree-v3"}, model, 1, {"open-lmm-3.0.0"}};
+}
+
+open_lmm::PluginContractExpectation RemoverContract(
+    std::string_view model, bool online) {
+  return {online ? std::optional<std::string_view>{
+                       "dynamic_remover:online-v3"}
+                 : std::optional<std::string_view>{
+                       "dynamic_remover:offline-v3"},
+          model, 1, {"open-lmm-3.0.0"}};
 }
 
 }  // namespace
@@ -65,11 +81,14 @@ int main(int argc, char** argv) {
       path != built_ins.end()) {
     open_lmm::PluginMetadata built_in_metadata;
     auto scan_context = open_lmm::load_plugin_v1<IDescriptorKdtree>(
-        path->second, "descriptor", scan_context_json, &built_in_metadata);
+        path->second, "descriptor", scan_context_json, &built_in_metadata,
+        nullptr, DescriptorContract("scan_context"));
     Check(scan_context.IsOk(), "built-in ScanContext must use ABI v1 loader");
     auto scan_context_owner = std::move(scan_context).Value();
     Check(built_in_metadata.name == "scan_context" &&
-              built_in_metadata.capability == "descriptor:kdtree" &&
+              built_in_metadata.capability == "descriptor:kdtree-v3" &&
+              built_in_metadata.config_schema_version == 1 &&
+              built_in_metadata.build_version == "open-lmm-3.0.0" &&
               scan_context_owner->getDescriptorKey().size() == 20,
           "built-in plugin must receive its immutable config snapshot");
     auto empty_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
@@ -100,9 +119,13 @@ int main(int argc, char** argv) {
         open_lmm::ConfigDocumentKind::kLoopDetector,
         {{"loop_detector", {{"loop_detector_type", "kdtree"},
                             {"model", "solid"}}}});
+    open_lmm::PluginMetadata metadata;
     auto solid = open_lmm::load_plugin_v1<IDescriptorKdtree>(
-        path->second, "descriptor", config);
-    Check(solid.IsOk(), "built-in SOLiD must use ABI v1 loader");
+        path->second, "descriptor", config, &metadata, nullptr,
+        DescriptorContract("solid"));
+    Check(solid.IsOk() && metadata.name == "solid" &&
+              metadata.build_version == "open-lmm-3.0.0",
+          "built-in SOLiD must expose the exact generation contract");
   }
 
   for (const char* target : {"create_hmm_mos", "create_dufomap",
@@ -115,9 +138,14 @@ int main(int argc, char** argv) {
         {{"dynamic_remover", {{"dynamic_remover_type", "online"},
                               {"model", model}}}});
     {
+      open_lmm::PluginMetadata metadata;
       auto plugin = open_lmm::load_plugin_v1<IOnlineRemoverPlugin>(
-          path->second, "dynamic_remover_online", config);
-      Check(plugin.IsOk(), "built-in online remover must use ABI v1 loader");
+          path->second, "dynamic_remover_online", config, &metadata, nullptr,
+          RemoverContract(model, true));
+      Check(plugin.IsOk() && metadata.name == model &&
+                metadata.capability == "dynamic_remover:online-v3" &&
+                metadata.build_version == "open-lmm-3.0.0",
+            "built-in online remover must expose exact metadata");
     }
 
     open_lmm::DynamicRemoverConfig factory_config;
@@ -141,9 +169,14 @@ int main(int argc, char** argv) {
         {{"dynamic_remover", {{"dynamic_remover_type", "offline"},
                               {"model", model}}}});
     {
+      open_lmm::PluginMetadata metadata;
       auto plugin = open_lmm::load_plugin_v1<IOfflineRemoverPlugin>(
-          path->second, "dynamic_remover_offline", config);
-      Check(plugin.IsOk(), "built-in offline remover must use ABI v1 loader");
+          path->second, "dynamic_remover_offline", config, &metadata, nullptr,
+          RemoverContract(model, false));
+      Check(plugin.IsOk() && metadata.name == model &&
+                metadata.capability == "dynamic_remover:offline-v3" &&
+                metadata.build_version == "open-lmm-3.0.0",
+            "built-in offline remover must expose exact metadata");
     }
 
     open_lmm::DynamicRemoverConfig factory_config;

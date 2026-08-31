@@ -15,6 +15,7 @@ class ErrorCode(IntEnum):
     IO_ERROR = 6
     CANCELLED = 7
     AGENT_EXCLUDED = 8
+    RESOURCE_EXHAUSTED = 9
     INTERNAL = 255
 
 
@@ -90,6 +91,10 @@ class OpenLMMAgentExcludedError(OpenLMMError):
     pass
 
 
+class OpenLMMResourceExhaustedError(OpenLMMError):
+    pass
+
+
 class OpenLMMInternalError(OpenLMMError):
     pass
 
@@ -104,6 +109,7 @@ _EXCEPTION_BY_CODE: dict[ErrorCode, type[OpenLMMError]] = {
     ErrorCode.IO_ERROR: OpenLMMIOError,
     ErrorCode.CANCELLED: OpenLMMCancelledError,
     ErrorCode.AGENT_EXCLUDED: OpenLMMAgentExcludedError,
+    ErrorCode.RESOURCE_EXHAUSTED: OpenLMMResourceExhaustedError,
     ErrorCode.INTERNAL: OpenLMMInternalError,
 }
 

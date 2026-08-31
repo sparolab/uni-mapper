@@ -53,6 +53,8 @@ openlmm_add_runtime_service_suite(
 add_executable(open_lmm_runtime_client_tests
   runtime/client/contract/runtime_client_tests.cpp)
 target_link_libraries(open_lmm_runtime_client_tests PRIVATE open_lmm_client)
+target_include_directories(open_lmm_runtime_client_tests PRIVATE
+  "${PROJECT_SOURCE_DIR}/src")
 if(TARGET create_scan_context)
   add_dependencies(open_lmm_runtime_client_tests create_scan_context)
 endif()

@@ -101,6 +101,7 @@ endfunction()
 
 function(openlmm_set_create_target_properties target)
   openlmm_set_global_target_properties(${target})
+  target_link_libraries(${target} open_lmm_plugin_build_contract)
   set_target_properties(${target} PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
   )

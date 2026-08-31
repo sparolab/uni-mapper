@@ -1,5 +1,6 @@
 add_library(open_lmm_runtime_client_objects OBJECT
   runtime_client.cpp
+  runtime_retirement_coordinator.cpp
 )
 target_link_libraries(open_lmm_runtime_client_objects PRIVATE
   open_lmm_contracts

@@ -2,6 +2,7 @@
 
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/result.hpp>
+#include <foundation/concurrency/thread_launcher.hpp>
 
 #include <condition_variable>
 #include <cstddef>
@@ -53,7 +54,9 @@ class BoundedExecutor {
 
   explicit BoundedExecutor(std::size_t worker_count,
                            std::size_t queue_capacity,
-                           SubmissionWaitNotification wait_notification = {});
+                           SubmissionWaitNotification wait_notification = {},
+                           ThreadLauncher thread_launcher =
+                               DefaultThreadLauncher());
   ~BoundedExecutor();
   BoundedExecutor(const BoundedExecutor&) = delete;
   BoundedExecutor& operator=(const BoundedExecutor&) = delete;

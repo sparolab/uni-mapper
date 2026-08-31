@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace open_lmm {
@@ -147,7 +148,7 @@ OpenLMMROS::~OpenLMMROS() {
   std::optional<JobHandle> active_job;
   {
     std::lock_guard lock(action_mutex_);
-    active_job = active_job_;
+    active_job = goal_coordinator_.ActiveJob();
   }
   if (active_job) (void)runtime_->Cancel(*active_job);
   if (action_worker_.joinable()) action_worker_.join();
@@ -163,25 +164,25 @@ PipelineSnapshot OpenLMMROS::Snapshot() const {
 rclcpp_action::GoalResponse OpenLMMROS::HandleGoal(
     const rclcpp_action::GoalUUID& uuid,
     std::shared_ptr<const ExecutePipeline::Goal> goal) {
-  (void)uuid;
   if (!goal || !DecodeGoal(*goal)) {
     return rclcpp_action::GoalResponse::REJECT;
   }
-  return goal_admission_.TryReserve()
-             ? rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE
-             : rclcpp_action::GoalResponse::REJECT;
+  std::lock_guard lock(action_mutex_);
+  return goal_coordinator_.TryAccept(uuid)
+      ? rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE
+      : rclcpp_action::GoalResponse::REJECT;
 }
 
 rclcpp_action::CancelResponse OpenLMMROS::HandleCancel(
     const std::shared_ptr<GoalHandleExecutePipeline>& goal_handle) {
-  (void)goal_handle;
-  std::optional<JobHandle> job;
+  RosCancelDisposition cancel;
   {
     std::lock_guard lock(action_mutex_);
-    job = active_job_;
+    cancel = goal_coordinator_.RequestCancel(goal_handle->get_goal_id());
   }
-  if (!job) return rclcpp_action::CancelResponse::REJECT;
-  return runtime_->Cancel(*job)
+  if (!cancel.accepted) return rclcpp_action::CancelResponse::REJECT;
+  if (!cancel.job) return rclcpp_action::CancelResponse::ACCEPT;
+  return runtime_->Cancel(*cancel.job)
              ? rclcpp_action::CancelResponse::ACCEPT
              : rclcpp_action::CancelResponse::REJECT;
 }
@@ -191,15 +192,53 @@ void OpenLMMROS::HandleAccepted(
   if (action_worker_.joinable()) action_worker_.join();
   {
     std::lock_guard lock(action_mutex_);
+    if (!goal_coordinator_.Matches(goal_handle->get_goal_id())) {
+      auto result = std::make_shared<ExecutePipeline::Result>();
+      result->message = "accepted goal does not match reserved UUID";
+      goal_handle->abort(result);
+      return;
+    }
     active_goal_ = goal_handle;
   }
-  action_worker_ =
-      std::jthread([this, goal_handle] { ExecuteGoal(goal_handle); });
+  try {
+    action_worker_ =
+        std::jthread([this, goal_handle] { ExecuteGoal(goal_handle); });
+  } catch (const std::system_error& error) {
+    auto result = std::make_shared<ExecutePipeline::Result>();
+    result->message = std::string("action worker launch failed: ") +
+                      error.what();
+    goal_handle->abort(result);
+    std::lock_guard lock(action_mutex_);
+    if (goal_coordinator_.MarkTerminal(goal_handle->get_goal_id())) {
+      active_goal_.reset();
+      goal_coordinator_.ReleaseTerminal(goal_handle->get_goal_id());
+    }
+  }
 }
 
 void OpenLMMROS::ExecuteGoal(
     const std::shared_ptr<GoalHandleExecutePipeline>& goal_handle) {
+  const auto uuid = goal_handle->get_goal_id();
+  struct TerminalGuard {
+    OpenLMMROS* owner;
+    rclcpp_action::GoalUUID uuid;
+    ~TerminalGuard() {
+      std::lock_guard lock(owner->action_mutex_);
+      if (!owner->goal_coordinator_.MarkTerminal(uuid)) return;
+      owner->active_goal_.reset();
+      owner->goal_coordinator_.ReleaseTerminal(uuid);
+    }
+  } terminal_guard{this, uuid};
+
   auto result = std::make_shared<ExecutePipeline::Result>();
+  {
+    std::lock_guard lock(action_mutex_);
+    if (!goal_coordinator_.BeginSubmit(uuid)) {
+      result->message = "goal was not in accepted state";
+      goal_handle->abort(result);
+      return;
+    }
+  }
   auto request = DecodeGoal(*goal_handle->get_goal());
   auto submitted = request && runtime_
                        ? runtime_->Submit(request.Value())
@@ -208,18 +247,32 @@ void OpenLMMROS::ExecuteGoal(
                                      : request.GetError());
   if (!submitted) {
     result->message = submitted.GetError().Message();
-    goal_handle->abort(result);
-    std::lock_guard lock(action_mutex_);
-    goal_admission_.Release();
-    active_goal_.reset();
+    bool canceled = false;
+    {
+      std::lock_guard lock(action_mutex_);
+      canceled = goal_coordinator_.CancelPending(uuid);
+    }
+    if (canceled) {
+      goal_handle->canceled(result);
+    } else {
+      goal_handle->abort(result);
+    }
     return;
   }
   const JobHandle job = submitted.Value();
   result->job_id = job.value;
+  bool cancel_pending = false;
   {
     std::lock_guard lock(action_mutex_);
-    active_job_ = job;
+    const auto published = goal_coordinator_.PublishJob(uuid, job);
+    if (!published.matched) {
+      result->message = "submitted job no longer matches the accepted goal";
+      goal_handle->abort(result);
+      return;
+    }
+    cancel_pending = published.cancel_pending;
   }
+  if (cancel_pending) (void)runtime_->Cancel(job);
 
   auto waited = runtime_->Wait(job);
   auto snapshot = runtime_->Snapshot();
@@ -246,10 +299,6 @@ void OpenLMMROS::ExecuteGoal(
   } else {
     goal_handle->abort(result);
   }
-  std::lock_guard lock(action_mutex_);
-  active_job_.reset();
-  goal_admission_.Release();
-  active_goal_.reset();
 }
 
 void OpenLMMROS::HandleStatus(
@@ -295,7 +344,8 @@ void OpenLMMROS::PublishEvent(const ExecutionEvent& event) {
   std::shared_ptr<GoalHandleExecutePipeline> goal;
   {
     std::lock_guard lock(action_mutex_);
-    if (active_job_ && active_job_->value == event.job_id) {
+    const auto active_job = goal_coordinator_.ActiveJob();
+    if (active_job && active_job->value == event.job_id) {
       goal = active_goal_.lock();
     }
   }

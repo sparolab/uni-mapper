@@ -2,6 +2,7 @@
 
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/runtime_api.hpp>
+#include <foundation/concurrency/thread_launcher.hpp>
 #include <runtime/execution/stage_ports.hpp>
 
 #include <atomic>
@@ -25,6 +26,9 @@ class PipelineController {
   explicit PipelineController(std::shared_ptr<StageRuntimePort> port);
   PipelineController(std::shared_ptr<StageCommandPort> command_port,
                      std::shared_ptr<RuntimeQueryPort> query_port);
+  PipelineController(std::shared_ptr<StageCommandPort> command_port,
+                     std::shared_ptr<RuntimeQueryPort> query_port,
+                     ThreadLauncher thread_launcher);
   ~PipelineController();
   PipelineController(const PipelineController&) = delete;
   PipelineController& operator=(const PipelineController&) = delete;
@@ -120,6 +124,7 @@ class PipelineController {
   std::shared_ptr<CancellationToken> cancellation_;
   CancellationCapability cancellation_capability_;
   std::shared_ptr<AlignmentFeedbackBroker> alignment_feedback_;
+  ThreadLauncher thread_launcher_;
   bool alignment_feedback_published_ = false;
   uint64_t next_job_id_ = 1;
   uint64_t next_event_sequence_ = 1;

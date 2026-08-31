@@ -1,0 +1,10 @@
+#pragma once
+
+namespace open_lmm {
+
+// Internal linkage is intentional: a GNU-unique inline variable marks a DSO
+// NODELETE and would violate the plugin unload/lifetime contract.
+static constexpr char kPluginBuildGeneration[] =
+    "open-lmm-@PROJECT_VERSION@";
+
+}  // namespace open_lmm

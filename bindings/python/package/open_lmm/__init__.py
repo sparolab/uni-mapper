@@ -16,6 +16,7 @@ from ._errors import (
     OpenLMMParseError,
     OpenLMMPluginLoadError,
     OpenLMMRegistrationError,
+    OpenLMMResourceExhaustedError,
 )
 from ._models import (
     AlgorithmProgress,
@@ -79,6 +80,7 @@ __all__ = [
     "OpenLMMParseError",
     "OpenLMMPluginLoadError",
     "OpenLMMRegistrationError",
+    "OpenLMMResourceExhaustedError",
     "PipelineSnapshot",
     "Revision",
     "Runtime",

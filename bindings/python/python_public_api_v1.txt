@@ -30,6 +30,7 @@ OpenLMMOptimizationError
 OpenLMMParseError
 OpenLMMPluginLoadError
 OpenLMMRegistrationError
+OpenLMMResourceExhaustedError
 PipelineSnapshot
 Revision
 Runtime

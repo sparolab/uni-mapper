@@ -23,6 +23,13 @@ include(cmake/options.cmake)
 include(cmake/externals.cmake)
 include(cmake/internals.cmake)
 
+configure_file(
+  cmake/plugin_build_generation.hpp.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/open_lmm/plugin_build_generation.hpp
+  @ONLY)
+add_library(open_lmm_plugin_build_contract INTERFACE)
+target_include_directories(open_lmm_plugin_build_contract INTERFACE
+  ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
 # cmake policy
 # cmake_policy(SET CMP0076 NEW)

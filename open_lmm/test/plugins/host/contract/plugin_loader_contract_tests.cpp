@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 namespace {
 
@@ -16,12 +17,14 @@ void Check(bool condition, const char* message) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  Check(argc == 13, "all plugin loader fixture paths are required");
+  Check(argc == 17, "all plugin loader fixture paths are required");
 
   PluginFixtureCounters counters;
   open_lmm::PluginMetadata metadata;
+  const open_lmm::PluginContractExpectation exact_contract{
+      {"test:lifecycle"}, {"fixture"}, 1, {"fixture-1"}};
   const auto inspected = open_lmm::inspect_plugin_v1(
-      argv[1], "test", {{"test:lifecycle"}});
+      argv[1], "test", exact_contract);
   Check(inspected && inspected.Value().name == "fixture" &&
             counters.creates == 0,
         "inspection validates exact metadata without creating an instance");
@@ -31,7 +34,7 @@ int main(int argc, char** argv) {
 
   auto loaded = open_lmm::load_plugin_v1<PluginFixture>(
       argv[1], "test", "{}", &metadata, &counters,
-      {{"test:lifecycle"}});
+      exact_contract);
   Check(loaded && metadata.kind == "test" && metadata.name == "fixture" &&
             metadata.capability == "test:lifecycle" && counters.creates == 1,
         "valid plugin exposes metadata and configured instance");
@@ -74,6 +77,34 @@ int main(int argc, char** argv) {
   Check(!open_lmm::inspect_plugin_v1(argv[12], "test") &&
             !open_lmm::load_plugin_v1<PluginFixture>(argv[12], "test", "{}"),
         "null entry callback result fails safely");
+
+  const auto reject_before_create = [&](int index, const char* field) {
+    PluginFixtureCounters rejected_counters;
+    const auto rejected = open_lmm::load_plugin_v1<PluginFixture>(
+        argv[index], "test", "{}", nullptr, &rejected_counters,
+        exact_contract);
+    Check(!rejected && rejected_counters.creates == 0 &&
+              rejected.GetError().context.plugin == argv[index] &&
+              rejected.GetError().message.find("expected '") !=
+                  std::string::npos &&
+              rejected.GetError().message.find("got '") != std::string::npos,
+          field);
+  };
+  reject_before_create(8, "empty plugin capability reached create");
+  reject_before_create(9, "null plugin capability reached create");
+  reject_before_create(13, "stale plugin name reached create");
+  reject_before_create(14, "stale plugin schema reached create");
+  reject_before_create(15, "stale plugin build generation reached create");
+  reject_before_create(16, "null plugin build generation reached create");
+
+  PluginFixtureCounters capability_counters;
+  const open_lmm::PluginContractExpectation wrong_capability{
+      {"test:stale"}, {"fixture"}, 1, {"fixture-1"}};
+  Check(!open_lmm::load_plugin_v1<PluginFixture>(
+            argv[1], "test", "{}", nullptr, &capability_counters,
+            wrong_capability) &&
+            capability_counters.creates == 0,
+        "stale capability reached create");
 
   std::cout << "plugin loader contract tests passed\n";
   return 0;
