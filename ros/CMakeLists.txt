@@ -29,14 +29,14 @@ if(DEFINED ENV{ROS_VERSION})
 endif()
 
 ### ROS2 ###
-find_package(ament_cmake_auto REQUIRED)
 option(OPEN_LMM_ROS_BUILD_GUI
   "Build the optional in-process OpenLMM GUI composition" ON)
 
-find_package(open_lmm CONFIG REQUIRED COMPONENTS client)
+find_package(open_lmm ${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS client)
 if(OPEN_LMM_ROS_BUILD_GUI)
-  find_package(open_lmm CONFIG REQUIRED COMPONENTS gui)
+  find_package(open_lmm ${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS gui)
 endif()
+find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 find_package(rosidl_default_generators REQUIRED)
 

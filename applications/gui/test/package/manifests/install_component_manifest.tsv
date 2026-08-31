@@ -1,0 +1,12 @@
+GuiRuntime	lib/libopen_lmm_gui_core.so*
+GuiRuntime	share/open_lmm_gui/LICENCE
+GuiRuntime	share/open_lmm_gui/RELEASE_POLICY.md
+GuiRuntime	share/open_lmm_gui/THIRD_PARTY_NOTICES.md
+GuiRuntime	share/open_lmm_gui/open_lmm-gui-install-components.txt
+GuiDevelopment	include/open_lmm/gui/gui_plugin.hpp
+GuiDevelopment	include/open_lmm/gui/gui_runtime_host.hpp
+GuiDevelopment	share/OpenLmmGui/cmake/OpenLmmGuiConfig*.cmake
+GuiDevelopment	share/OpenLmmGui/cmake/OpenLmmGuiTargets*.cmake
+GuiPlugins	lib/libopen_lmm_iridescence_gui.so*
+GuiApplication	bin/open_lmm_gui
+GuiApplication	share/open_lmm_gui/README.md

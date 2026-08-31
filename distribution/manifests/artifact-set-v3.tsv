@@ -1,0 +1,6 @@
+schema_version	artifact_id	version	namespace	install_mode	profiles	exact_dependencies	owner_root
+1	core	3.0.0	native-prefix	cmake-install	runtime,development,plugin-sdk,plugins	-	open_lmm
+1	cli	3.0.0	native-prefix	cmake-install	tools	core=3.0.0	applications/cli
+1	gui	3.0.0	native-prefix	cmake-install	gui-runtime,gui-development,gui-plugins,gui-application	core=3.0.0	applications/gui
+1	python	3.0.0	python-venv	wheel	python-sdk,experiment-cli	core-runtime-closure=3.0.0	bindings/python
+1	ros	3.0.0	ros-overlay	ament-install	runtime-adapter,interfaces,optional-gui	core=3.0.0,gui=3.0.0-if-enabled	ros

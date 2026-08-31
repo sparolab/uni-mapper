@@ -5,7 +5,6 @@ config
 contracts
 core
 descriptor
-gui
 plugin_sdk
 runtime
 utils

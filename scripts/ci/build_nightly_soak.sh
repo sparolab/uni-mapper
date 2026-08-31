@@ -34,7 +34,6 @@ mkdir -p "$evidence_root"
 CC="$compiler_c" CXX="$compiler_cxx" cmake \
   -S "$repository_root/open_lmm" -B "$build_root" \
   -DUSE_CCACHE=OFF \
-  -DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF \
   -DOPEN_LMM_ENABLE_NIGHTLY_SOAK=ON \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build "$build_root" --parallel 2 \

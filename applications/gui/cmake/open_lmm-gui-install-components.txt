@@ -1,0 +1,6 @@
+OpenLMM GUI artifact install components (v3.0.0)
+
+GuiRuntime
+GuiDevelopment
+GuiPlugins
+GuiApplication

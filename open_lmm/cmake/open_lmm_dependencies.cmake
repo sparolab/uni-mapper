@@ -1,13 +1,11 @@
-include_guard(GLOBAL)
-
 include(CMakeFindDependencyMacro)
 
 set(_open_lmm_need_heavy FALSE)
 set(_open_lmm_need_eigen FALSE)
-if(NOT open_lmm_FIND_COMPONENTS)
+if(NOT open_lmm_FIND_COMPONENTS AND NOT _open_lmm_targets_loaded)
   set(_open_lmm_need_heavy TRUE)
   set(_open_lmm_need_eigen TRUE)
-else()
+elseif(open_lmm_FIND_COMPONENTS)
   foreach(_open_lmm_component IN LISTS open_lmm_FIND_COMPONENTS)
     if(_open_lmm_component MATCHES "^(common|config|core|runtime|utils)$")
       set(_open_lmm_need_heavy TRUE)
@@ -54,7 +52,7 @@ endif()
 # exported-targets extra is loaded.
 foreach(_open_lmm_component IN LISTS open_lmm_FIND_COMPONENTS)
   if(_open_lmm_component MATCHES
-      "^(contracts|client|plugin_sdk|common|config|descriptor|alignment|core|runtime|gui|utils)$")
+      "^(contracts|client|plugin_sdk|common|config|descriptor|alignment|core|runtime|utils)$")
     set(open_lmm_${_open_lmm_component}_FOUND TRUE)
   else()
     set(open_lmm_${_open_lmm_component}_FOUND FALSE)

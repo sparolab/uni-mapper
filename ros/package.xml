@@ -11,7 +11,7 @@
   <buildtool_depend condition="$ROS_VERSION == 2">ament_cmake</buildtool_depend>
 
   <!-- common -->
-  <depend>open_lmm</depend>
+  <depend version_eq="3.0.0">open_lmm</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
   <depend>nav_msgs</depend>

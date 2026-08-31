@@ -1,0 +1,15 @@
+kind	logical_name	source_relative_path	wheel_relative_path	required	license
+remover_plugin	libcreate_free_dom.so	lib/libcreate_free_dom.so	open_lmm/.libs/libcreate_free_dom.so	true	GPL-3.0-only
+descriptor_plugin	libcreate_scan_context.so	lib/libcreate_scan_context.so	open_lmm/.libs/libcreate_scan_context.so	true	GPL-3.0-only
+remover_support	libfree_dom.so	lib/libfree_dom.so	open_lmm/.libs/libfree_dom.so	true	GPL-3.0-only
+runtime	libopen_lmm_algorithm_config.so	lib/libopen_lmm_algorithm_config.so	open_lmm/.libs/libopen_lmm_algorithm_config.so	true	GPL-3.0-only
+runtime	libopen_lmm_backend_optimizer.so	lib/libopen_lmm_backend_optimizer.so	open_lmm/.libs/libopen_lmm_backend_optimizer.so	true	GPL-3.0-only
+runtime	libopen_lmm_client.so	lib/libopen_lmm_client.so	open_lmm/.libs/libopen_lmm_client.so	true	GPL-3.0-only
+runtime	libopen_lmm_common.so	lib/libopen_lmm_common.so	open_lmm/.libs/libopen_lmm_common.so	true	GPL-3.0-only
+runtime	libopen_lmm_contracts.so	lib/libopen_lmm_contracts.so	open_lmm/.libs/libopen_lmm_contracts.so	true	GPL-3.0-only
+runtime	libopen_lmm_data_loader.so	lib/libopen_lmm_data_loader.so	open_lmm/.libs/libopen_lmm_data_loader.so	true	GPL-3.0-only
+runtime	libopen_lmm_descriptor.so	lib/libopen_lmm_descriptor.so	open_lmm/.libs/libopen_lmm_descriptor.so	true	GPL-3.0-only
+runtime	libopen_lmm_dynamic_remover.so	lib/libopen_lmm_dynamic_remover.so	open_lmm/.libs/libopen_lmm_dynamic_remover.so	true	GPL-3.0-only
+runtime	libopen_lmm_loop_detector.so	lib/libopen_lmm_loop_detector.so	open_lmm/.libs/libopen_lmm_loop_detector.so	true	GPL-3.0-only
+runtime	libopen_lmm_map_server.so	lib/libopen_lmm_map_server.so	open_lmm/.libs/libopen_lmm_map_server.so	true	GPL-3.0-only
+runtime	libopen_lmm_utils.so	lib/libopen_lmm_utils.so	open_lmm/.libs/libopen_lmm_utils.so	true	GPL-3.0-only

@@ -11,6 +11,3 @@ PluginSDK
 
 Plugins
   Runtime-loaded plugin entry libraries and their support shared libraries.
-
-Tools
-  Standalone open_lmm_batch executable.

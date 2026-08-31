@@ -66,15 +66,6 @@ target_link_options(open_lmm_client INTERFACE
 openlmm_set_global_target_properties(open_lmm_client)
 set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
 
-add_subdirectory(src/adapters/batch)
-add_subdirectory(src/adapters/gui)
-if(OPEN_LMM_BUILD_PYTHON)
-  add_subdirectory(src/adapters/python)
-  if(OPEN_LMM_PYTHON_WHEEL)
-    include(cmake/python_wheel.cmake)
-  endif()
-endif()
-
 # Stable package-facing target names. Implementation-only static libraries and
 # fetched dependency targets stay behind these shared-library boundaries.
 add_library(open_lmm_core INTERFACE)
@@ -89,8 +80,6 @@ set_target_properties(open_lmm_contracts PROPERTIES EXPORT_NAME contracts)
 set_target_properties(open_lmm_common PROPERTIES EXPORT_NAME common)
 set_target_properties(open_lmm_utils PROPERTIES EXPORT_NAME utils)
 set_target_properties(open_lmm_map_server PROPERTIES EXPORT_NAME runtime)
-set_target_properties(open_lmm_gui_core PROPERTIES EXPORT_NAME gui)
-
 add_library(open_lmm_plugin_sdk INTERFACE)
 target_include_directories(open_lmm_plugin_sdk INTERFACE
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -106,7 +95,6 @@ add_library(open_lmm::descriptor ALIAS open_lmm_descriptor)
 add_library(open_lmm::alignment ALIAS open_lmm_alignment)
 add_library(open_lmm::core ALIAS open_lmm_core)
 add_library(open_lmm::runtime ALIAS open_lmm_map_server)
-add_library(open_lmm::gui ALIAS open_lmm_gui_core)
 add_library(open_lmm::utils ALIAS open_lmm_utils)
 
 include(CTest)
@@ -132,7 +120,6 @@ install(TARGETS
   open_lmm_descriptor
   open_lmm_alignment
   open_lmm_map_server
-  open_lmm_gui_core
   open_lmm_core
   open_lmm_plugin_sdk
   EXPORT open_lmmTargets
@@ -152,10 +139,6 @@ install(TARGETS
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
-)
-
-install(TARGETS open_lmm_batch
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Tools
 )
 
 # Runtime-loaded remover plugins depend on their support DSOs. Descriptor
@@ -200,8 +183,6 @@ set(_open_lmm_public_headers
   core/descriptor/descriptor_artifact.hpp
   core/descriptor/descriptor_engine.hpp
   server/runtime_client.hpp
-  gui/gui_plugin.hpp
-  gui/gui_runtime_host.hpp
   utils/config_schema.hpp
 )
 foreach(public_header IN LISTS _open_lmm_public_headers)
@@ -224,6 +205,8 @@ set(_open_lmm_owned_stale_headers
 list(REMOVE_ITEM _open_lmm_owned_stale_headers
   ${_open_lmm_public_headers}
   common/plugin_api.h
+  gui/gui_plugin.hpp
+  gui/gui_runtime_host.hpp
   )
 list(REMOVE_DUPLICATES _open_lmm_owned_stale_headers)
 configure_file(
@@ -269,15 +252,16 @@ if(NOT (DEFINED ENV{ROS_VERSION} AND "$ENV{ROS_VERSION}" EQUAL "2"))
   install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/open_lmmConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/open_lmmConfigVersion.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/open_lmm-gui-compat.cmake
     DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/cmake
     COMPONENT Development
   )
 endif()
 
 install(FILES
-  ${PROJECT_SOURCE_DIR}/../LICENCE
-  ${PROJECT_SOURCE_DIR}/../RELEASE_POLICY.md
-  ${PROJECT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md
+  ${PROJECT_SOURCE_DIR}/package/LICENCE
+  ${PROJECT_SOURCE_DIR}/package/RELEASE_POLICY.md
+  ${PROJECT_SOURCE_DIR}/package/THIRD_PARTY_NOTICES.md
   ${PROJECT_SOURCE_DIR}/cmake/open_lmm-install-components.txt
   DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
   COMPONENT Runtime
@@ -301,7 +285,9 @@ if(DEFINED ENV{ROS_VERSION})
     install(DIRECTORY config DESTINATION share/${PROJECT_NAME}/
       COMPONENT Runtime)
     ament_export_targets(open_lmmTargets HAS_LIBRARY_TARGET)
-    ament_package(CONFIG_EXTRAS cmake/open_lmm_dependencies.cmake)
+    ament_package(
+      CONFIG_EXTRAS cmake/open_lmm_dependencies.cmake
+      CONFIG_EXTRAS_POST cmake/open_lmm-gui-compat.cmake)
   elseif($ENV{ROS_VERSION} EQUAL 1)
     # ROS1 : not supported
     # find_package(catkin REQUIRED)

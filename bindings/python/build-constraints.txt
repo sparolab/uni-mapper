@@ -1,0 +1,6 @@
+# Goal 06 local Ubuntu 22.04 build environment. Update only with a reviewed
+# clean wheel build and source-free E2E result.
+pip==24.0
+scikit-build-core==0.10.7
+pybind11==2.13.6
+numpy==1.21.5

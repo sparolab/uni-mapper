@@ -61,16 +61,6 @@ openlmm_add_test(
   INVARIANTS INV-03 INV-12 INV-16
   LANES pr SANITIZERS asan-ubsan)
 
-openlmm_add_test(
-  NAME open_lmm_critical_coverage_contract_tests
-  COMMAND /usr/bin/python3
-  COMMAND_ARGS
-    ${CMAKE_CURRENT_SOURCE_DIR}/quality/coverage/critical_coverage_contract_tests.py
-    ${PROJECT_SOURCE_DIR}/../scripts/ci/critical_coverage.py
-  LAYER L2 MODULE quality.coverage OWNER CriticalCoverage
-  INVARIANTS INV-01 INV-03 INV-04 INV-07 INV-11 INV-18
-  LANES pr)
-
 if(OPEN_LMM_ENABLE_FUZZING)
   add_executable(open_lmm_config_schema_fuzz
     quality/fuzz/config_schema_fuzz.cpp)

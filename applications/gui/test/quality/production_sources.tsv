@@ -1,0 +1,14 @@
+path	scope
+src/config_editor.cpp	required
+src/host/gui_controller_bridge.cpp	required
+src/host/gui_plugin_host.cpp	required
+src/host/gui_plugin_module.cpp	required
+src/host/gui_runtime_host.cpp	required
+src/iridescence/application_log.cpp	iridescence
+src/iridescence/iridescence_gui.cpp	iridescence
+src/main.cpp	required
+src/model/gui_event_queue.cpp	required
+src/model/gui_model.cpp	required
+src/presentation/map_presentation_state.cpp	required
+src/presentation/visualization_repository.cpp	required
+src/presentation/visualization_snapshot_worker.cpp	required

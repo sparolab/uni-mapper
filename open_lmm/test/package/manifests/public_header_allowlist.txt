@@ -21,6 +21,4 @@ core/alignment/loop_constraint_builder.hpp
 core/descriptor/descriptor_artifact.hpp
 core/descriptor/descriptor_engine.hpp
 server/runtime_client.hpp
-gui/gui_plugin.hpp
-gui/gui_runtime_host.hpp
 utils/config_schema.hpp

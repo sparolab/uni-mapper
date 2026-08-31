@@ -1,0 +1,5 @@
+path	scope
+native/model_conversion.cpp	required
+native/module.cpp	required
+native/numpy_conversion.cpp	required
+native/runtime_binding.cpp	required

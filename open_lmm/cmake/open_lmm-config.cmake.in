@@ -1,7 +1,5 @@
 @PACKAGE_INIT@
 
-include_guard(GLOBAL)
-
 include(CMakeFindDependencyMacro)
 
 set(_open_lmm_need_heavy FALSE)
@@ -42,9 +40,10 @@ if(TARGET open_lmm::runtime)
     "LINKER:-rpath-link,${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@")
 endif()
 foreach(_open_lmm_component IN ITEMS
-    contracts client plugin_sdk common config descriptor alignment core runtime gui utils)
+    contracts client plugin_sdk common config descriptor alignment core runtime utils)
   if(TARGET open_lmm::${_open_lmm_component})
     set(open_lmm_${_open_lmm_component}_FOUND TRUE)
   endif()
 endforeach()
+include("${CMAKE_CURRENT_LIST_DIR}/open_lmm-gui-compat.cmake")
 check_required_components(open_lmm)

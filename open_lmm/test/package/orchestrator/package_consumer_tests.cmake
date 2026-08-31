@@ -44,9 +44,13 @@ file(WRITE "${install_prefix}/include/open_lmm/user-owned.hpp"
 execute_process(
   COMMAND "${CMAKE_COMMAND}" --install "${OPEN_LMM_BUILD_DIR}"
           --prefix "${install_prefix}"
-  RESULT_VARIABLE install_result)
+  RESULT_VARIABLE install_result
+  OUTPUT_VARIABLE install_stdout
+  ERROR_VARIABLE install_stderr)
 if(NOT install_result EQUAL 0)
-  message(FATAL_ERROR "open_lmm package install failed: ${install_result}")
+  message(FATAL_ERROR
+    "open_lmm package install failed: ${install_result}\n"
+    "stdout:\n${install_stdout}\nstderr:\n${install_stderr}")
 endif()
 
 set(targets_file
@@ -77,9 +81,8 @@ if(NOT installed_headers STREQUAL expected_headers)
     "installed public headers differ from golden allowlist\n"
     "expected: ${expected_headers}\nactual: ${installed_headers}")
 endif()
-set(batch_launcher "${install_prefix}/bin/open_lmm_batch")
-if(NOT EXISTS "${batch_launcher}")
-  message(FATAL_ERROR "installed batch launcher is missing: ${batch_launcher}")
+if(EXISTS "${install_prefix}/bin/open_lmm_batch")
+  message(FATAL_ERROR "core package unexpectedly installed open_lmm_batch")
 endif()
 
 foreach(release_file IN ITEMS
@@ -90,10 +93,20 @@ foreach(release_file IN ITEMS
       "installed release metadata is missing: ${release_file}")
   endif()
 endforeach()
+foreach(release_file IN ITEMS LICENCE RELEASE_POLICY.md THIRD_PARTY_NOTICES.md)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files
+    "${OPEN_LMM_SOURCE_DIR}/package/${release_file}"
+    "${install_prefix}/share/open_lmm/${release_file}"
+    RESULT_VARIABLE release_file_compare)
+  if(NOT release_file_compare EQUAL 0)
+    message(FATAL_ERROR
+      "installed core metadata differs from its package snapshot: ${release_file}")
+  endif()
+endforeach()
 file(READ
   "${install_prefix}/share/open_lmm/open_lmm-install-components.txt"
   install_components)
-foreach(component IN ITEMS Runtime Development PluginSDK Plugins Tools)
+foreach(component IN ITEMS Runtime Development PluginSDK Plugins)
   string(FIND "${install_components}" "${component}" component_found)
   if(component_found EQUAL -1)
     message(FATAL_ERROR
@@ -124,8 +137,7 @@ set(versioned_runtime_libraries
   open_lmm_loop_detector
   open_lmm_backend_optimizer
   open_lmm_dynamic_remover
-  open_lmm_map_server
-  open_lmm_gui_core)
+  open_lmm_map_server)
 find_program(OPEN_LMM_READELF readelf REQUIRED)
 foreach(library IN LISTS versioned_runtime_libraries)
   set(library_base "lib${library}.so")
@@ -155,93 +167,6 @@ foreach(plugin IN ITEMS create_scan_context create_free_dom)
     message(FATAL_ERROR "versioned plugin entry is missing: ${plugin}")
   endif()
 endforeach()
-
-execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
-          "${batch_launcher}" --help
-  RESULT_VARIABLE batch_help_result)
-if(NOT batch_help_result EQUAL 0)
-  message(FATAL_ERROR
-    "installed batch launcher could not run: ${batch_help_result}")
-endif()
-
-# Exercise the installed adapter as a real subprocess with a self-contained
-# one-agent fixture, then prove that bootstrap failure is reflected in its exit
-# status. This remains source-free and resolves only from the install prefix.
-set(batch_fixture "${OPEN_LMM_BUILD_DIR}/package-batch-fixture")
-set(batch_config "${batch_fixture}/config")
-set(batch_data "${batch_fixture}/data")
-set(batch_output "${batch_fixture}/output")
-file(REMOVE_RECURSE "${batch_fixture}")
-file(MAKE_DIRECTORY
-  "${batch_config}/server" "${batch_config}/core"
-  "${batch_data}/agent1/Scans")
-file(WRITE "${batch_data}/agent1/poses.txt"
-  "1 0 0 0 0 1 0 0 0 0 1 0\n")
-file(WRITE "${batch_data}/agent1/Scans/000000.pcd"
-  "# .PCD v0.7\nVERSION 0.7\nFIELDS x y z intensity\n"
-  "SIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 1\n"
-  "HEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\nPOINTS 1\nDATA ascii\n"
-  "10 0 0 1\n")
-file(WRITE "${batch_config}/config.json"
-  "{\"global\":{\"config_map_server\":\"server/map.json\","
-  "\"config_data_loader\":\"core/data.json\","
-  "\"config_loop_detector\":\"core/loop.json\","
-  "\"config_backend_optimizer\":\"core/optimizer.json\","
-  "\"config_dynamic_remover\":\"core/remover.json\"},"
-  "\"directory\":{\"root_dir_path\":\"${batch_data}\","
-  "\"sub_dir_list\":[\"agent1\"],"
-  "\"root_save_dir\":\"${batch_output}\"}}")
-file(WRITE "${batch_config}/server/map.json"
-  "{\"map_server\":{\"enable_map_updater\":false,"
-  "\"anchor_agent_index\":0,\"save_voxel_size\":0.2,"
-  "\"parallel_data_load\":false,\"parallel_map_update\":false,"
-  "\"max_parallel_agents\":1}}")
-file(WRITE "${batch_config}/core/data.json"
-  "{\"data_loader\":{\"data_loader_type\":\"file_based\","
-  "\"pose_format\":\"kitti\",\"pose_file_name\":\"poses.txt\","
-  "\"extrinsic\":[0,0,0,0,0,0,1],\"scan_type\":\"pcd\","
-  "\"scan_dir_name\":\"Scans\",\"voxel_size\":0.5,"
-  "\"min_range\":1.0,\"max_range\":60.0,\"delimiter\":\" \"}}")
-file(WRITE "${batch_config}/core/loop.json"
-  "{\"loop_detector\":{\"loop_detector_type\":\"kdtree\","
-  "\"model\":\"scan_context\"},\"database\":{"
-  "\"descriptor_vector_dim\":20,\"distance_threshold\":0.15,"
-  "\"num_candidates\":3,\"rebuild_threshold\":50},\"alignment\":{"
-  "\"pcm_translation_threshold\":10.0,\"pcm_rotation_threshold_deg\":20.0,"
-  "\"pcm_solver\":\"heuristic\",\"pcm_threads\":1,"
-  "\"pcm_max_candidates\":0}}")
-file(WRITE "${batch_config}/core/optimizer.json"
-  "{\"backend_optimizer\":{\"backend_optimizer_type\":\"incremental\","
-  "\"relinearizeThreshold\":0.1,\"relinearizeSkip\":1,"
-  "\"isam_extra_updates\":1,\"min_loop_frame_gap\":30,"
-  "\"icp_search_num\":1}}")
-file(WRITE "${batch_config}/core/remover.json"
-  "{\"dynamic_remover\":{\"dynamic_remover_type\":\"offline\","
-  "\"model\":\"free_dom\"}}")
-
-execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
-          "${batch_launcher}" "${batch_config}"
-  RESULT_VARIABLE batch_success_result
-  OUTPUT_VARIABLE batch_success_stdout
-  ERROR_VARIABLE batch_success_stderr
-  TIMEOUT 60)
-if(NOT batch_success_result EQUAL 0)
-  message(FATAL_ERROR
-    "installed batch fixture failed (${batch_success_result})\n"
-    "stdout:\n${batch_success_stdout}\nstderr:\n${batch_success_stderr}")
-endif()
-execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
-          "${batch_launcher}" "${batch_fixture}/missing-config"
-  RESULT_VARIABLE batch_failure_result
-  OUTPUT_VARIABLE batch_failure_stdout
-  ERROR_VARIABLE batch_failure_stderr
-  TIMEOUT 15)
-if(batch_failure_result EQUAL 0)
-  message(FATAL_ERROR "installed batch returned success for missing config")
-endif()
 file(READ "${targets_file}" targets_contents)
 string(FIND "${targets_contents}" "${OPEN_LMM_SOURCE_DIR}" source_reference)
 if(NOT source_reference EQUAL -1)
@@ -337,6 +262,49 @@ foreach(light_consumer IN ITEMS
       "installed ${light_consumer} could not run: ${light_run_result}")
   endif()
 endforeach()
+
+function(build_application_boundary_consumer consumer executable)
+  set(boundary_source
+    "${consumer_source}/application_boundary/${consumer}")
+  set(boundary_build
+    "${OPEN_LMM_PACKAGE_TEST_ROOT}/${consumer}-boundary-build")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+            -S "${boundary_source}"
+            -B "${boundary_build}"
+            "-DCMAKE_PREFIX_PATH=${install_prefix}"
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            ${consumer_compiler_args}
+    RESULT_VARIABLE boundary_configure_result)
+  if(NOT boundary_configure_result EQUAL 0)
+    message(FATAL_ERROR
+      "${consumer} boundary configure failed: ${boundary_configure_result}")
+  endif()
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" --build "${boundary_build}" --parallel 1
+    RESULT_VARIABLE boundary_build_result)
+  if(NOT boundary_build_result EQUAL 0)
+    message(FATAL_ERROR
+      "${consumer} boundary build failed: ${boundary_build_result}")
+  endif()
+  file(READ "${boundary_build}/compile_commands.json"
+    boundary_compile_commands)
+  string(FIND "${boundary_compile_commands}"
+    "${OPEN_LMM_SOURCE_DIR}/src" boundary_source_reference)
+  if(NOT boundary_source_reference EQUAL -1)
+    message(FATAL_ERROR
+      "${consumer} boundary compile retained a production source/include path")
+  endif()
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env --unset=LD_LIBRARY_PATH
+            "${boundary_build}/${executable}"
+    RESULT_VARIABLE boundary_run_result)
+  if(NOT boundary_run_result EQUAL 0)
+    message(FATAL_ERROR
+      "${consumer} boundary executable failed: ${boundary_run_result}")
+  endif()
+endfunction()
+
 
 set(header_build "${OPEN_LMM_PACKAGE_TEST_ROOT}/header-self-containment-build")
 execute_process(

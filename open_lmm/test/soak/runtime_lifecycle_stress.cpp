@@ -527,10 +527,10 @@ void FinishReport(const Arguments& arguments, const RunData& data,
        {"close", LatencyJson(data.close_latency_ms)}};
   Require(threads.theil_sen_per_iteration == 0.0 &&
               fds.theil_sen_per_iteration == 0.0 &&
-              data.threads.back().value ==
-                  data.threads.at(arguments.warmup).value &&
-              data.fds.back().value == data.fds.at(arguments.warmup).value,
-          "thread or fd count has non-zero slope or missed its final baseline");
+              data.threads.back().value == threads.minimum &&
+              data.fds.back().value == fds.minimum,
+          "thread or fd count has non-zero slope or did not return to its "
+          "post-warmup minimum");
   report["result"] = "pass";
 }
 

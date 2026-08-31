@@ -46,6 +46,7 @@ ci_root=${OPEN_LMM_CI_ROOT:-"$repository_root/.ci-build"}
 compiler_name=$(basename "$compiler_cxx")
 configuration_root="$ci_root/$profile-benchmark-$compiler_name"
 build_root="$configuration_root/build"
+distribution_build_root="$configuration_root/distribution-build"
 evidence_root="$configuration_root/evidence"
 if [[ -e "$configuration_root" ]]; then
   echo "benchmark CI path must be clean: $configuration_root" >&2
@@ -64,8 +65,6 @@ CC="$compiler_c" CXX="$compiler_cxx" cmake \
   -S "$repository_root/open_lmm" -B "$build_root" \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_CCACHE=OFF \
-  -DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF \
-  -DOPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST=ON \
   "${compiler_args[@]}"
 cmake --build "$build_root" --parallel "$build_jobs" --target \
   open_lmm_benchmark_generate_fixture \
@@ -75,7 +74,12 @@ cmake --build "$build_root" --parallel "$build_jobs" --target \
   open_lmm_benchmark_pair \
   open_lmm_artifact_compare
 ctest --test-dir "$build_root" --output-on-failure \
-  -R '^open_lmm_benchmark_(statistics|options|stage_event_recorder|report_contract|fixture_policy|process_sampler|small_smoke|orchestrator)_tests$'
+  -R '^open_lmm_benchmark_(statistics|options|stage_event_recorder|report_contract|fixture_policy|process_sampler|small_smoke)_tests$'
+cmake -S "$repository_root/distribution" -B "$distribution_build_root" \
+  -DOPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST=ON \
+  -DOPEN_LMM_DISTRIBUTION_CORE_BUILD_DIR="$build_root"
+ctest --test-dir "$distribution_build_root" --output-on-failure \
+  -R '^open_lmm_benchmark_orchestrator_tests$'
 
 baseline_args=()
 if [[ -n "${OPEN_LMM_PERFORMANCE_BASELINE:-}" ]]; then

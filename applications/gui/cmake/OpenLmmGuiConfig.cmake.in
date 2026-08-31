@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+include_guard(GLOBAL)
+include(CMakeFindDependencyMacro)
+
+if(NOT TARGET open_lmm::client OR
+   NOT TARGET open_lmm::plugin_sdk OR
+   NOT TARGET open_lmm::utils)
+  find_dependency(open_lmm @PROJECT_VERSION@ EXACT CONFIG
+    COMPONENTS client plugin_sdk utils)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/OpenLmmGuiTargets.cmake")
+
+if(TARGET open_lmm_gui::gui)
+  set(OpenLmmGui_gui_FOUND TRUE)
+endif()
+
+check_required_components(OpenLmmGui)

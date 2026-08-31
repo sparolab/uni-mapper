@@ -1,0 +1,7 @@
+OpenLMM CLI install components, version 3.0.0
+
+Tools
+  Standalone open_lmm_batch executable and CLI release metadata.
+
+The matching OpenLMM core Runtime, Development, PluginSDK and Plugins
+components are owned by the separate open-lmm core artifact.

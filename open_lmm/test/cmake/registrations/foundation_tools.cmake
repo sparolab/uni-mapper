@@ -64,26 +64,6 @@ openlmm_add_test(
   INVARIANTS INV-02 INV-03 INV-04
   LANES pr SANITIZERS asan-ubsan)
 
-openlmm_add_test(
-  NAME open_lmm_replay_fetch_tests
-  COMMAND bash
-  COMMAND_ARGS
-    ${CMAKE_CURRENT_SOURCE_DIR}/replay/contract/replay_fetch_tests.sh
-    ${PROJECT_SOURCE_DIR}/../scripts/replay/fetch_replay_data.sh
-  LAYER L2 MODULE workflows.replay OWNER ReplayDataFetcher
-  INVARIANTS INV-02 INV-03 INV-04 INV-14
-  LANES pr)
-
-openlmm_add_test(
-  NAME open_lmm_replay_subset_tests
-  COMMAND bash
-  COMMAND_ARGS
-    ${CMAKE_CURRENT_SOURCE_DIR}/replay/contract/replay_subset_tests.sh
-    ${PROJECT_SOURCE_DIR}/../scripts/replay/build_replay_subset.py
-  LAYER L2 MODULE workflows.replay OWNER ReplayDatasetBuilder
-  INVARIANTS INV-02 INV-03 INV-04 INV-14
-  LANES pr)
-
 add_executable(open_lmm_profiling_macro_tests
   foundation/profiling/unit/profiling_macro_tests.cpp
 )

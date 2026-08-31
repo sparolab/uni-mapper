@@ -124,6 +124,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  python-wheel:
+    name: package / python310-wheel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build reproducible ROS 2 toolchain image
+        run: |
+          docker build \
+            --file docker/open_lmm.Dockerfile \
+            --tag open-lmm-compiler-matrix:ci \
+            .
+
+      - name: Build and audit the CPython 3.10 local wheel
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            open-lmm-compiler-matrix:ci \
+            scripts/ci/build_python_wheel_and_test.sh \
+              python310-wheel \
+              /usr/bin/gcc-12 \
+              /usr/bin/g++-12 \
+              /opt/open_lmm-python-build/bin/python
+
+      - name: Preserve wheel, closure audit, and CTest evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-python310-wheel-evidence
+          path: .ci-build/python310-wheel
+          if-no-files-found: error
+          retention-days: 14
+
   benchmark:
     name: benchmark / gcc12-small
     runs-on: ubuntu-22.04

@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
     time \
     wget \
     git \
+    python3-pip \
+    python3-venv \
+    pybind11-dev \
     software-properties-common \
     libeigen3-dev \
     libboost-all-dev \
@@ -60,12 +63,13 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 120 && \
 ENV CC=/usr/bin/gcc-12
 ENV CXX=/usr/bin/g++-12
 
-#! Python packages
-# RUN pip3 install --no-cache-dir opencv-python
-# python3-pip \
-# python3-colcon-common-extensions \
-# python3-vcstool \
-# python3-rosdep \
+#! Pinned same-image CPython 3.10 wheel build environment
+RUN python3 -m venv --system-site-packages /opt/open_lmm-python-build && \
+    /opt/open_lmm-python-build/bin/python -m pip install --no-cache-dir \
+      pip==24.0 \
+      scikit-build-core==0.10.7 \
+      pybind11==2.13.6 \
+      numpy==1.21.5
 
 
 #! install cmake (3.25.3)

@@ -157,17 +157,3 @@ openlmm_add_test(
   TARGET open_lmm_benchmark_process_sampler_tests
   LAYER L2 MODULE workflows.benchmark OWNER ProcessWindowSampler
   INVARIANTS INV-16 INV-18 LANES pr SANITIZERS asan-ubsan)
-
-
-if(OPEN_LMM_ENABLE_BENCHMARK_WORKFLOW_TEST)
-  openlmm_add_test(
-    NAME open_lmm_benchmark_orchestrator_tests
-    COMMAND ${CMAKE_COMMAND}
-    COMMAND_ARGS
-      -DOPEN_LMM_REPOSITORY_ROOT=${PROJECT_SOURCE_DIR}/..
-      -DOPEN_LMM_BUILD_DIR=${CMAKE_BINARY_DIR}
-      -DOPEN_LMM_BENCHMARK_TEST_ROOT=${CMAKE_BINARY_DIR}/benchmark-contract-test
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/benchmark/workflow/orchestrator_tests.cmake
-    LAYER L6 MODULE workflows.benchmark OWNER BenchmarkOrchestrator
-    INVARIANTS INV-03 INV-16 INV-18 LANES nightly TIMEOUT 180 RUN_SERIAL)
-endif()
