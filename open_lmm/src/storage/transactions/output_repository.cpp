@@ -3,13 +3,62 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
+#include <fstream>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <nlohmann/json.hpp>
+
 namespace fs = std::filesystem;
 namespace open_lmm {
+namespace {
+
+using OrderedJson = nlohmann::ordered_json;
+
+OrderedJson PreserveObjectOrder(const OrderedJson& previous,
+                                const OrderedJson& canonical) {
+  if (!canonical.is_object()) return canonical;
+
+  OrderedJson formatted = OrderedJson::object();
+  if (previous.is_object()) {
+    for (const auto& [key, value] : previous.items()) {
+      const auto canonical_value = canonical.find(key);
+      if (canonical_value == canonical.end()) continue;
+      formatted[key] = PreserveObjectOrder(value, *canonical_value);
+    }
+  }
+  for (const auto& [key, value] : canonical.items()) {
+    if (!formatted.contains(key)) formatted[key] = value;
+  }
+  return formatted;
+}
+
+OrderedJson PersistedConfigDocument(const fs::path& destination,
+                                    const OrderedJson& canonical) {
+  constexpr std::uintmax_t kMaximumLayoutBytes = 1024U * 1024U;
+  std::error_code error;
+  const auto size = fs::file_size(destination, error);
+  if (error || size > kMaximumLayoutBytes) return canonical;
+
+  std::ifstream input(destination, std::ios::binary);
+  if (!input) return canonical;
+  std::string contents(static_cast<std::size_t>(size), '\0');
+  input.read(contents.data(), static_cast<std::streamsize>(contents.size()));
+  char extra = 0;
+  if (input.gcount() != static_cast<std::streamsize>(contents.size()) ||
+      input.get(extra)) {
+    return canonical;
+  }
+  const auto previous = OrderedJson::parse(contents, nullptr, false, true);
+  return previous.is_discarded()
+             ? canonical
+             : PreserveObjectOrder(previous, canonical);
+}
+
+}  // namespace
 
 PendingOutputSet::~PendingOutputSet() { Rollback(); }
 
@@ -44,6 +93,11 @@ Result<void> StageConfigFile(const fs::path& destination,
     return Result<void>::Failure(Error::InvalidArgument(
         "config staging requires destination and canonical JSON"));
   }
+  auto document = OrderedJson::parse(canonical_json, nullptr, false);
+  if (document.is_discarded()) {
+    return Result<void>::Failure(
+        Error::ParseError("config staging requires valid canonical JSON"));
+  }
   static std::atomic<uint64_t> sequence{0};
   const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
   fs::path temporary = destination;
@@ -64,7 +118,10 @@ Result<void> StageConfigFile(const fs::path& destination,
     std::error_code ignored;
     fs::remove(temporary, ignored);
   };
-  std::string contents(canonical_json);
+  // Runtime state keeps the compact canonical representation for stable
+  // identity and hashing.  Only the persisted representation is formatted for
+  // people editing the configuration on disk.
+  std::string contents = PersistedConfigDocument(destination, document).dump(2);
   contents.push_back('\n');
   std::size_t offset = 0;
   while (offset < contents.size()) {

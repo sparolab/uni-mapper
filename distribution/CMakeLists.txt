@@ -30,6 +30,11 @@ add_test(NAME open_lmm_critical_coverage_contract_tests
   COMMAND /usr/bin/python3
     "${CMAKE_CURRENT_SOURCE_DIR}/test/quality/critical_coverage_contract_tests.py"
     "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/critical_coverage.py")
+add_test(NAME open_lmm_developer_entrypoint_tests
+  COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/developer/gui_entrypoint_tests.sh"
+    "${OPEN_LMM_REPOSITORY_ROOT}/Makefile"
+    "${OPEN_LMM_REPOSITORY_ROOT}/scripts/dev/remove_install_manifest.sh")
 
 foreach(required_build IN ITEMS CORE CLI GUI ROS)
   if(NOT DEFINED OPEN_LMM_DISTRIBUTION_${required_build}_BUILD_DIR)

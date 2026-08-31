@@ -38,8 +38,11 @@ class OutputRepository {
 };
 
 // Stages one canonical JSON document beside its destination using an
-// owner-only, exclusive, no-follow temporary. The PendingOutputSet owns
-// cleanup and the caller chooses the state/file commit boundary.
+// owner-only, exclusive, no-follow temporary. Only the persisted copy is
+// two-space formatted. Existing object-key order is retained, removed keys are
+// omitted, and new canonical keys are appended deterministically. The caller's
+// compact canonical representation remains unchanged. The PendingOutputSet
+// owns cleanup and the caller chooses the state/file commit boundary.
 Result<void> StageConfigFile(const std::filesystem::path& destination,
                              std::string_view canonical_json,
                              PendingOutputSet& pending);

@@ -252,8 +252,27 @@ assert_file_contains(
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/distribution/CMakeLists.txt"
   "open_lmm_combined_distribution_tests"
+  "open_lmm_developer_entrypoint_tests"
   "OPEN_LMM_DISTRIBUTION_CORE_BUILD_DIR"
   "OPEN_LMM_DISTRIBUTION_ROS_BUILD_DIR")
+assert_file_contains(
+  "${OPEN_LMM_REPOSITORY_ROOT}/Makefile"
+  "core-build:"
+  "gui-build:"
+  "gui-run:"
+  "gui-clean:"
+  "cli-build:"
+  "cli-run:"
+  "cli-clean:"
+  "dev-clean:"
+  "-DOPEN_LMM_GUI_BUILD_IRIDESCENCE=ON"
+  "-DCMAKE_PREFIX_PATH=\"$(DEV_PREFIX)\""
+  "env -u LD_LIBRARY_PATH")
+assert_file_contains(
+  "${OPEN_LMM_REPOSITORY_ROOT}/scripts/dev/remove_install_manifest.sh"
+  "mapfile -t owned_paths"
+  "unsafe"
+  "rm -f --")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/distribution/manifests/artifact-set-v3.tsv"
   "schema_version\tartifact_id\tversion\tnamespace\tinstall_mode\tprofiles\texact_dependencies\towner_root"

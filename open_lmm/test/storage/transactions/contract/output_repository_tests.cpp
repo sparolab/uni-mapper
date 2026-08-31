@@ -58,10 +58,77 @@ void TestRollbackAndAtomicReplacement() {
   fs::remove_all(directory, ignored);
 }
 
+void TestConfigStagingUsesPrettyJson() {
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto directory = fs::temp_directory_path() /
+                         ("open_lmm_config_format_" + std::to_string(nonce));
+  fs::create_directories(directory);
+  const auto destination = directory / "config.json";
+
+  PendingOutputSet pending;
+  auto staged = StageConfigFile(
+      destination, R"({"outer":{"enabled":true,"value":1}})", pending);
+  Check(staged.IsOk(), "valid canonical JSON stages");
+  Check(pending.Commit().IsOk(), "pretty config file commits");
+  Check(ReadText(destination) ==
+            "{\n"
+            "  \"outer\": {\n"
+            "    \"enabled\": true,\n"
+            "    \"value\": 1\n"
+            "  }\n"
+            "}\n",
+        "persisted config uses stable two-space formatting");
+
+  PendingOutputSet invalid;
+  Check(!StageConfigFile(directory / "invalid.json", "{", invalid) &&
+            !fs::exists(directory / "invalid.json"),
+        "invalid canonical JSON fails before creating output");
+  std::error_code ignored;
+  fs::remove_all(directory, ignored);
+}
+
+void TestConfigStagingPreservesExistingObjectOrder() {
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto directory = fs::temp_directory_path() /
+                         ("open_lmm_config_order_" + std::to_string(nonce));
+  fs::create_directories(directory);
+  const auto destination = directory / "config.json";
+  WriteText(destination,
+            "{\n"
+            "  // Human-owned grouping is intentionally not alphabetical.\n"
+            "  \"zeta\": 0,\n"
+            "  \"nested\": {\"second\": 0, \"first\": 0},\n"
+            "  \"deprecated\": true\n"
+            "}\n");
+
+  PendingOutputSet pending;
+  auto staged = StageConfigFile(
+      destination,
+      R"({"added":3,"nested":{"first":1,"new":2,"second":2},"zeta":9})",
+      pending);
+  Check(staged.IsOk() && pending.Commit().IsOk(),
+        "ordered config replacement commits");
+  Check(ReadText(destination) ==
+            "{\n"
+            "  \"zeta\": 9,\n"
+            "  \"nested\": {\n"
+            "    \"second\": 2,\n"
+            "    \"first\": 1,\n"
+            "    \"new\": 2\n"
+            "  },\n"
+            "  \"added\": 3\n"
+            "}\n",
+        "existing object order survives while values and key set stay canonical");
+  std::error_code ignored;
+  fs::remove_all(directory, ignored);
+}
+
 }  // namespace
 
 int main() {
   TestRollbackAndAtomicReplacement();
+  TestConfigStagingUsesPrettyJson();
+  TestConfigStagingPreservesExistingObjectOrder();
   std::cout << "output repository contract tests passed\n";
   return 0;
 }
