@@ -86,6 +86,50 @@ ctest --test-dir "$build_root/open_lmm" --output-on-failure \
 ctest --test-dir "$build_root/open_lmm_ros" --output-on-failure \
   --output-junit "$configuration_root/ctest-open_lmm-ros.xml"
 
+# One existing required matrix entry also proves the opposite feature-option
+# shape. The main matrix builds all bundled plugins; this focused configure
+# disables every optional descriptor/remover DSO and executes the typed
+# selection contract without adding or renaming a required GitHub check.
+if [[ "$configuration_name" == "gcc12-gui-off" ]]; then
+  feature_off_root="$configuration_root/feature-off-build"
+  CC="$compiler_c" CXX="$compiler_cxx" cmake \
+    -S "$repository_root/open_lmm" -B "$feature_off_root" \
+    -DUSE_CCACHE=OFF \
+    -DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF \
+    -DOPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT=OFF \
+    -DOPEN_LMM_BUILD_DESCRIPTOR_SOLID=OFF \
+    -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_HMM_MOS=OFF \
+    -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_DUFOMAP=OFF \
+    -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_OTD=OFF \
+    -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM=OFF \
+    -DOPEN_LMM_BUILD_DYNAMIC_REMOVER_ERASOR=OFF \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    "${compiler_cmake_args[@]}"
+  cmake --build "$feature_off_root" \
+    --target open_lmm_plugin_selection_tests --parallel 2
+  ctest --test-dir "$feature_off_root" --output-on-failure \
+    -R '^open_lmm_plugin_selection_tests$' \
+    --output-junit "$configuration_root/ctest-feature-off.xml"
+  cp "$feature_off_root/test/open_lmm_test_manifest.tsv" \
+    "$configuration_root/open_lmm_test_manifest-feature-off.tsv"
+fi
+
+test_manifest="$build_root/open_lmm/test/open_lmm_test_manifest.tsv"
+if [[ ! -f "$test_manifest" ]]; then
+  echo "generated test manifest is missing: $test_manifest" >&2
+  exit 1
+fi
+cp "$test_manifest" "$configuration_root/open_lmm_test_manifest.tsv"
+: > "$configuration_root/test-layer-counts.txt"
+for layer in L1 L2 L3 L4 L5 L6; do
+  layer_count=$(ctest --test-dir "$build_root/open_lmm" -N \
+    -L "layer:$layer" | sed -n 's/^Total Tests: //p')
+  printf '%s\t%s\n' "$layer" "${layer_count:-0}" \
+    >> "$configuration_root/test-layer-counts.txt"
+done
+printf 'gpu\tNOT_AVAILABLE\nexternal\tNOT_AVAILABLE\n' \
+  > "$configuration_root/test-lane-status.txt"
+
 # ament configuration intentionally excludes the mutating install/consumer
 # CTest. Run the same source-free package fixture explicitly for every compiler
 # matrix entry so package export cannot silently regress.
@@ -96,7 +140,7 @@ cmake \
   -DOPEN_LMM_CONSUMER_C_COMPILER="$compiler_c" \
   -DOPEN_LMM_CONSUMER_CXX_COMPILER="$compiler_cxx" \
   -DOPEN_LMM_CONSUMER_CXX_FLAGS="$cxx_compatibility_flags" \
-  -P "$repository_root/open_lmm/test/package_consumer_tests.cmake"
+  -P "$repository_root/open_lmm/test/package/orchestrator/package_consumer_tests.cmake"
 
 compiler_cache="$build_root/open_lmm/CMakeCache.txt"
 expected_compiler="CMAKE_CXX_COMPILER:FILEPATH=$compiler_cxx"

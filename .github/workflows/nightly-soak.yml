@@ -1,0 +1,78 @@
+name: Nightly soak
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    name: nightly / ${{ matrix.name }}-headless
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc12
+            cc: /usr/bin/gcc-12
+            cxx: /usr/bin/g++-12
+          - name: clang15
+            cc: /usr/bin/clang-15
+            cxx: /usr/bin/clang++-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build reproducible toolchain image
+        run: |
+          docker build \
+            --file docker/open_lmm.Dockerfile \
+            --tag open-lmm-nightly-soak:ci \
+            .
+
+      - name: Build and run 1000-iteration soak
+        run: |
+          image_digest=$(docker image inspect \
+            --format '{{.Id}}' open-lmm-nightly-soak:ci)
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            open-lmm-nightly-soak:ci \
+            scripts/ci/build_nightly_soak.sh \
+              ${{ matrix.cc }} ${{ matrix.cxx }} "$image_digest"
+
+      - name: Summarize soak evidence
+        if: always()
+        run: |
+          echo "## ${{ matrix.name }} headless soak" >> "$GITHUB_STEP_SUMMARY"
+          echo "Configured seed: \`104729\`" >> "$GITHUB_STEP_SUMMARY"
+          report=.ci-build/nightly-soak/reports/all-headless.json
+          if [[ -f "$report" ]]; then
+            jq -r '
+              "Result: **" + .result + "**\n\n" +
+              (.reports[] |
+                "- `" + .scenario + "`: " + .result +
+                ", samples=" + (.samples | length | tostring))
+            ' "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Structured bundle unavailable; inspect CTest XML and family logs." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Preserve soak reports and CTest XML
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-soak-${{ matrix.name }}-evidence
+          path: .ci-build/nightly-soak
+          if-no-files-found: error
+          retention-days: 30

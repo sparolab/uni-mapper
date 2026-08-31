@@ -311,6 +311,12 @@ Result<VisualizationSnapshot> StageExecutor::Visualization(
   return visualization_projector_.Project(query);
 }
 
+StageExecutorDiagnostics StageExecutor::Diagnostics() const {
+  const auto state = CommittedState();
+  return {state ? state->revision : 0, resource_governor_->Diagnostics(),
+          visualization_projector_.Diagnostics()};
+}
+
 Result<ExecutionReceipt> StageExecutor::Execute(
     const ExecutionCommand& command, const ExecutionContext& context) {
   ExecutionLease execution(execution_active_);

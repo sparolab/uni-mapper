@@ -1,0 +1,57 @@
+cmake_minimum_required(VERSION 3.16)
+project(open_lmm_header_self_containment LANGUAGES C CXX)
+
+find_package(open_lmm 3.0 CONFIG REQUIRED)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../header_component_manifest.tsv"
+  header_manifest)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../public_header_allowlist.txt"
+  approved_public_headers)
+set(manifest_public_headers)
+set(header_index 0)
+foreach(manifest_row IN LISTS header_manifest)
+  string(REPLACE "\t" ";" manifest_fields "${manifest_row}")
+  list(LENGTH manifest_fields manifest_field_count)
+  if(NOT manifest_field_count EQUAL 4)
+    message(FATAL_ERROR "invalid header component row: ${manifest_row}")
+  endif()
+  list(GET manifest_fields 0 public_header)
+  list(GET manifest_fields 1 component)
+  list(GET manifest_fields 2 language)
+  list(GET manifest_fields 3 mode)
+  if(NOT mode STREQUAL "compile-only")
+    message(FATAL_ERROR "unsupported header contract mode: ${mode}")
+  endif()
+  if(NOT TARGET open_lmm::${component})
+    message(FATAL_ERROR
+      "header ${public_header} names missing component ${component}")
+  endif()
+  list(APPEND manifest_public_headers "${public_header}")
+  math(EXPR header_index "${header_index} + 1")
+  if(language STREQUAL "C")
+    set(extension c)
+  elseif(language STREQUAL "CXX")
+    set(extension cpp)
+  else()
+    message(FATAL_ERROR
+      "header ${public_header} has invalid language ${language}")
+  endif()
+  set(source "${CMAKE_CURRENT_BINARY_DIR}/header_${header_index}.${extension}")
+  file(WRITE "${source}"
+    "#include <open_lmm/${public_header}>\nint main(void) { return 0; }\n")
+  add_executable(header_${header_index} "${source}")
+  if(language STREQUAL "C")
+    target_compile_features(header_${header_index} PRIVATE c_std_11)
+  else()
+    target_compile_features(header_${header_index} PRIVATE cxx_std_20)
+  endif()
+  target_link_libraries(header_${header_index} PRIVATE open_lmm::${component})
+endforeach()
+
+list(SORT manifest_public_headers)
+list(SORT approved_public_headers)
+if(NOT manifest_public_headers STREQUAL approved_public_headers)
+  message(FATAL_ERROR
+    "header component manifest differs from public allowlist\n"
+    "manifest: ${manifest_public_headers}\n"
+    "allowlist: ${approved_public_headers}")
+endif()

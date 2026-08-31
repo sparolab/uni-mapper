@@ -12,6 +12,7 @@ namespace open_lmm {
 
 class StageExecutor;
 class ResourceGovernor;
+struct StageExecutorDiagnostics;
 
 // Concrete runtime port. Runtime ownership, transaction commits, algorithm
 // assembly, output persistence and visualization snapshots live in the
@@ -41,6 +42,7 @@ class MapServer final : public StageRuntimePort {
       const AgentId& agent) const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const VisualizationQuery& query) const override;
+  [[nodiscard]] StageExecutorDiagnostics Diagnostics() const;
   Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
                                           uint64_t config_revision) override;
   void RecordRecoveryRequired(

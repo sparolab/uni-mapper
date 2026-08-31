@@ -1,0 +1,66 @@
+name: Nightly benchmark evidence
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: benchmark / ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc12
+            cc: /usr/bin/gcc-12
+            cxx: /usr/bin/g++-12
+          - name: clang15
+            cc: /usr/bin/clang-15
+            cxx: /usr/bin/clang++-15
+
+    env:
+      BENCHMARK_IMAGE: ${{ vars.OPEN_LMM_BENCHMARK_IMAGE }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify immutable benchmark image reference
+        run: |
+          if [[ ! "$BENCHMARK_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "OPEN_LMM_BENCHMARK_IMAGE must be image@sha256:<64 lowercase hex>" >&2
+            exit 1
+          fi
+          docker pull "$BENCHMARK_IMAGE"
+
+      - name: Run benchmark matrix
+        run: |
+          image_digest=${BENCHMARK_IMAGE##*@}
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            "$BENCHMARK_IMAGE" \
+            scripts/ci/run_benchmark_tests.sh \
+              "${{ matrix.cc }}" \
+              "${{ matrix.cxx }}" \
+              medium-v1 \
+              "$image_digest"
+
+      - name: Preserve raw and aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-benchmark-${{ matrix.name }}
+          path: .ci-build/nightly-benchmark-*/
+          if-no-files-found: error
+          retention-days: 30

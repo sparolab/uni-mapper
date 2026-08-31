@@ -124,6 +124,46 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  benchmark:
+    name: benchmark / gcc12-small
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build reproducible benchmark image
+        run: |
+          docker build \
+            --file docker/open_lmm.Dockerfile \
+            --tag open-lmm-benchmark:ci \
+            .
+
+      - name: Run small benchmark contracts
+        run: |
+          image_digest=$(docker image inspect \
+            --format '{{.Id}}' open-lmm-benchmark:ci)
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            open-lmm-benchmark:ci \
+            scripts/ci/run_benchmark_tests.sh \
+              /usr/bin/gcc-12 \
+              /usr/bin/g++-12 \
+              small-v1 \
+              "$image_digest" \
+              pr
+
+      - name: Preserve benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-gcc12-small-evidence
+          path: .ci-build/pr-benchmark-g++-12/
+          if-no-files-found: error
+          retention-days: 14
+
   policy:
     name: policy / architecture-boundary
     runs-on: ubuntu-22.04

@@ -54,7 +54,15 @@ target_include_directories(open_lmm_client PRIVATE
   "$<TARGET_PROPERTY:PCL::PCL,INTERFACE_INCLUDE_DIRECTORIES>"
   "$<TARGET_PROPERTY:gtsam,INTERFACE_INCLUDE_DIRECTORIES>")
 target_link_options(open_lmm_client INTERFACE
-  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_map_server>>")
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_map_server>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_utils>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_common>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_algorithm_config>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_backend_optimizer>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_loop_detector>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_data_loader>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_dynamic_remover>>"
+  "$<BUILD_INTERFACE:LINKER:-rpath-link,$<TARGET_FILE_DIR:open_lmm_descriptor>>")
 openlmm_set_global_target_properties(open_lmm_client)
 set_target_properties(open_lmm_client PROPERTIES EXPORT_NAME client)
 

@@ -15,36 +15,11 @@ compiler_cxx=$4
 case "$sanitizer" in
   ASAN_UBSAN)
     sanitizer_option=OPEN_LMM_ENABLE_ASAN_UBSAN
-    test_pattern='open_lmm_(safety_regression|pipeline_controller|runtime_service|runtime_transaction|config_transaction|save_executor|runtime_bootstrapper|execution_spec|map_update_executor|controller_concurrency|plugin_abi|plugin_selection|self_contained_e2e)_tests'
-    targets=(
-      open_lmm_safety_regression_tests
-      open_lmm_pipeline_controller_tests
-      open_lmm_runtime_service_tests
-      open_lmm_runtime_transaction_tests
-      open_lmm_config_transaction_tests
-      open_lmm_save_executor_tests
-      open_lmm_runtime_bootstrapper_tests
-      open_lmm_execution_spec_tests
-      open_lmm_map_update_executor_tests
-      open_lmm_controller_concurrency_tests
-      open_lmm_plugin_abi_tests
-      open_lmm_plugin_selection_tests
-      open_lmm_self_contained_e2e_tests
-      create_scan_context
-      create_free_dom
-    )
+    sanitizer_label=asan-ubsan
     ;;
   TSAN)
     sanitizer_option=OPEN_LMM_ENABLE_TSAN
-    test_pattern='open_lmm_(bounded_executor|map_update_executor|controller_concurrency|runtime_service|runtime_transaction|gui_plugin)_tests'
-    targets=(
-      open_lmm_bounded_executor_tests
-      open_lmm_map_update_executor_tests
-      open_lmm_controller_concurrency_tests
-      open_lmm_runtime_service_tests
-      open_lmm_runtime_transaction_tests
-      open_lmm_gui_plugin_tests
-    )
+    sanitizer_label=tsan
     ;;
   *)
     echo "sanitizer must be ASAN_UBSAN or TSAN, got: $sanitizer" >&2
@@ -87,6 +62,20 @@ cmake -S "$repository_root/open_lmm" -B "$build_root" \
   -DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF \
   -D"$sanitizer_option"=ON
 
+test_manifest="$build_root/test/open_lmm_test_manifest.tsv"
+if [[ ! -f "$test_manifest" ]]; then
+  echo "generated test manifest is missing: $test_manifest" >&2
+  exit 1
+fi
+mapfile -t targets < <(
+  awk -F '\t' -v sanitizer="$sanitizer_label" \
+    'NR > 1 && index($8, sanitizer) { print $2 }' "$test_manifest")
+if [[ ${#targets[@]} -eq 0 ]]; then
+  echo "no tests selected for sanitizer:$sanitizer_label" >&2
+  exit 1
+fi
+cp "$test_manifest" "$configuration_root/open_lmm_test_manifest.tsv"
+
 build_attempt=1
 until cmake --build "$build_root" --parallel "${OPEN_LMM_BUILD_JOBS:-16}" --target "${targets[@]}"; do
   if [[ $build_attempt -ge 3 ]]; then
@@ -104,12 +93,23 @@ if [[ "$sanitizer" == ASAN_UBSAN ]]; then
   UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
     ctest --test-dir "$build_root" --output-on-failure \
       --output-junit "$configuration_root/ctest.xml" \
-      -R "$test_pattern"
+      -L "sanitizer:$sanitizer_label"
 else
+  tsan_runner=()
+  if command -v setarch >/dev/null 2>&1; then
+    machine_architecture=$(uname -m)
+    if setarch "$machine_architecture" -R true >/dev/null 2>&1; then
+      # TSan reserves a fixed shadow-memory range.  Disabling ASLR avoids the
+      # kernel mapping collision reported as "unexpected memory mapping" on
+      # affected Linux runners.
+      tsan_runner=(setarch "$machine_architecture" -R)
+    fi
+  fi
   TSAN_OPTIONS="halt_on_error=1:suppressions=$script_dir/tsan.supp" \
-    ctest --test-dir "$build_root" --output-on-failure \
+    "${tsan_runner[@]}" ctest --test-dir "$build_root" --output-on-failure \
       --output-junit "$configuration_root/ctest.xml" \
-      -R "$test_pattern"
+      --timeout "${OPEN_LMM_TSAN_TIMEOUT_SECONDS:-180}" \
+      -L "sanitizer:$sanitizer_label"
 fi
 
 echo "==> sanitizer verified: $configuration_name ($sanitizer)"

@@ -72,6 +72,10 @@ Result<VisualizationSnapshot> MapServer::Visualization(
   return Visualization(VisualizationQuery{agent});
 }
 
+StageExecutorDiagnostics MapServer::Diagnostics() const {
+  return executor_->Diagnostics();
+}
+
 Result<VisualizationSnapshot> MapServer::Visualization(
     const VisualizationQuery& query) const {
   return executor_->Visualization(query);

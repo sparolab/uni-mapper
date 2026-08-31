@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.invalid/schema/performance_baseline-v1.json",
+  "title": "OpenLMM reviewed performance baseline catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "catalog_id", "baselines"],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report_schema", "measurement_role", "fixture_id", "fixture_manifest_sha256",
+        "scenario", "compiler", "build_type", "sanitizer", "cpu_model",
+        "cpu_count", "memory_class", "container_digest", "plugin_ids",
+        "config_fingerprint", "pair_fingerprint", "parallelism"
+      ],
+      "properties": {
+        "report_schema": {"const": 1},
+        "measurement_role": {"enum": ["public", "owner"]},
+        "fixture_id": {"type": "string", "minLength": 1},
+        "fixture_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "scenario": {
+          "enum": [
+            "open", "data-load", "alignment", "map-update-sequential",
+            "map-update-parallel", "save-fallback", "visualization-cold",
+            "visualization-warm", "full-pipeline", "cancellation"
+          ]
+        },
+        "compiler": {"type": "string", "minLength": 1},
+        "build_type": {"type": "string", "minLength": 1},
+        "sanitizer": {"type": "string", "minLength": 1},
+        "cpu_model": {"type": "string", "minLength": 1},
+        "cpu_count": {"type": "integer", "minimum": 1},
+        "memory_class": {"type": "string", "minLength": 1},
+        "container_digest": {"$ref": "#/$defs/sha256"},
+        "plugin_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "config_fingerprint": {"$ref": "#/$defs/sha256"},
+        "pair_fingerprint": {"$ref": "#/$defs/sha256"},
+        "parallelism": {
+          "enum": ["map-update-disabled", "sequential", "parallel"]
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "statistic", "expected", "relative_allowance",
+        "absolute_allowance"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "statistic": {"enum": ["median", "p95", "mad", "min", "max"]},
+        "expected": {"type": "number", "minimum": 0},
+        "relative_allowance": {"type": "number", "minimum": 0},
+        "absolute_allowance": {"type": "number", "minimum": 0}
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "baseline_id", "key", "source_bundle_sha256",
+        "metrics"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "baseline_id": {"type": "string", "minLength": 1},
+        "key": {"$ref": "#/$defs/key"},
+        "source_bundle_sha256": {"$ref": "#/$defs/sha256"},
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/metric"}
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_id": {"type": "string", "minLength": 1},
+    "baselines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/baseline"}
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "map_server": {
+    "enable_map_updater": true,
+    "anchor_agent_index": 0,
+    "save_voxel_size": 0.2,
+    "parallel_data_load": false,
+    "parallel_map_update": false,
+    "max_parallel_agents": 1
+  }
+}

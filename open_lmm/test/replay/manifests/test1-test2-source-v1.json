@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "dataset_id": "openlmm-test1-test2-source-v1",
+  "source": "self-collected",
+  "owner": "dataset collector / requesting OpenLMM operator",
+  "license": "LicenseRef-OpenLMM-Internal",
+  "redistributable": false,
+  "agents": [
+    {
+      "id": "test1",
+      "source_directory": "test1"
+    },
+    {
+      "id": "test2",
+      "source_directory": "test2"
+    }
+  ]
+}

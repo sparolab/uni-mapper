@@ -64,20 +64,24 @@ std::vector<Eigen::Isometry3d> PreviewPoses(
 }  // namespace
 
 void VisualizationProjector::ClearPointCacheLocked() const {
+  if (!point_cache_.empty()) ++point_cache_clears_;
   point_cache_.clear();
   point_cache_bytes_ = 0;
 }
 
 void VisualizationProjector::ClearPointCacheForAgentLocked(
     const AgentId& agent) const {
+  bool removed = false;
   for (auto entry = point_cache_.begin(); entry != point_cache_.end();) {
     if (entry->first.agent == agent) {
       point_cache_bytes_ -= entry->second.bytes;
       entry = point_cache_.erase(entry);
+      removed = true;
     } else {
       ++entry;
     }
   }
+  if (removed) ++point_cache_clears_;
 }
 
 void VisualizationProjector::Clear(uint64_t runtime_revision,
@@ -340,8 +344,11 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
     std::lock_guard lock(mutex_);
     const auto entry = point_cache_.find(key);
     if (entry != point_cache_.end()) {
+      ++point_cache_hits_;
       entry->second.last_used = ++point_cache_access_;
       cached = entry->second.entry;
+    } else {
+      ++point_cache_misses_;
     }
   }
   bool cache_new_entry = false;
@@ -425,6 +432,7 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
         point_cache_.emplace(
             key, CachedPointEntry{cached, bytes, ++point_cache_access_});
         point_cache_bytes_ += bytes;
+        ++point_cache_insertions_;
         while (point_cache_.size() > kMaximumPointCacheEntries) {
           const auto oldest = std::min_element(
               point_cache_.begin(), point_cache_.end(),
@@ -433,6 +441,7 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
               });
           point_cache_bytes_ -= oldest->second.bytes;
           point_cache_.erase(oldest);
+          ++point_cache_evictions_;
         }
       }
     }
@@ -458,6 +467,13 @@ std::size_t VisualizationProjector::PointCacheEntryCount() const {
 std::size_t VisualizationProjector::PointCacheBytes() const {
   std::lock_guard lock(mutex_);
   return point_cache_bytes_;
+}
+
+VisualizationProjectorDiagnostics VisualizationProjector::Diagnostics() const {
+  std::lock_guard lock(mutex_);
+  return {point_cache_.size(), point_cache_bytes_, point_cache_hits_,
+          point_cache_misses_, point_cache_insertions_,
+          point_cache_evictions_, point_cache_clears_};
 }
 
 }  // namespace open_lmm

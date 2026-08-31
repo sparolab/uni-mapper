@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.invalid/schema/performance_pair-v1.json",
+  "title": "OpenLMM paired map-update report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "pair_id", "profile", "fixture_id",
+    "pair_fingerprint", "sequential_bundle", "parallel_bundle",
+    "sequential_owner_bundle", "parallel_owner_bundle", "parity_policy", "pairs",
+    "comparison", "result"
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "reference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "nullableUint": {"type": ["integer", "null"], "minimum": 0},
+    "nullableNumber": {"type": ["number", "null"], "minimum": 0}
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "pair_id": {"type": "string", "minLength": 1},
+    "profile": {"enum": ["contract", "pr", "nightly", "external"]},
+    "fixture_id": {"type": "string", "minLength": 1},
+    "pair_fingerprint": {"$ref": "#/$defs/sha256"},
+    "sequential_bundle": {"$ref": "#/$defs/reference"},
+    "parallel_bundle": {"$ref": "#/$defs/reference"},
+    "sequential_owner_bundle": {"$ref": "#/$defs/reference"},
+    "parallel_owner_bundle": {"$ref": "#/$defs/reference"},
+    "parity_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pcd_rms_m", "pcd_max_m", "point_count_ratio", "basis"],
+      "properties": {
+        "pcd_rms_m": {"type": "number", "minimum": 0},
+        "pcd_max_m": {"type": "number", "minimum": 0},
+        "point_count_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "basis": {"type": "string", "minLength": 1}
+      }
+    },
+    "pairs": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["iteration", "semantic_parity", "timing",
+                     "process_memory", "owner_memory", "output", "result"],
+        "properties": {
+          "iteration": {"type": "integer", "minimum": 1},
+          "semantic_parity": {
+            "type": "object", "additionalProperties": false,
+            "required": ["result", "log"],
+            "properties": {
+              "result": {"enum": ["pass", "fail"]},
+              "log": {"$ref": "#/$defs/reference"}
+            }
+          },
+          "timing": {
+            "type": "object", "additionalProperties": false,
+            "required": ["sequential_wall_time_ns", "parallel_wall_time_ns",
+                         "wall_speedup", "sequential_cpu_time_ns",
+                         "parallel_cpu_time_ns", "cpu_speedup"],
+            "properties": {
+              "sequential_wall_time_ns": {"$ref": "#/$defs/nullableUint"},
+              "parallel_wall_time_ns": {"$ref": "#/$defs/nullableUint"},
+              "wall_speedup": {"$ref": "#/$defs/nullableNumber"},
+              "sequential_cpu_time_ns": {"$ref": "#/$defs/nullableUint"},
+              "parallel_cpu_time_ns": {"$ref": "#/$defs/nullableUint"},
+              "cpu_speedup": {"$ref": "#/$defs/nullableNumber"}
+            }
+          },
+          "process_memory": {
+            "type": "object", "additionalProperties": false,
+            "required": ["sequential_sampled_peak_rss_bytes",
+                         "parallel_sampled_peak_rss_bytes"],
+            "properties": {
+              "sequential_sampled_peak_rss_bytes": {"$ref": "#/$defs/nullableUint"},
+              "parallel_sampled_peak_rss_bytes": {"$ref": "#/$defs/nullableUint"}
+            }
+          },
+          "owner_memory": {
+            "type": "object", "additionalProperties": false,
+            "required": ["sequential_peak_total_bytes", "parallel_peak_total_bytes",
+                         "sequential_peak_heavy_bytes", "parallel_peak_heavy_bytes",
+                         "sequential_max_active_tasks", "parallel_max_active_tasks"],
+            "properties": {
+              "sequential_peak_total_bytes": {"$ref": "#/$defs/nullableUint"},
+              "parallel_peak_total_bytes": {"$ref": "#/$defs/nullableUint"},
+              "sequential_peak_heavy_bytes": {"$ref": "#/$defs/nullableUint"},
+              "parallel_peak_heavy_bytes": {"$ref": "#/$defs/nullableUint"},
+              "sequential_max_active_tasks": {"$ref": "#/$defs/nullableUint"},
+              "parallel_max_active_tasks": {"$ref": "#/$defs/nullableUint"}
+            }
+          },
+          "output": {
+            "type": "object", "additionalProperties": false,
+            "required": ["sequential_points", "parallel_points",
+                         "sequential_bytes", "parallel_bytes", "byte_digest_equal"],
+            "properties": {
+              "sequential_points": {"$ref": "#/$defs/nullableUint"},
+              "parallel_points": {"$ref": "#/$defs/nullableUint"},
+              "sequential_bytes": {"$ref": "#/$defs/nullableUint"},
+              "parallel_bytes": {"$ref": "#/$defs/nullableUint"},
+              "byte_digest_equal": {"type": "boolean"}
+            }
+          },
+          "result": {"enum": ["pass", "fail"]}
+        }
+      }
+    },
+    "comparison": {
+      "enum": ["pass", "fail", "uncalibrated", "baseline_mismatch"]
+    },
+    "result": {"enum": ["pass", "fail"]}
+  }
+}

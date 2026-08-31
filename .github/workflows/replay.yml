@@ -1,0 +1,214 @@
+name: Internal real-dataset replay
+
+on:
+  push:
+    branches: [develop]
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: replay-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  tiny-small-failure:
+    name: replay / internal-tiny-small
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      REPLAY_IMAGE: ${{ vars.OPEN_LMM_REPLAY_IMAGE }}
+      OPEN_LMM_REPLAY_TINY_URL: ${{ secrets.OPEN_LMM_REPLAY_TINY_URL }}
+      OPEN_LMM_REPLAY_TINY_SHA256: ${{ vars.OPEN_LMM_REPLAY_TINY_SHA256 }}
+      OPEN_LMM_REPLAY_SMALL_URL: ${{ secrets.OPEN_LMM_REPLAY_SMALL_URL }}
+      OPEN_LMM_REPLAY_SMALL_SHA256: ${{ vars.OPEN_LMM_REPLAY_SMALL_SHA256 }}
+      OPEN_LMM_REPLAY_FAILURE_URL: ${{ secrets.OPEN_LMM_REPLAY_FAILURE_URL }}
+      OPEN_LMM_REPLAY_FAILURE_SHA256: ${{ vars.OPEN_LMM_REPLAY_FAILURE_SHA256 }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify immutable replay inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$REPLAY_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "OPEN_LMM_REPLAY_IMAGE must be image@sha256:<64 lowercase hex>" >&2
+            exit 1
+          fi
+          for value in \
+            "$OPEN_LMM_REPLAY_TINY_URL" \
+            "$OPEN_LMM_REPLAY_SMALL_URL" \
+            "$OPEN_LMM_REPLAY_FAILURE_URL"; do
+            if [[ -z "$value" ]]; then
+              echo "an internal immutable replay URL secret is missing" >&2
+              exit 1
+            fi
+          done
+          for value in \
+            "$OPEN_LMM_REPLAY_TINY_SHA256" \
+            "$OPEN_LMM_REPLAY_SMALL_SHA256" \
+            "$OPEN_LMM_REPLAY_FAILURE_SHA256"; do
+            if [[ ! "$value" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then
+              echo "a replay archive SHA-256 variable is invalid" >&2
+              exit 1
+            fi
+          done
+          docker pull "$REPLAY_IMAGE"
+
+      - name: Build and run tiny, small, and failure replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_digest=${REPLAY_IMAGE##*@}
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            --env OPEN_LMM_REPLAY_TINY_URL \
+            --env OPEN_LMM_REPLAY_TINY_SHA256 \
+            --env OPEN_LMM_REPLAY_SMALL_URL \
+            --env OPEN_LMM_REPLAY_SMALL_SHA256 \
+            --env OPEN_LMM_REPLAY_FAILURE_URL \
+            --env OPEN_LMM_REPLAY_FAILURE_SHA256 \
+            --env "OPEN_LMM_REPLAY_CONTAINER_DIGEST=$image_digest" \
+            "$REPLAY_IMAGE" bash -lc '
+              set -euo pipefail
+              build=/root/workspace/.ci-build/replay-pr-build
+              evidence=/root/workspace/.ci-build/replay-pr-evidence
+              data=/root/workspace/.ci-build/replay-pr-data
+              config=/root/workspace/open_lmm/test/replay/configs/test1-test2-v1
+              cmake -S /root/workspace/open_lmm -B "$build" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DUSE_CCACHE=OFF \
+                -DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF
+              cmake --build "$build" --parallel 2 --target \
+                open_lmm_replay_runner \
+                open_lmm_replay_compare \
+                open_lmm_replay_validate \
+                open_lmm_replay_contract_tests \
+                open_lmm_replay_runner_e2e_tests
+              ctest --test-dir "$build" --output-on-failure \
+                -R "^open_lmm_replay_(contract|validate|compare|fetch|subset|runner_e2e)_tests$" \
+                --output-junit "$evidence-synthetic.xml"
+
+              /root/workspace/scripts/replay/fetch_replay_data.sh \
+                --url "$OPEN_LMM_REPLAY_TINY_URL" \
+                --archive-sha256 "$OPEN_LMM_REPLAY_TINY_SHA256" \
+                --destination "$data/tiny"
+              /root/workspace/scripts/replay/fetch_replay_data.sh \
+                --url "$OPEN_LMM_REPLAY_SMALL_URL" \
+                --archive-sha256 "$OPEN_LMM_REPLAY_SMALL_SHA256" \
+                --destination "$data/small"
+              /root/workspace/scripts/replay/fetch_replay_data.sh \
+                --url "$OPEN_LMM_REPLAY_FAILURE_URL" \
+                --archive-sha256 "$OPEN_LMM_REPLAY_FAILURE_SHA256" \
+                --destination "$data/failure"
+
+              /root/workspace/scripts/replay/run_replay_case.sh \
+                --runner "$build/test/open_lmm_replay_runner" \
+                --compare "$build/test/open_lmm_replay_compare" \
+                --case /root/workspace/open_lmm/test/replay/manifests/tiny-v1.json \
+                --data-root "$data/tiny" --config-root "$config" \
+                --output-root "$evidence/tiny-output" \
+                --evidence-root "$evidence/tiny" \
+                --container-digest "$OPEN_LMM_REPLAY_CONTAINER_DIGEST" \
+                --baseline /root/workspace/open_lmm/test/replay/baselines/tiny-v1.json
+              /root/workspace/scripts/replay/run_replay_case.sh \
+                --runner "$build/test/open_lmm_replay_runner" \
+                --case /root/workspace/open_lmm/test/replay/manifests/small-config-rerun-v1.json \
+                --data-root "$data/small" --config-root "$config" \
+                --output-root "$evidence/small-output" \
+                --evidence-root "$evidence/small" \
+                --container-digest "$OPEN_LMM_REPLAY_CONTAINER_DIGEST"
+              /root/workspace/scripts/replay/run_replay_case.sh \
+                --runner "$build/test/open_lmm_replay_runner" \
+                --case /root/workspace/open_lmm/test/replay/manifests/failure-corrupt-pcd-v1.json \
+                --data-root "$data/failure" --config-root "$config" \
+                --output-root "$evidence/failure-output" \
+                --evidence-root "$evidence/failure" \
+                --container-digest "$OPEN_LMM_REPLAY_CONTAINER_DIGEST"
+            '
+
+      - name: Preserve replay evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: replay-internal-tiny-small
+          path: .ci-build/replay-pr-evidence*
+          if-no-files-found: error
+          retention-days: 30
+
+  representative:
+    name: replay / internal-representative-nightly
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      REPLAY_IMAGE: ${{ vars.OPEN_LMM_REPLAY_IMAGE }}
+      OPEN_LMM_REPLAY_REPRESENTATIVE_URL: ${{ secrets.OPEN_LMM_REPLAY_REPRESENTATIVE_URL }}
+      OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256: ${{ vars.OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256 }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify immutable replay inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$REPLAY_IMAGE" =~ @sha256:[0-9a-f]{64}$ ||
+                -z "$OPEN_LMM_REPLAY_REPRESENTATIVE_URL" ||
+                ! "$OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then
+            echo "immutable representative replay configuration is missing" >&2
+            exit 1
+          fi
+          docker pull "$REPLAY_IMAGE"
+
+      - name: Build and run representative replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_digest=${REPLAY_IMAGE##*@}
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/root/workspace" \
+            --workdir /root/workspace \
+            --env OPEN_LMM_REPLAY_REPRESENTATIVE_URL \
+            --env OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256 \
+            --env "OPEN_LMM_REPLAY_CONTAINER_DIGEST=$image_digest" \
+            "$REPLAY_IMAGE" bash -lc '
+              set -euo pipefail
+              build=/root/workspace/.ci-build/replay-representative-build
+              evidence=/root/workspace/.ci-build/replay-representative-evidence
+              data=/root/workspace/.ci-build/replay-representative-data
+              config=/root/workspace/open_lmm/test/replay/configs/test1-test2-v1
+              cmake -S /root/workspace/open_lmm -B "$build" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DUSE_CCACHE=OFF \
+                -DOPEN_LMM_BUILD_IRIDESCENCE_GUI=OFF
+              cmake --build "$build" --parallel 2 --target open_lmm_replay_runner
+              /root/workspace/scripts/replay/fetch_replay_data.sh \
+                --url "$OPEN_LMM_REPLAY_REPRESENTATIVE_URL" \
+                --archive-sha256 "$OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256" \
+                --destination "$data"
+              /root/workspace/scripts/replay/run_replay_case.sh \
+                --runner "$build/test/open_lmm_replay_runner" \
+                --case /root/workspace/open_lmm/test/replay/manifests/representative-v1.json \
+                --data-root "$data" --config-root "$config" \
+                --output-root "$evidence-output" \
+                --evidence-root "$evidence" \
+                --container-digest "$OPEN_LMM_REPLAY_CONTAINER_DIGEST"
+            '
+
+      - name: Preserve representative evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: replay-internal-representative
+          path: .ci-build/replay-representative-evidence*
+          if-no-files-found: error
+          retention-days: 30

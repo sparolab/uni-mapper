@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "case_id": "tiny-fixture-v1",
+  "case_manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "dataset_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "config_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "git": {
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "dirty": false
+  },
+  "environment": {
+    "compiler": "fixture",
+    "container": "fixture"
+  },
+  "agents": ["agent-a", "agent-b"],
+  "steps": [
+    {
+      "stage": "DataLoad",
+      "result": "succeeded",
+      "error_code": null,
+      "revision_before": 0,
+      "revision_after": 1,
+      "artifacts": [],
+      "events": []
+    }
+  ],
+  "health": {
+    "state": "healthy",
+    "recovery_required": false
+  },
+  "metrics": {
+    "pose": {"translation_max_m": 0.0015},
+    "map": {"point_count_ratio": 0.02}
+  },
+  "artifacts": [],
+  "diagnostics": {},
+  "close_result": "succeeded"
+}

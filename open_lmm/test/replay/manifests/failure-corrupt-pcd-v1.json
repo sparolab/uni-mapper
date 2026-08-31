@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "case_id": "openlmm-test1-test2-failure-corrupt-pcd-v1",
+  "tier": "failure",
+  "dataset": {
+    "bundle_id": "openlmm-test1-test2-failure-corrupt-pcd-v1",
+    "bundle_sha256": "6e43080817a4cd6adc57f9ae1719efb71a739ad9452d020724a8fd17026e1b16",
+    "source": "private-artifact://openlmm-test1-test2-failure-corrupt-pcd-v1",
+    "license": "LicenseRef-OpenLMM-Internal",
+    "redistributable": false,
+    "agents": [
+      {
+        "id": "test1",
+        "frames": [
+          110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+          120, 121, 122, 123, 124, 125, 126, 127, 128, 129,
+          130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
+          140, 141, 142, 143, 144, 145, 146, 147, 148, 149
+        ],
+        "pose_file": {
+          "path": "test1/optimized_poses.txt",
+          "sha256": "fa6b87b6aee6a97b524dbab265c8a9a93e6b1aecc847de6afc72484c296581b6"
+        },
+        "scan_index": {
+          "path": "test1/scans.sha256",
+          "sha256": "9ea4a78ee7c15eb12235955c6c413ea88cb3c024f99347e9191a85596a215aa7"
+        }
+      },
+      {
+        "id": "test2",
+        "frames": [
+          100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+          110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+          120, 121, 122, 123, 124, 125, 126, 127, 128, 129,
+          130, 131, 132, 133, 134, 135, 136, 137, 138, 139
+        ],
+        "pose_file": {
+          "path": "test2/optimized_poses.txt",
+          "sha256": "89573e21fb6bba16ebe91e261a75b236cd5cfed384dc32a6cb3e977b898c203c"
+        },
+        "scan_index": {
+          "path": "test2/scans.sha256",
+          "sha256": "a8e0400fc431425aa79a6b68ac45ac3c97f27b0994241e40d629498116cafb8d"
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "acquired_at": "not-recorded",
+    "source_version": "openlmm-test1-test2-source-v1",
+    "attribution_file": "ATTRIBUTION.md",
+    "transformations": [
+      "exact source frame and matching pose-row selection",
+      "deterministic archive metadata normalization",
+      "truncate test2 frame 120 PCD payload to 64 bytes"
+    ],
+    "original_sha256": "3bb9aeb46d08b2adfecad3319254ab716cc884547dce9e73bd9c281ca3bf5c79"
+  },
+  "config": {
+    "root": "config.json",
+    "files": [
+      {
+        "path": "config.json",
+        "sha256": "dad3d88480d7c5ee24241cec469daaa165b851c0fbc742ee0e67c7f7d5e5a01f"
+      },
+      {
+        "path": "server/config_map_server.json",
+        "sha256": "7d874a625ae66b7de080c83a93153ccd7d7ad111bb4cf4546b885670d0d314a3"
+      },
+      {
+        "path": "core/data_loader/file_based.json",
+        "sha256": "fae8986f7e7f8e34205644b9f5e7a46cea5e6c5d9c8fed9910ec0b7937899be5"
+      },
+      {
+        "path": "core/loop_detector/scan_context.json",
+        "sha256": "03bbad2d103a73afe188f375afed12fdd41b27f7cb4d64e66df721ca9ce6dc81"
+      },
+      {
+        "path": "core/backend_optimizer/incremental.json",
+        "sha256": "95c2721c9970bfb979879aebda7abce553e33be03b281b8b1686d558a72480b7"
+      },
+      {
+        "path": "core/dynamic_remover/hmm_mos.json",
+        "sha256": "5f19eadebdb82bdea384c730fa2aaebb61d9e06c35f771a20f105d023a23e02f"
+      }
+    ],
+    "plugins": [
+      {
+        "kind": "descriptor",
+        "id": "scan_context",
+        "capability": "descriptor:kdtree"
+      },
+      {
+        "kind": "dynamic_remover_online",
+        "id": "hmm_mos",
+        "capability": "dynamic_remover:online"
+      }
+    ]
+  },
+  "workflow": [
+    {"stage": "DataLoad", "agents": "all"},
+    {"stage": "Alignment", "agents": "all"},
+    {"stage": "MapUpdate", "agents": "all"},
+    {"stage": "Save", "agents": "all"}
+  ],
+  "expected": {
+    "result": "failure",
+    "failure": {
+      "stage": "DataLoad",
+      "error_code": "io_error",
+      "revision_unchanged": true,
+      "close_succeeds": true
+    }
+  },
+  "tolerances": {
+    "pose_translation_m": 0.001,
+    "pose_rotation_rad": 0.0001,
+    "map_point_count_ratio": 0.01,
+    "map_bounds_m": 0.05
+  }
+}

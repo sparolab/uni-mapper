@@ -38,8 +38,10 @@ class VisualizationSnapshotWorker {
  public:
   using Provider =
       std::function<Result<VisualizationSnapshot>(const VisualizationQuery&)>;
+  using CompletionNotification = std::function<void()>;
 
-  explicit VisualizationSnapshotWorker(Provider provider);
+  explicit VisualizationSnapshotWorker(
+      Provider provider, CompletionNotification completion_notification = {});
   ~VisualizationSnapshotWorker();
   VisualizationSnapshotWorker(const VisualizationSnapshotWorker&) = delete;
   VisualizationSnapshotWorker& operator=(const VisualizationSnapshotWorker&) =
@@ -61,6 +63,7 @@ class VisualizationSnapshotWorker {
   void Run();
 
   Provider provider_;
+  CompletionNotification completion_notification_;
   std::mutex mutex_;
   std::condition_variable ready_;
   struct PendingRequest {

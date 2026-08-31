@@ -22,6 +22,9 @@ struct BoundedExecutorSnapshot {
   std::size_t queued_tasks = 0;
   std::size_t active_tasks = 0;
   std::size_t waiting_submitters = 0;
+  std::size_t max_queued_tasks = 0;
+  std::size_t max_active_tasks = 0;
+  std::size_t max_waiting_submitters = 0;
   uint64_t completed_tasks = 0;
   uint64_t cancelled_queued_tasks = 0;
 };
@@ -46,9 +49,11 @@ class BoundedTaskHandle {
 class BoundedExecutor {
  public:
   using Task = std::function<Result<void>()>;
+  using SubmissionWaitNotification = std::function<void()>;
 
   explicit BoundedExecutor(std::size_t worker_count,
-                           std::size_t queue_capacity);
+                           std::size_t queue_capacity,
+                           SubmissionWaitNotification wait_notification = {});
   ~BoundedExecutor();
   BoundedExecutor(const BoundedExecutor&) = delete;
   BoundedExecutor& operator=(const BoundedExecutor&) = delete;
@@ -60,6 +65,7 @@ class BoundedExecutor {
       const std::shared_ptr<CancellationToken>& cancellation);
   void WaitIdle();
   [[nodiscard]] BoundedExecutorSnapshot Snapshot() const;
+  void ResetDiagnosticPeaksToCurrent();
 
  private:
   struct WorkItem {
@@ -73,6 +79,7 @@ class BoundedExecutor {
   static Result<void> Run(const WorkItem& item) noexcept;
 
   const std::size_t queue_capacity_;
+  SubmissionWaitNotification wait_notification_;
   mutable std::mutex mutex_;
   std::condition_variable work_available_;
   std::condition_variable queue_space_;
@@ -84,6 +91,9 @@ class BoundedExecutor {
   uint64_t cancelled_queued_tasks_ = 0;
   std::size_t active_tasks_ = 0;
   std::size_t waiting_submitters_ = 0;
+  std::size_t max_queued_tasks_ = 0;
+  std::size_t max_active_tasks_ = 0;
+  std::size_t max_waiting_submitters_ = 0;
   bool accepting_ = true;
   bool stopping_ = false;
 };

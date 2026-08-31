@@ -33,6 +33,16 @@ void Subtract(const std::shared_ptr<std::atomic<uint64_t>>& counter,
   }
 }
 
+void UpdateMaximum(const std::shared_ptr<std::atomic<uint64_t>>& maximum,
+                   uint64_t value) noexcept {
+  uint64_t current = maximum->load(std::memory_order_acquire);
+  while (current < value &&
+         !maximum->compare_exchange_weak(current, value,
+                                         std::memory_order_acq_rel,
+                                         std::memory_order_acquire)) {
+  }
+}
+
 ResourceBudget TaskOnlyBudget(std::size_t max_agent_tasks) {
   ResourceBudget budget;
   budget.max_agent_tasks = max_agent_tasks;
@@ -88,10 +98,14 @@ Error MemoryAdmissionRejected(MemoryClass memory_class,
 MemoryReservation::MemoryReservation(
     std::shared_ptr<std::atomic<uint64_t>> total_counter,
     std::shared_ptr<std::atomic<uint64_t>> class_counter,
+    std::shared_ptr<std::atomic<uint64_t>> total_peak,
+    std::shared_ptr<std::atomic<uint64_t>> class_peak,
     std::shared_ptr<std::atomic<uint64_t>> failure_counter, uint64_t limit,
     uint64_t bytes, MemoryClass memory_class) noexcept
     : total_counter_(std::move(total_counter)),
       class_counter_(std::move(class_counter)),
+      total_peak_(std::move(total_peak)),
+      class_peak_(std::move(class_peak)),
       failure_counter_(std::move(failure_counter)), limit_(limit), bytes_(bytes),
       memory_class_(memory_class) {}
 
@@ -100,6 +114,8 @@ MemoryReservation::~MemoryReservation() { Reset(); }
 MemoryReservation::MemoryReservation(MemoryReservation&& other) noexcept
     : total_counter_(std::move(other.total_counter_)),
       class_counter_(std::move(other.class_counter_)),
+      total_peak_(std::move(other.total_peak_)),
+      class_peak_(std::move(other.class_peak_)),
       failure_counter_(std::move(other.failure_counter_)),
       limit_(other.limit_),
       bytes_(std::exchange(other.bytes_, 0)),
@@ -111,6 +127,8 @@ MemoryReservation& MemoryReservation::operator=(
   Reset();
   total_counter_ = std::move(other.total_counter_);
   class_counter_ = std::move(other.class_counter_);
+  total_peak_ = std::move(other.total_peak_);
+  class_peak_ = std::move(other.class_peak_);
   failure_counter_ = std::move(other.failure_counter_);
   limit_ = other.limit_;
   bytes_ = std::exchange(other.bytes_, 0);
@@ -133,7 +151,11 @@ Result<void> MemoryReservation::Resize(uint64_t bytes) {
           memory_class_, total_counter_->load(std::memory_order_acquire),
           delta, limit_));
     }
-    class_counter_->fetch_add(delta, std::memory_order_acq_rel);
+    const uint64_t class_total =
+        class_counter_->fetch_add(delta, std::memory_order_acq_rel) + delta;
+    UpdateMaximum(total_peak_,
+                  total_counter_->load(std::memory_order_acquire));
+    UpdateMaximum(class_peak_, class_total);
   } else if (bytes < bytes_) {
     const uint64_t delta = bytes_ - bytes;
     Subtract(class_counter_, delta);
@@ -151,6 +173,8 @@ void MemoryReservation::Reset() noexcept {
   bytes_ = 0;
   total_counter_.reset();
   class_counter_.reset();
+  total_peak_.reset();
+  class_peak_.reset();
   failure_counter_.reset();
 }
 
@@ -169,6 +193,8 @@ ResourceGovernor::ResourceGovernor(ResourceBudget budget)
 
 bool ResourceGovernor::TryReserveMemory(uint64_t bytes) noexcept {
   if (TryAdd(reserved_memory_bytes_, budget_.soft_memory_bytes, bytes)) {
+    UpdateMaximum(peak_reserved_memory_bytes_,
+                  reserved_memory_bytes_->load(std::memory_order_acquire));
     return true;
   }
   memory_admission_failures_->fetch_add(1, std::memory_order_relaxed);
@@ -198,10 +224,14 @@ Result<MemoryReservation> ResourceGovernor::ReserveMemory(
     return Result<MemoryReservation>::Failure(
         Error::InvalidArgument("unknown memory reservation class"));
   }
-  reserved_memory_by_class_[class_index]->fetch_add(
-      bytes, std::memory_order_acq_rel);
+  const uint64_t class_total =
+      reserved_memory_by_class_[class_index]->fetch_add(
+          bytes, std::memory_order_acq_rel) + bytes;
+  UpdateMaximum(peak_reserved_memory_by_class_[class_index], class_total);
   return Result<MemoryReservation>::Ok(MemoryReservation(
       reserved_memory_bytes_, reserved_memory_by_class_[class_index],
+      peak_reserved_memory_bytes_,
+      peak_reserved_memory_by_class_[class_index],
       memory_admission_failures_, budget_.soft_memory_bytes, bytes,
       memory_class));
 }
@@ -244,9 +274,19 @@ Result<MemoryReservation> ResourceGovernor::ReserveReplacementMemory(
   reserved_memory_by_class_[static_cast<std::size_t>(
       MemoryClass::kResidentPayload)]->fetch_add(bytes,
                                                  std::memory_order_acq_rel);
+  UpdateMaximum(peak_reserved_memory_bytes_,
+                reserved_memory_bytes_->load(std::memory_order_acquire));
+  UpdateMaximum(
+      peak_reserved_memory_by_class_[static_cast<std::size_t>(
+          MemoryClass::kResidentPayload)],
+      reserved_memory_by_class_[static_cast<std::size_t>(
+          MemoryClass::kResidentPayload)]->load(std::memory_order_acquire));
   return Result<MemoryReservation>::Ok(MemoryReservation(
       reserved_memory_bytes_,
       reserved_memory_by_class_[static_cast<std::size_t>(
+          MemoryClass::kResidentPayload)],
+      peak_reserved_memory_bytes_,
+      peak_reserved_memory_by_class_[static_cast<std::size_t>(
           MemoryClass::kResidentPayload)],
       memory_admission_failures_, limit, bytes,
       MemoryClass::kResidentPayload));
@@ -280,6 +320,44 @@ uint64_t ResourceGovernor::ReservedMemoryBytes(
   const std::size_t class_index = MemoryClassIndex(memory_class);
   if (class_index >= reserved_memory_by_class_.size()) return 0;
   return reserved_memory_by_class_[class_index]->load(std::memory_order_acquire);
+}
+
+ResourceGovernorDiagnostics ResourceGovernor::Diagnostics() const {
+  ResourceGovernorDiagnostics diagnostics;
+  diagnostics.budget = budget_;
+  diagnostics.reserved_total_bytes =
+      reserved_memory_bytes_->load(std::memory_order_acquire);
+  diagnostics.peak_reserved_total_bytes =
+      peak_reserved_memory_bytes_->load(std::memory_order_acquire);
+  for (std::size_t index = 0;
+       index < diagnostics.reserved_by_class.size(); ++index) {
+    diagnostics.reserved_by_class[index] =
+        reserved_memory_by_class_[index]->load(std::memory_order_acquire);
+    diagnostics.peak_reserved_by_class[index] =
+        peak_reserved_memory_by_class_[index]->load(
+            std::memory_order_acquire);
+  }
+  diagnostics.admission_failures =
+      memory_admission_failures_->load(std::memory_order_acquire);
+  {
+    std::lock_guard lock(heavy_phase_mutex_);
+    diagnostics.heavy_phase_active = heavy_phase_active_;
+  }
+  diagnostics.executor = agent_executor_.Snapshot();
+  return diagnostics;
+}
+
+void ResourceGovernor::ResetDiagnosticPeaksToCurrent() {
+  peak_reserved_memory_bytes_->store(
+      reserved_memory_bytes_->load(std::memory_order_acquire),
+      std::memory_order_release);
+  for (std::size_t index = 0; index < reserved_memory_by_class_.size();
+       ++index) {
+    peak_reserved_memory_by_class_[index]->store(
+        reserved_memory_by_class_[index]->load(std::memory_order_acquire),
+        std::memory_order_release);
+  }
+  agent_executor_.ResetDiagnosticPeaksToCurrent();
 }
 
 Result<void> ResourceGovernor::AcquireHeavyMemoryPhase(

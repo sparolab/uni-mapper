@@ -944,6 +944,7 @@ Result<void> RuntimeService::Close(CloseMode mode) {
     if (lifecycle_ == LifecycleState::kOpening) {
       if (transition_cancellation_) transition_cancellation_->Request();
       lifecycle_ = LifecycleState::kClosing;
+      lifecycle_changed_.notify_all();
       lifecycle_changed_.wait(runtime_lock, [&] {
         return lifecycle_ != LifecycleState::kClosing;
       });
@@ -979,6 +980,7 @@ Result<void> RuntimeService::Close(CloseMode mode) {
       return Result<void>::Failure(Error::InvalidArgument("runtime has an active job"));
     }
     lifecycle_ = LifecycleState::kClosing;
+    lifecycle_changed_.notify_all();
     instance->closing = true;
     instance->state = RuntimeStatus::kClosing;
     break;
@@ -1026,6 +1028,42 @@ bool RuntimeService::IsOpen() const {
 bool RuntimeService::IsInEventCallback() const {
   auto active = Active();
   return active && active.Value()->controller->IsInEventCallback();
+}
+
+RuntimeServiceDiagnostics RuntimeService::Diagnostics() const {
+  RuntimeServiceDiagnostics diagnostics;
+  std::shared_ptr<RuntimeInstance> instance;
+  std::shared_ptr<SubscriberRegistry> subscribers;
+  {
+    std::lock_guard lock(mutex_);
+    diagnostics.lifecycle_state = lifecycle_;
+    diagnostics.active_epoch = active_ ? active_->epoch : epoch_;
+    diagnostics.public_job_count = public_jobs_.size();
+    diagnostics.terminal_job_count = terminal_public_jobs_.size();
+    diagnostics.recent_event_count = recent_public_events_.size();
+    instance = active_;
+    subscribers = subscribers_;
+  }
+  if (instance) {
+    std::lock_guard lock(instance->mutex);
+    diagnostics.operation_lease_count = instance->operations_in_progress;
+  }
+  if (subscribers) {
+    std::lock_guard registry_lock(subscribers->mutex);
+    diagnostics.subscriber_count = subscribers->slots.size();
+    for (const auto& [id, slot] : subscribers->slots) {
+      (void)id;
+      std::lock_guard slot_lock(slot->mutex);
+      diagnostics.callbacks_in_flight += slot->callbacks_in_flight;
+    }
+  }
+  return diagnostics;
+}
+
+void RuntimeService::WaitForLifecycleForDiagnostics(
+    RuntimeLifecycleState expected) {
+  std::unique_lock lock(mutex_);
+  lifecycle_changed_.wait(lock, [&] { return lifecycle_ == expected; });
 }
 
 }  // namespace open_lmm

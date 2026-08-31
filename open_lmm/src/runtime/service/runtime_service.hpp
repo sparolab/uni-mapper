@@ -22,6 +22,27 @@ namespace open_lmm {
 
 class PendingOutputSet;
 
+enum class RuntimeLifecycleState {
+  kClosed,
+  kOpening,
+  kReady,
+  kReplacing,
+  kClosing,
+};
+
+// Read-only internal diagnostics for deterministic lifecycle and ownership
+// verification. This header is private and the snapshot is not installed.
+struct RuntimeServiceDiagnostics {
+  RuntimeLifecycleState lifecycle_state = RuntimeLifecycleState::kClosed;
+  uint64_t active_epoch = 0;
+  std::size_t public_job_count = 0;
+  std::size_t terminal_job_count = 0;
+  std::size_t recent_event_count = 0;
+  std::size_t subscriber_count = 0;
+  std::size_t callbacks_in_flight = 0;
+  std::size_t operation_lease_count = 0;
+};
+
 // Owns exactly one externally visible runtime. A root/DataLoad replacement
 // builds one private candidate and atomically swaps it for active_ only after
 // config-file installation succeeds.
@@ -63,12 +84,14 @@ class RuntimeService {
 
   [[nodiscard]] bool IsOpen() const;
   [[nodiscard]] bool IsInEventCallback() const;
+  [[nodiscard]] RuntimeServiceDiagnostics Diagnostics() const;
+  void WaitForLifecycleForDiagnostics(RuntimeLifecycleState expected);
   [[nodiscard]] const ResourceGovernor& Governor() const noexcept {
     return *governor_;
   }
 
  private:
-  enum class LifecycleState { kClosed, kOpening, kReady, kReplacing, kClosing };
+  using LifecycleState = RuntimeLifecycleState;
   struct RuntimeInstance;
   struct SubscriberRegistry;
   struct SubscriberSlot;

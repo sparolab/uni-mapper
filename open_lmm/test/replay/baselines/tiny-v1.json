@@ -1,0 +1,4111 @@
+{
+  "absolute_tolerances": [
+    {
+      "expected": -7.507599830627441,
+      "pointer": "/metrics/visualization/test1/poses/0/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.567298889160156,
+      "pointer": "/metrics/visualization/test1/poses/0/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.5974600315093994,
+      "pointer": "/metrics/visualization/test1/poses/0/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.11425144970417023,
+      "pointer": "/metrics/visualization/test1/poses/0/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.014783059246838093,
+      "pointer": "/metrics/visualization/test1/poses/0/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.9890267848968506,
+      "pointer": "/metrics/visualization/test1/poses/0/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0924878865480423,
+      "pointer": "/metrics/visualization/test1/poses/0/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -8.308609962463379,
+      "pointer": "/metrics/visualization/test1/poses/1/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.888999938964844,
+      "pointer": "/metrics/visualization/test1/poses/1/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.4058500528335571,
+      "pointer": "/metrics/visualization/test1/poses/1/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.11373667418956757,
+      "pointer": "/metrics/visualization/test1/poses/1/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.0017274332931265235,
+      "pointer": "/metrics/visualization/test1/poses/1/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.9920282363891602,
+      "pointer": "/metrics/visualization/test1/poses/1/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.05423207953572273,
+      "pointer": "/metrics/visualization/test1/poses/1/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -9.123250007629395,
+      "pointer": "/metrics/visualization/test1/poses/2/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.98460006713867,
+      "pointer": "/metrics/visualization/test1/poses/2/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.1859500408172607,
+      "pointer": "/metrics/visualization/test1/poses/2/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.12259633094072342,
+      "pointer": "/metrics/visualization/test1/poses/2/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.01606808602809906,
+      "pointer": "/metrics/visualization/test1/poses/2/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9923257827758789,
+      "pointer": "/metrics/visualization/test1/poses/2/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0012118540471419692,
+      "pointer": "/metrics/visualization/test1/poses/2/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -10.037799835205078,
+      "pointer": "/metrics/visualization/test1/poses/3/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 62.03710174560547,
+      "pointer": "/metrics/visualization/test1/poses/3/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.0602699518203735,
+      "pointer": "/metrics/visualization/test1/poses/3/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.12648141384124756,
+      "pointer": "/metrics/visualization/test1/poses/3/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.037535592913627625,
+      "pointer": "/metrics/visualization/test1/poses/3/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.988981306552887,
+      "pointer": "/metrics/visualization/test1/poses/3/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.06715341657400131,
+      "pointer": "/metrics/visualization/test1/poses/3/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -11.00790023803711,
+      "pointer": "/metrics/visualization/test1/poses/4/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.83639907836914,
+      "pointer": "/metrics/visualization/test1/poses/4/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.8675680160522461,
+      "pointer": "/metrics/visualization/test1/poses/4/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.12882380187511444,
+      "pointer": "/metrics/visualization/test1/poses/4/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.06492603570222855,
+      "pointer": "/metrics/visualization/test1/poses/4/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9759162068367004,
+      "pointer": "/metrics/visualization/test1/poses/4/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.16363492608070374,
+      "pointer": "/metrics/visualization/test1/poses/4/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -11.919699668884277,
+      "pointer": "/metrics/visualization/test1/poses/5/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.47959899902344,
+      "pointer": "/metrics/visualization/test1/poses/5/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.7329750061035156,
+      "pointer": "/metrics/visualization/test1/poses/5/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.10686542093753815,
+      "pointer": "/metrics/visualization/test1/poses/5/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.05098307132720947,
+      "pointer": "/metrics/visualization/test1/poses/5/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.954906702041626,
+      "pointer": "/metrics/visualization/test1/poses/5/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.27227526903152466,
+      "pointer": "/metrics/visualization/test1/poses/5/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -12.780500411987305,
+      "pointer": "/metrics/visualization/test1/poses/6/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.1244010925293,
+      "pointer": "/metrics/visualization/test1/poses/6/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.6198819875717163,
+      "pointer": "/metrics/visualization/test1/poses/6/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.09956014901399612,
+      "pointer": "/metrics/visualization/test1/poses/6/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.058127883821725845,
+      "pointer": "/metrics/visualization/test1/poses/6/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9392915368080139,
+      "pointer": "/metrics/visualization/test1/poses/6/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.32317253947257996,
+      "pointer": "/metrics/visualization/test1/poses/6/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -13.563899993896484,
+      "pointer": "/metrics/visualization/test1/poses/7/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 60.743499755859375,
+      "pointer": "/metrics/visualization/test1/poses/7/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.4150260090827942,
+      "pointer": "/metrics/visualization/test1/poses/7/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.12723815441131592,
+      "pointer": "/metrics/visualization/test1/poses/7/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.045216046273708344,
+      "pointer": "/metrics/visualization/test1/poses/7/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9013493061065674,
+      "pointer": "/metrics/visualization/test1/poses/7/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.4115038514137268,
+      "pointer": "/metrics/visualization/test1/poses/7/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -14.273600578308105,
+      "pointer": "/metrics/visualization/test1/poses/8/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 60.29410171508789,
+      "pointer": "/metrics/visualization/test1/poses/8/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.30781102180480957,
+      "pointer": "/metrics/visualization/test1/poses/8/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.11189614236354828,
+      "pointer": "/metrics/visualization/test1/poses/8/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.047520846128463745,
+      "pointer": "/metrics/visualization/test1/poses/8/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9142071604728699,
+      "pointer": "/metrics/visualization/test1/poses/8/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.38658273220062256,
+      "pointer": "/metrics/visualization/test1/poses/8/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -14.973400115966797,
+      "pointer": "/metrics/visualization/test1/poses/9/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 59.70180130004883,
+      "pointer": "/metrics/visualization/test1/poses/9/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.05585213378071785,
+      "pointer": "/metrics/visualization/test1/poses/9/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.06372751295566559,
+      "pointer": "/metrics/visualization/test1/poses/9/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.033299800008535385,
+      "pointer": "/metrics/visualization/test1/poses/9/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8866176009178162,
+      "pointer": "/metrics/visualization/test1/poses/9/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.4568798840045929,
+      "pointer": "/metrics/visualization/test1/poses/9/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -15.846099853515625,
+      "pointer": "/metrics/visualization/test1/poses/10/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 59.00149917602539,
+      "pointer": "/metrics/visualization/test1/poses/10/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.05337505415081978,
+      "pointer": "/metrics/visualization/test1/poses/10/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.07118616998195648,
+      "pointer": "/metrics/visualization/test1/poses/10/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.051480744034051895,
+      "pointer": "/metrics/visualization/test1/poses/10/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8667411804199219,
+      "pointer": "/metrics/visualization/test1/poses/10/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.49096056818962097,
+      "pointer": "/metrics/visualization/test1/poses/10/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -16.57360076904297,
+      "pointer": "/metrics/visualization/test1/poses/11/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 58.212100982666016,
+      "pointer": "/metrics/visualization/test1/poses/11/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.2921309471130371,
+      "pointer": "/metrics/visualization/test1/poses/11/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.09616600722074509,
+      "pointer": "/metrics/visualization/test1/poses/11/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0407850556075573,
+      "pointer": "/metrics/visualization/test1/poses/11/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8388270735740662,
+      "pointer": "/metrics/visualization/test1/poses/11/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5342826247215271,
+      "pointer": "/metrics/visualization/test1/poses/11/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -17.177101135253906,
+      "pointer": "/metrics/visualization/test1/poses/12/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 57.297698974609375,
+      "pointer": "/metrics/visualization/test1/poses/12/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.32043391466140747,
+      "pointer": "/metrics/visualization/test1/poses/12/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.05277794227004051,
+      "pointer": "/metrics/visualization/test1/poses/12/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.04234326630830765,
+      "pointer": "/metrics/visualization/test1/poses/12/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8434479236602783,
+      "pointer": "/metrics/visualization/test1/poses/12/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5329324007034302,
+      "pointer": "/metrics/visualization/test1/poses/12/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -17.78460121154785,
+      "pointer": "/metrics/visualization/test1/poses/13/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 56.241600036621094,
+      "pointer": "/metrics/visualization/test1/poses/13/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.23844388127326965,
+      "pointer": "/metrics/visualization/test1/poses/13/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04195067659020424,
+      "pointer": "/metrics/visualization/test1/poses/13/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.05911790207028389,
+      "pointer": "/metrics/visualization/test1/poses/13/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8372169137001038,
+      "pointer": "/metrics/visualization/test1/poses/13/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5420455932617188,
+      "pointer": "/metrics/visualization/test1/poses/13/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -18.497900009155273,
+      "pointer": "/metrics/visualization/test1/poses/14/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 55.13159942626953,
+      "pointer": "/metrics/visualization/test1/poses/14/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.2168818563222885,
+      "pointer": "/metrics/visualization/test1/poses/14/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.13731135427951813,
+      "pointer": "/metrics/visualization/test1/poses/14/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.07493916153907776,
+      "pointer": "/metrics/visualization/test1/poses/14/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8397955298423767,
+      "pointer": "/metrics/visualization/test1/poses/14/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5198782682418823,
+      "pointer": "/metrics/visualization/test1/poses/14/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -19.06149673461914,
+      "pointer": "/metrics/visualization/test1/poses/15/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 54.080604553222656,
+      "pointer": "/metrics/visualization/test1/poses/15/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.19909672439098358,
+      "pointer": "/metrics/visualization/test1/poses/15/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.1610274761915207,
+      "pointer": "/metrics/visualization/test1/poses/15/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.09894369542598724,
+      "pointer": "/metrics/visualization/test1/poses/15/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.831066906452179,
+      "pointer": "/metrics/visualization/test1/poses/15/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5230751633644104,
+      "pointer": "/metrics/visualization/test1/poses/15/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -19.719594955444336,
+      "pointer": "/metrics/visualization/test1/poses/16/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 53.02241134643555,
+      "pointer": "/metrics/visualization/test1/poses/16/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.20813460648059845,
+      "pointer": "/metrics/visualization/test1/poses/16/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.18191824853420258,
+      "pointer": "/metrics/visualization/test1/poses/16/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.09722127765417099,
+      "pointer": "/metrics/visualization/test1/poses/16/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8306360244750977,
+      "pointer": "/metrics/visualization/test1/poses/16/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5172014832496643,
+      "pointer": "/metrics/visualization/test1/poses/16/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -20.3505916595459,
+      "pointer": "/metrics/visualization/test1/poses/17/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 51.877315521240234,
+      "pointer": "/metrics/visualization/test1/poses/17/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.18239247798919678,
+      "pointer": "/metrics/visualization/test1/poses/17/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.05036492273211479,
+      "pointer": "/metrics/visualization/test1/poses/17/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.051756005734205246,
+      "pointer": "/metrics/visualization/test1/poses/17/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.824508547782898,
+      "pointer": "/metrics/visualization/test1/poses/17/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5612224340438843,
+      "pointer": "/metrics/visualization/test1/poses/17/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -20.820589065551758,
+      "pointer": "/metrics/visualization/test1/poses/18/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 50.64942169189453,
+      "pointer": "/metrics/visualization/test1/poses/18/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.18084535002708435,
+      "pointer": "/metrics/visualization/test1/poses/18/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.06566495448350906,
+      "pointer": "/metrics/visualization/test1/poses/18/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.030881667509675026,
+      "pointer": "/metrics/visualization/test1/poses/18/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8148521184921265,
+      "pointer": "/metrics/visualization/test1/poses/18/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5751091837882996,
+      "pointer": "/metrics/visualization/test1/poses/18/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -21.331485748291016,
+      "pointer": "/metrics/visualization/test1/poses/19/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 49.36582946777344,
+      "pointer": "/metrics/visualization/test1/poses/19/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.15028221905231476,
+      "pointer": "/metrics/visualization/test1/poses/19/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04207639768719673,
+      "pointer": "/metrics/visualization/test1/poses/19/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03627220168709755,
+      "pointer": "/metrics/visualization/test1/poses/19/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8899988532066345,
+      "pointer": "/metrics/visualization/test1/poses/19/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.45256590843200684,
+      "pointer": "/metrics/visualization/test1/poses/19/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -21.86098289489746,
+      "pointer": "/metrics/visualization/test1/poses/20/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 48.13013458251953,
+      "pointer": "/metrics/visualization/test1/poses/20/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.12702810764312744,
+      "pointer": "/metrics/visualization/test1/poses/20/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.053011614829301834,
+      "pointer": "/metrics/visualization/test1/poses/20/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03042835183441639,
+      "pointer": "/metrics/visualization/test1/poses/20/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.85831218957901,
+      "pointer": "/metrics/visualization/test1/poses/20/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5094747543334961,
+      "pointer": "/metrics/visualization/test1/poses/20/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -22.352279663085938,
+      "pointer": "/metrics/visualization/test1/poses/21/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 46.77503967285156,
+      "pointer": "/metrics/visualization/test1/poses/21/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.057860806584358215,
+      "pointer": "/metrics/visualization/test1/poses/21/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.027220899239182472,
+      "pointer": "/metrics/visualization/test1/poses/21/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.032276686280965805,
+      "pointer": "/metrics/visualization/test1/poses/21/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8346785306930542,
+      "pointer": "/metrics/visualization/test1/poses/21/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5491169691085815,
+      "pointer": "/metrics/visualization/test1/poses/21/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -22.763376235961914,
+      "pointer": "/metrics/visualization/test1/poses/22/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 45.45024490356445,
+      "pointer": "/metrics/visualization/test1/poses/22/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0023550966288894415,
+      "pointer": "/metrics/visualization/test1/poses/22/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.05597538501024246,
+      "pointer": "/metrics/visualization/test1/poses/22/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.030603405088186264,
+      "pointer": "/metrics/visualization/test1/poses/22/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8211033344268799,
+      "pointer": "/metrics/visualization/test1/poses/22/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.567203164100647,
+      "pointer": "/metrics/visualization/test1/poses/22/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -23.25397491455078,
+      "pointer": "/metrics/visualization/test1/poses/23/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 44.11695098876953,
+      "pointer": "/metrics/visualization/test1/poses/23/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.07472983747720718,
+      "pointer": "/metrics/visualization/test1/poses/23/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04215332120656967,
+      "pointer": "/metrics/visualization/test1/poses/23/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.02393987588584423,
+      "pointer": "/metrics/visualization/test1/poses/23/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8413499593734741,
+      "pointer": "/metrics/visualization/test1/poses/23/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5383129715919495,
+      "pointer": "/metrics/visualization/test1/poses/23/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -23.78177261352539,
+      "pointer": "/metrics/visualization/test1/poses/24/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 42.80695724487305,
+      "pointer": "/metrics/visualization/test1/poses/24/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.08381585776805878,
+      "pointer": "/metrics/visualization/test1/poses/24/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.068411685526371,
+      "pointer": "/metrics/visualization/test1/poses/24/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.028606800362467766,
+      "pointer": "/metrics/visualization/test1/poses/24/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8412207961082458,
+      "pointer": "/metrics/visualization/test1/poses/24/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5355826616287231,
+      "pointer": "/metrics/visualization/test1/poses/24/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -24.384069442749023,
+      "pointer": "/metrics/visualization/test1/poses/25/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 41.490562438964844,
+      "pointer": "/metrics/visualization/test1/poses/25/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.15799212455749512,
+      "pointer": "/metrics/visualization/test1/poses/25/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0825520008802414,
+      "pointer": "/metrics/visualization/test1/poses/25/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03399227187037468,
+      "pointer": "/metrics/visualization/test1/poses/25/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.816362202167511,
+      "pointer": "/metrics/visualization/test1/poses/25/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5705978870391846,
+      "pointer": "/metrics/visualization/test1/poses/25/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -24.997468948364258,
+      "pointer": "/metrics/visualization/test1/poses/26/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 40.289066314697266,
+      "pointer": "/metrics/visualization/test1/poses/26/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.17251303791999817,
+      "pointer": "/metrics/visualization/test1/poses/26/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.053836993873119354,
+      "pointer": "/metrics/visualization/test1/poses/26/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.05754910409450531,
+      "pointer": "/metrics/visualization/test1/poses/26/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8509308099746704,
+      "pointer": "/metrics/visualization/test1/poses/26/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5193326473236084,
+      "pointer": "/metrics/visualization/test1/poses/26/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -25.745065689086914,
+      "pointer": "/metrics/visualization/test1/poses/27/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 39.055572509765625,
+      "pointer": "/metrics/visualization/test1/poses/27/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.15144488215446472,
+      "pointer": "/metrics/visualization/test1/poses/27/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0868152305483818,
+      "pointer": "/metrics/visualization/test1/poses/27/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.06056671962141991,
+      "pointer": "/metrics/visualization/test1/poses/27/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8329997658729553,
+      "pointer": "/metrics/visualization/test1/poses/27/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5430520176887512,
+      "pointer": "/metrics/visualization/test1/poses/27/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -26.405664443969727,
+      "pointer": "/metrics/visualization/test1/poses/28/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 37.771480560302734,
+      "pointer": "/metrics/visualization/test1/poses/28/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.22049768269062042,
+      "pointer": "/metrics/visualization/test1/poses/28/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.08641019463539124,
+      "pointer": "/metrics/visualization/test1/poses/28/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.04660258814692497,
+      "pointer": "/metrics/visualization/test1/poses/28/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8358186483383179,
+      "pointer": "/metrics/visualization/test1/poses/28/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5401561856269836,
+      "pointer": "/metrics/visualization/test1/poses/28/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -27.047863006591797,
+      "pointer": "/metrics/visualization/test1/poses/29/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 36.61008834838867,
+      "pointer": "/metrics/visualization/test1/poses/29/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.1768614500761032,
+      "pointer": "/metrics/visualization/test1/poses/29/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.08942531049251556,
+      "pointer": "/metrics/visualization/test1/poses/29/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.042531002312898636,
+      "pointer": "/metrics/visualization/test1/poses/29/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8323134183883667,
+      "pointer": "/metrics/visualization/test1/poses/29/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5453884601593018,
+      "pointer": "/metrics/visualization/test1/poses/29/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -27.643762588500977,
+      "pointer": "/metrics/visualization/test1/poses/30/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 35.44569396972656,
+      "pointer": "/metrics/visualization/test1/poses/30/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.11659616231918335,
+      "pointer": "/metrics/visualization/test1/poses/30/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.10749547928571701,
+      "pointer": "/metrics/visualization/test1/poses/30/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.05448279157280922,
+      "pointer": "/metrics/visualization/test1/poses/30/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8484396934509277,
+      "pointer": "/metrics/visualization/test1/poses/30/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5153899192810059,
+      "pointer": "/metrics/visualization/test1/poses/30/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -28.14336395263672,
+      "pointer": "/metrics/visualization/test1/poses/31/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 34.524696350097656,
+      "pointer": "/metrics/visualization/test1/poses/31/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.05624516308307648,
+      "pointer": "/metrics/visualization/test1/poses/31/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.09672313183546066,
+      "pointer": "/metrics/visualization/test1/poses/31/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.05032453313469887,
+      "pointer": "/metrics/visualization/test1/poses/31/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8482816815376282,
+      "pointer": "/metrics/visualization/test1/poses/31/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5181992650032043,
+      "pointer": "/metrics/visualization/test1/poses/31/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -28.661067962646484,
+      "pointer": "/metrics/visualization/test1/poses/32/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 33.48139953613281,
+      "pointer": "/metrics/visualization/test1/poses/32/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.004874772392213345,
+      "pointer": "/metrics/visualization/test1/poses/32/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0576353594660759,
+      "pointer": "/metrics/visualization/test1/poses/32/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.029253672808408737,
+      "pointer": "/metrics/visualization/test1/poses/32/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8469957709312439,
+      "pointer": "/metrics/visualization/test1/poses/32/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5276560187339783,
+      "pointer": "/metrics/visualization/test1/poses/32/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -29.208471298217773,
+      "pointer": "/metrics/visualization/test1/poses/33/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 32.33100509643555,
+      "pointer": "/metrics/visualization/test1/poses/33/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.13015148043632507,
+      "pointer": "/metrics/visualization/test1/poses/33/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.049573056399822235,
+      "pointer": "/metrics/visualization/test1/poses/33/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.02601880207657814,
+      "pointer": "/metrics/visualization/test1/poses/33/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8755630850791931,
+      "pointer": "/metrics/visualization/test1/poses/33/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.4798486530780792,
+      "pointer": "/metrics/visualization/test1/poses/33/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -29.85267448425293,
+      "pointer": "/metrics/visualization/test1/poses/34/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 31.267210006713867,
+      "pointer": "/metrics/visualization/test1/poses/34/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.2637134790420532,
+      "pointer": "/metrics/visualization/test1/poses/34/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.06381089240312576,
+      "pointer": "/metrics/visualization/test1/poses/34/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03139372542500496,
+      "pointer": "/metrics/visualization/test1/poses/34/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9255365133285522,
+      "pointer": "/metrics/visualization/test1/poses/34/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.37192073464393616,
+      "pointer": "/metrics/visualization/test1/poses/34/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -30.762876510620117,
+      "pointer": "/metrics/visualization/test1/poses/35/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 30.420913696289062,
+      "pointer": "/metrics/visualization/test1/poses/35/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.41690942645072937,
+      "pointer": "/metrics/visualization/test1/poses/35/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.043184176087379456,
+      "pointer": "/metrics/visualization/test1/poses/35/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.04367276653647423,
+      "pointer": "/metrics/visualization/test1/poses/35/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9518613815307617,
+      "pointer": "/metrics/visualization/test1/poses/35/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.30031290650367737,
+      "pointer": "/metrics/visualization/test1/poses/35/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -31.890878677368164,
+      "pointer": "/metrics/visualization/test1/poses/36/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 29.843420028686523,
+      "pointer": "/metrics/visualization/test1/poses/36/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.5211502909660339,
+      "pointer": "/metrics/visualization/test1/poses/36/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.02910342998802662,
+      "pointer": "/metrics/visualization/test1/poses/36/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03126462921500206,
+      "pointer": "/metrics/visualization/test1/poses/36/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9746118187904358,
+      "pointer": "/metrics/visualization/test1/poses/36/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.21978890895843506,
+      "pointer": "/metrics/visualization/test1/poses/36/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -33.01448059082031,
+      "pointer": "/metrics/visualization/test1/poses/37/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 29.319326400756836,
+      "pointer": "/metrics/visualization/test1/poses/37/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.6215981841087341,
+      "pointer": "/metrics/visualization/test1/poses/37/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.03203011304140091,
+      "pointer": "/metrics/visualization/test1/poses/37/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03895348310470581,
+      "pointer": "/metrics/visualization/test1/poses/37/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.965786874294281,
+      "pointer": "/metrics/visualization/test1/poses/37/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.2543865144252777,
+      "pointer": "/metrics/visualization/test1/poses/37/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -34.03398132324219,
+      "pointer": "/metrics/visualization/test1/poses/38/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 28.618831634521484,
+      "pointer": "/metrics/visualization/test1/poses/38/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.7699310779571533,
+      "pointer": "/metrics/visualization/test1/poses/38/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.026624154299497604,
+      "pointer": "/metrics/visualization/test1/poses/38/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.015920190140604973,
+      "pointer": "/metrics/visualization/test1/poses/38/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9503164887428284,
+      "pointer": "/metrics/visualization/test1/poses/38/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.3097357451915741,
+      "pointer": "/metrics/visualization/test1/poses/38/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -34.93848419189453,
+      "pointer": "/metrics/visualization/test1/poses/39/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 27.77153778076172,
+      "pointer": "/metrics/visualization/test1/poses/39/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.9376939535140991,
+      "pointer": "/metrics/visualization/test1/poses/39/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.030142420902848244,
+      "pointer": "/metrics/visualization/test1/poses/39/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.024692021310329437,
+      "pointer": "/metrics/visualization/test1/poses/39/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9144834280014038,
+      "pointer": "/metrics/visualization/test1/poses/39/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.402742862701416,
+      "pointer": "/metrics/visualization/test1/poses/39/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -68.01642608642578,
+      "pointer": "/metrics/visualization/test1/min_bound/0",
+      "tolerance": 0.05
+    },
+    {
+      "expected": -20.687488555908203,
+      "pointer": "/metrics/visualization/test1/min_bound/1",
+      "tolerance": 0.05
+    },
+    {
+      "expected": -6.532840728759766,
+      "pointer": "/metrics/visualization/test1/min_bound/2",
+      "tolerance": 0.05
+    },
+    {
+      "expected": 38.76642990112305,
+      "pointer": "/metrics/visualization/test1/max_bound/0",
+      "tolerance": 0.05
+    },
+    {
+      "expected": 83.52521514892578,
+      "pointer": "/metrics/visualization/test1/max_bound/1",
+      "tolerance": 0.05
+    },
+    {
+      "expected": 15.358705520629883,
+      "pointer": "/metrics/visualization/test1/max_bound/2",
+      "tolerance": 0.05
+    },
+    {
+      "expected": -10.157411575317383,
+      "pointer": "/metrics/visualization/test2/poses/0/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.940704345703125,
+      "pointer": "/metrics/visualization/test2/poses/0/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.008094072341919,
+      "pointer": "/metrics/visualization/test2/poses/0/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.10805097222328186,
+      "pointer": "/metrics/visualization/test2/poses/0/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.011210629716515541,
+      "pointer": "/metrics/visualization/test2/poses/0/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9904776215553284,
+      "pointer": "/metrics/visualization/test2/poses/0/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0845789834856987,
+      "pointer": "/metrics/visualization/test2/poses/0/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -11.118218421936035,
+      "pointer": "/metrics/visualization/test2/poses/1/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.72519302368164,
+      "pointer": "/metrics/visualization/test2/poses/1/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.8977795839309692,
+      "pointer": "/metrics/visualization/test2/poses/1/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.03663618490099907,
+      "pointer": "/metrics/visualization/test2/poses/1/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.03081963025033474,
+      "pointer": "/metrics/visualization/test2/poses/1/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9884032607078552,
+      "pointer": "/metrics/visualization/test2/poses/1/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.14410650730133057,
+      "pointer": "/metrics/visualization/test2/poses/1/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -11.862504959106445,
+      "pointer": "/metrics/visualization/test2/poses/2/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 61.27687454223633,
+      "pointer": "/metrics/visualization/test2/poses/2/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.7001221776008606,
+      "pointer": "/metrics/visualization/test2/poses/2/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.025452837347984314,
+      "pointer": "/metrics/visualization/test2/poses/2/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0020544619765132666,
+      "pointer": "/metrics/visualization/test2/poses/2/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.961831271648407,
+      "pointer": "/metrics/visualization/test2/poses/2/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.2724495530128479,
+      "pointer": "/metrics/visualization/test2/poses/2/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -12.651495933532715,
+      "pointer": "/metrics/visualization/test2/poses/3/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 60.968902587890625,
+      "pointer": "/metrics/visualization/test2/poses/3/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.5755559206008911,
+      "pointer": "/metrics/visualization/test2/poses/3/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.015611995942890644,
+      "pointer": "/metrics/visualization/test2/poses/3/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0022786948829889297,
+      "pointer": "/metrics/visualization/test2/poses/3/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9502415060997009,
+      "pointer": "/metrics/visualization/test2/poses/3/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.3111145496368408,
+      "pointer": "/metrics/visualization/test2/poses/3/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -13.530671119689941,
+      "pointer": "/metrics/visualization/test2/poses/4/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 60.537994384765625,
+      "pointer": "/metrics/visualization/test2/poses/4/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.41021355986595154,
+      "pointer": "/metrics/visualization/test2/poses/4/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.026745185256004333,
+      "pointer": "/metrics/visualization/test2/poses/4/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0077782729640603065,
+      "pointer": "/metrics/visualization/test2/poses/4/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.938980221748352,
+      "pointer": "/metrics/visualization/test2/poses/4/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.34284138679504395,
+      "pointer": "/metrics/visualization/test2/poses/4/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -14.281757354736328,
+      "pointer": "/metrics/visualization/test2/poses/5/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 60.04719924926758,
+      "pointer": "/metrics/visualization/test2/poses/5/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.20248383283615112,
+      "pointer": "/metrics/visualization/test2/poses/5/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.003269907785579562,
+      "pointer": "/metrics/visualization/test2/poses/5/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.019977405667304993,
+      "pointer": "/metrics/visualization/test2/poses/5/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9034265279769897,
+      "pointer": "/metrics/visualization/test2/poses/5/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.4282647669315338,
+      "pointer": "/metrics/visualization/test2/poses/5/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -15.04987621307373,
+      "pointer": "/metrics/visualization/test2/poses/6/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 59.4424934387207,
+      "pointer": "/metrics/visualization/test2/poses/6/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.0984378531575203,
+      "pointer": "/metrics/visualization/test2/poses/6/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.03104616142809391,
+      "pointer": "/metrics/visualization/test2/poses/6/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.014459601603448391,
+      "pointer": "/metrics/visualization/test2/poses/6/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8733130097389221,
+      "pointer": "/metrics/visualization/test2/poses/6/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.48595407605171204,
+      "pointer": "/metrics/visualization/test2/poses/6/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -15.844910621643066,
+      "pointer": "/metrics/visualization/test2/poses/7/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 58.690887451171875,
+      "pointer": "/metrics/visualization/test2/poses/7/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.16688618063926697,
+      "pointer": "/metrics/visualization/test2/poses/7/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0289028100669384,
+      "pointer": "/metrics/visualization/test2/poses/7/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.005003222264349461,
+      "pointer": "/metrics/visualization/test2/poses/7/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8404073715209961,
+      "pointer": "/metrics/visualization/test2/poses/7/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5411607623100281,
+      "pointer": "/metrics/visualization/test2/poses/7/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -16.497560501098633,
+      "pointer": "/metrics/visualization/test2/poses/8/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 57.87860870361328,
+      "pointer": "/metrics/visualization/test2/poses/8/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.28037768602371216,
+      "pointer": "/metrics/visualization/test2/poses/8/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.08096092939376831,
+      "pointer": "/metrics/visualization/test2/poses/8/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.04095972701907158,
+      "pointer": "/metrics/visualization/test2/poses/8/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8743128180503845,
+      "pointer": "/metrics/visualization/test2/poses/8/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.47680702805519104,
+      "pointer": "/metrics/visualization/test2/poses/8/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -17.16280174255371,
+      "pointer": "/metrics/visualization/test2/poses/9/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 56.95248031616211,
+      "pointer": "/metrics/visualization/test2/poses/9/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.36685800552368164,
+      "pointer": "/metrics/visualization/test2/poses/9/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.036844365298748016,
+      "pointer": "/metrics/visualization/test2/poses/9/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.0028415003325790167,
+      "pointer": "/metrics/visualization/test2/poses/9/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8633186221122742,
+      "pointer": "/metrics/visualization/test2/poses/9/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5033038258552551,
+      "pointer": "/metrics/visualization/test2/poses/9/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -17.905168533325195,
+      "pointer": "/metrics/visualization/test2/poses/10/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 55.922447204589844,
+      "pointer": "/metrics/visualization/test2/poses/10/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.3001730144023895,
+      "pointer": "/metrics/visualization/test2/poses/10/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04599938914179802,
+      "pointer": "/metrics/visualization/test2/poses/10/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.00635871198028326,
+      "pointer": "/metrics/visualization/test2/poses/10/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8558260798454285,
+      "pointer": "/metrics/visualization/test2/poses/10/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5151755213737488,
+      "pointer": "/metrics/visualization/test2/poses/10/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -18.59799575805664,
+      "pointer": "/metrics/visualization/test2/poses/11/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 54.8228874206543,
+      "pointer": "/metrics/visualization/test2/poses/11/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.2644701600074768,
+      "pointer": "/metrics/visualization/test2/poses/11/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.017856169492006302,
+      "pointer": "/metrics/visualization/test2/poses/11/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.014902395196259022,
+      "pointer": "/metrics/visualization/test2/poses/11/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8493712544441223,
+      "pointer": "/metrics/visualization/test2/poses/11/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5272819995880127,
+      "pointer": "/metrics/visualization/test2/poses/11/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -19.2266902923584,
+      "pointer": "/metrics/visualization/test2/poses/12/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 53.63084411621094,
+      "pointer": "/metrics/visualization/test2/poses/12/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.23117753863334656,
+      "pointer": "/metrics/visualization/test2/poses/12/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.007870158180594444,
+      "pointer": "/metrics/visualization/test2/poses/12/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0062411390244960785,
+      "pointer": "/metrics/visualization/test2/poses/12/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8500660061836243,
+      "pointer": "/metrics/visualization/test2/poses/12/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5265810489654541,
+      "pointer": "/metrics/visualization/test2/poses/12/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -19.786540985107422,
+      "pointer": "/metrics/visualization/test2/poses/13/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 52.504234313964844,
+      "pointer": "/metrics/visualization/test2/poses/13/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.23767666518688202,
+      "pointer": "/metrics/visualization/test2/poses/13/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.00771757960319519,
+      "pointer": "/metrics/visualization/test2/poses/13/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.008277966640889645,
+      "pointer": "/metrics/visualization/test2/poses/13/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8437539339065552,
+      "pointer": "/metrics/visualization/test2/poses/13/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.536611020565033,
+      "pointer": "/metrics/visualization/test2/poses/13/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -20.363544464111328,
+      "pointer": "/metrics/visualization/test2/poses/14/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 51.35213088989258,
+      "pointer": "/metrics/visualization/test2/poses/14/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.21529147028923035,
+      "pointer": "/metrics/visualization/test2/poses/14/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04183030501008034,
+      "pointer": "/metrics/visualization/test2/poses/14/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.0035144956782460213,
+      "pointer": "/metrics/visualization/test2/poses/14/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8321800827980042,
+      "pointer": "/metrics/visualization/test2/poses/14/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.552914023399353,
+      "pointer": "/metrics/visualization/test2/poses/14/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -20.951295852661133,
+      "pointer": "/metrics/visualization/test2/poses/15/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 50.22175216674805,
+      "pointer": "/metrics/visualization/test2/poses/15/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.16640712320804596,
+      "pointer": "/metrics/visualization/test2/poses/15/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.028047818690538406,
+      "pointer": "/metrics/visualization/test2/poses/15/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.035954058170318604,
+      "pointer": "/metrics/visualization/test2/poses/15/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8140970468521118,
+      "pointer": "/metrics/visualization/test2/poses/15/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5789356231689453,
+      "pointer": "/metrics/visualization/test2/poses/15/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -21.478370666503906,
+      "pointer": "/metrics/visualization/test2/poses/16/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 49.00720977783203,
+      "pointer": "/metrics/visualization/test2/poses/16/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.1833718717098236,
+      "pointer": "/metrics/visualization/test2/poses/16/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.01902364008128643,
+      "pointer": "/metrics/visualization/test2/poses/16/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.007852749899029732,
+      "pointer": "/metrics/visualization/test2/poses/16/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.7857424020767212,
+      "pointer": "/metrics/visualization/test2/poses/16/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.6182112693786621,
+      "pointer": "/metrics/visualization/test2/poses/16/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -22.000076293945312,
+      "pointer": "/metrics/visualization/test2/poses/17/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 47.77933883666992,
+      "pointer": "/metrics/visualization/test2/poses/17/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.1114378273487091,
+      "pointer": "/metrics/visualization/test2/poses/17/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.009455863386392593,
+      "pointer": "/metrics/visualization/test2/poses/17/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.021797319874167442,
+      "pointer": "/metrics/visualization/test2/poses/17/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8116820454597473,
+      "pointer": "/metrics/visualization/test2/poses/17/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5836156606674194,
+      "pointer": "/metrics/visualization/test2/poses/17/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -22.481721878051758,
+      "pointer": "/metrics/visualization/test2/poses/18/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 46.49335861206055,
+      "pointer": "/metrics/visualization/test2/poses/18/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.039701737463474274,
+      "pointer": "/metrics/visualization/test2/poses/18/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.03170579671859741,
+      "pointer": "/metrics/visualization/test2/poses/18/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.008333069272339344,
+      "pointer": "/metrics/visualization/test2/poses/18/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.810689389705658,
+      "pointer": "/metrics/visualization/test2/poses/18/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5845580697059631,
+      "pointer": "/metrics/visualization/test2/poses/18/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -22.998210906982422,
+      "pointer": "/metrics/visualization/test2/poses/19/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 45.18757247924805,
+      "pointer": "/metrics/visualization/test2/poses/19/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.01769591122865677,
+      "pointer": "/metrics/visualization/test2/poses/19/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.029715947806835175,
+      "pointer": "/metrics/visualization/test2/poses/19/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.010565323755145073,
+      "pointer": "/metrics/visualization/test2/poses/19/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8099926114082336,
+      "pointer": "/metrics/visualization/test2/poses/19/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5855917930603027,
+      "pointer": "/metrics/visualization/test2/poses/19/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -23.5217227935791,
+      "pointer": "/metrics/visualization/test2/poses/20/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 43.86288833618164,
+      "pointer": "/metrics/visualization/test2/poses/20/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.09926722198724747,
+      "pointer": "/metrics/visualization/test2/poses/20/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.025409413501620293,
+      "pointer": "/metrics/visualization/test2/poses/20/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.006331581622362137,
+      "pointer": "/metrics/visualization/test2/poses/20/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8197674751281738,
+      "pointer": "/metrics/visualization/test2/poses/20/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5720977187156677,
+      "pointer": "/metrics/visualization/test2/poses/20/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -24.161060333251953,
+      "pointer": "/metrics/visualization/test2/poses/21/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 42.6097297668457,
+      "pointer": "/metrics/visualization/test2/poses/21/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.11538194864988327,
+      "pointer": "/metrics/visualization/test2/poses/21/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.020322594791650772,
+      "pointer": "/metrics/visualization/test2/poses/21/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.016824014484882355,
+      "pointer": "/metrics/visualization/test2/poses/21/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8281662464141846,
+      "pointer": "/metrics/visualization/test2/poses/21/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5598613023757935,
+      "pointer": "/metrics/visualization/test2/poses/21/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -24.79414176940918,
+      "pointer": "/metrics/visualization/test2/poses/22/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 41.39969253540039,
+      "pointer": "/metrics/visualization/test2/poses/22/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.16064190864562988,
+      "pointer": "/metrics/visualization/test2/poses/22/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.00685854023322463,
+      "pointer": "/metrics/visualization/test2/poses/22/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.012241973541676998,
+      "pointer": "/metrics/visualization/test2/poses/22/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8570333123207092,
+      "pointer": "/metrics/visualization/test2/poses/22/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5150694251060486,
+      "pointer": "/metrics/visualization/test2/poses/22/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -25.362022399902344,
+      "pointer": "/metrics/visualization/test2/poses/23/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 40.25687026977539,
+      "pointer": "/metrics/visualization/test2/poses/23/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.19338904321193695,
+      "pointer": "/metrics/visualization/test2/poses/23/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.045758649706840515,
+      "pointer": "/metrics/visualization/test2/poses/23/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0019361405866220593,
+      "pointer": "/metrics/visualization/test2/poses/23/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.846513032913208,
+      "pointer": "/metrics/visualization/test2/poses/23/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5303939580917358,
+      "pointer": "/metrics/visualization/test2/poses/23/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -25.98524284362793,
+      "pointer": "/metrics/visualization/test2/poses/24/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 39.03266906738281,
+      "pointer": "/metrics/visualization/test2/poses/24/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.16762948036193848,
+      "pointer": "/metrics/visualization/test2/poses/24/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.041187018156051636,
+      "pointer": "/metrics/visualization/test2/poses/24/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.022514568641781807,
+      "pointer": "/metrics/visualization/test2/poses/24/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8567793965339661,
+      "pointer": "/metrics/visualization/test2/poses/24/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5135428309440613,
+      "pointer": "/metrics/visualization/test2/poses/24/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -26.66135597229004,
+      "pointer": "/metrics/visualization/test2/poses/25/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 37.85451889038086,
+      "pointer": "/metrics/visualization/test2/poses/25/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.22241449356079102,
+      "pointer": "/metrics/visualization/test2/poses/25/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0715540274977684,
+      "pointer": "/metrics/visualization/test2/poses/25/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.01834825798869133,
+      "pointer": "/metrics/visualization/test2/poses/25/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.807975709438324,
+      "pointer": "/metrics/visualization/test2/poses/25/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5845670700073242,
+      "pointer": "/metrics/visualization/test2/poses/25/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -27.261428833007812,
+      "pointer": "/metrics/visualization/test2/poses/26/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 36.67952346801758,
+      "pointer": "/metrics/visualization/test2/poses/26/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.17249295115470886,
+      "pointer": "/metrics/visualization/test2/poses/26/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.08969967812299728,
+      "pointer": "/metrics/visualization/test2/poses/26/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.023409921675920486,
+      "pointer": "/metrics/visualization/test2/poses/26/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8260648250579834,
+      "pointer": "/metrics/visualization/test2/poses/26/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.555898129940033,
+      "pointer": "/metrics/visualization/test2/poses/26/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -27.865859985351562,
+      "pointer": "/metrics/visualization/test2/poses/27/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 35.54887008666992,
+      "pointer": "/metrics/visualization/test2/poses/27/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.10235000401735306,
+      "pointer": "/metrics/visualization/test2/poses/27/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.07312799245119095,
+      "pointer": "/metrics/visualization/test2/poses/27/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.0468553751707077,
+      "pointer": "/metrics/visualization/test2/poses/27/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8457304835319519,
+      "pointer": "/metrics/visualization/test2/poses/27/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5264951586723328,
+      "pointer": "/metrics/visualization/test2/poses/27/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -28.199254989624023,
+      "pointer": "/metrics/visualization/test2/poses/28/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 34.6549186706543,
+      "pointer": "/metrics/visualization/test2/poses/28/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.08587050437927246,
+      "pointer": "/metrics/visualization/test2/poses/28/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04540805146098137,
+      "pointer": "/metrics/visualization/test2/poses/28/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.018550556153059006,
+      "pointer": "/metrics/visualization/test2/poses/28/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8373635411262512,
+      "pointer": "/metrics/visualization/test2/poses/28/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.544441282749176,
+      "pointer": "/metrics/visualization/test2/poses/28/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -28.699697494506836,
+      "pointer": "/metrics/visualization/test2/poses/29/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 33.616600036621094,
+      "pointer": "/metrics/visualization/test2/poses/29/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.014794214628636837,
+      "pointer": "/metrics/visualization/test2/poses/29/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.01619836315512657,
+      "pointer": "/metrics/visualization/test2/poses/29/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.01763985864818096,
+      "pointer": "/metrics/visualization/test2/poses/29/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8277236819267273,
+      "pointer": "/metrics/visualization/test2/poses/29/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.560624361038208,
+      "pointer": "/metrics/visualization/test2/poses/29/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -29.279573440551758,
+      "pointer": "/metrics/visualization/test2/poses/30/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 32.59706115722656,
+      "pointer": "/metrics/visualization/test2/poses/30/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.1079062968492508,
+      "pointer": "/metrics/visualization/test2/poses/30/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.025861280038952827,
+      "pointer": "/metrics/visualization/test2/poses/30/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.011384028010070324,
+      "pointer": "/metrics/visualization/test2/poses/30/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8516851663589478,
+      "pointer": "/metrics/visualization/test2/poses/30/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5232911705970764,
+      "pointer": "/metrics/visualization/test2/poses/30/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -29.947799682617188,
+      "pointer": "/metrics/visualization/test2/poses/31/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 31.544208526611328,
+      "pointer": "/metrics/visualization/test2/poses/31/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.2252151221036911,
+      "pointer": "/metrics/visualization/test2/poses/31/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.04274040833115578,
+      "pointer": "/metrics/visualization/test2/poses/31/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.011531812138855457,
+      "pointer": "/metrics/visualization/test2/poses/31/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8881029486656189,
+      "pointer": "/metrics/visualization/test2/poses/31/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.45750781893730164,
+      "pointer": "/metrics/visualization/test2/poses/31/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -30.779531478881836,
+      "pointer": "/metrics/visualization/test2/poses/32/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 30.6191349029541,
+      "pointer": "/metrics/visualization/test2/poses/32/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.3862984776496887,
+      "pointer": "/metrics/visualization/test2/poses/32/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.025677232071757317,
+      "pointer": "/metrics/visualization/test2/poses/32/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.003281097859144211,
+      "pointer": "/metrics/visualization/test2/poses/32/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9099781513214111,
+      "pointer": "/metrics/visualization/test2/poses/32/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.413847416639328,
+      "pointer": "/metrics/visualization/test2/poses/32/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -31.841829299926758,
+      "pointer": "/metrics/visualization/test2/poses/33/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 29.952011108398438,
+      "pointer": "/metrics/visualization/test2/poses/33/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.48408791422843933,
+      "pointer": "/metrics/visualization/test2/poses/33/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0337323322892189,
+      "pointer": "/metrics/visualization/test2/poses/33/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.04013756662607193,
+      "pointer": "/metrics/visualization/test2/poses/33/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9501104950904846,
+      "pointer": "/metrics/visualization/test2/poses/33/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.30747532844543457,
+      "pointer": "/metrics/visualization/test2/poses/33/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -32.95038986206055,
+      "pointer": "/metrics/visualization/test2/poses/34/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 29.429346084594727,
+      "pointer": "/metrics/visualization/test2/poses/34/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.5824809670448303,
+      "pointer": "/metrics/visualization/test2/poses/34/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.005875871982425451,
+      "pointer": "/metrics/visualization/test2/poses/34/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.027352139353752136,
+      "pointer": "/metrics/visualization/test2/poses/34/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.9642802476882935,
+      "pointer": "/metrics/visualization/test2/poses/34/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.2634026110172272,
+      "pointer": "/metrics/visualization/test2/poses/34/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -34.01514434814453,
+      "pointer": "/metrics/visualization/test2/poses/35/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 28.842287063598633,
+      "pointer": "/metrics/visualization/test2/poses/35/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.6868458390235901,
+      "pointer": "/metrics/visualization/test2/poses/35/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.013366852886974812,
+      "pointer": "/metrics/visualization/test2/poses/35/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.02584741823375225,
+      "pointer": "/metrics/visualization/test2/poses/35/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8906553983688354,
+      "pointer": "/metrics/visualization/test2/poses/35/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.4537467360496521,
+      "pointer": "/metrics/visualization/test2/poses/35/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -34.75572967529297,
+      "pointer": "/metrics/visualization/test2/poses/36/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 27.790260314941406,
+      "pointer": "/metrics/visualization/test2/poses/36/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.8817304968833923,
+      "pointer": "/metrics/visualization/test2/poses/36/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.0041250730864703655,
+      "pointer": "/metrics/visualization/test2/poses/36/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.017327969893813133,
+      "pointer": "/metrics/visualization/test2/poses/36/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.840663492679596,
+      "pointer": "/metrics/visualization/test2/poses/36/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5412649512290955,
+      "pointer": "/metrics/visualization/test2/poses/36/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -35.3259391784668,
+      "pointer": "/metrics/visualization/test2/poses/37/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 26.503995895385742,
+      "pointer": "/metrics/visualization/test2/poses/37/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.1067851781845093,
+      "pointer": "/metrics/visualization/test2/poses/37/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -0.00015818586689420044,
+      "pointer": "/metrics/visualization/test2/poses/37/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.03583555296063423,
+      "pointer": "/metrics/visualization/test2/poses/37/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.833621621131897,
+      "pointer": "/metrics/visualization/test2/poses/37/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5511723756790161,
+      "pointer": "/metrics/visualization/test2/poses/37/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -36.01616287231445,
+      "pointer": "/metrics/visualization/test2/poses/38/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 25.2176513671875,
+      "pointer": "/metrics/visualization/test2/poses/38/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.3202035427093506,
+      "pointer": "/metrics/visualization/test2/poses/38/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.006644752807915211,
+      "pointer": "/metrics/visualization/test2/poses/38/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.023589294403791428,
+      "pointer": "/metrics/visualization/test2/poses/38/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.8485503196716309,
+      "pointer": "/metrics/visualization/test2/poses/38/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.5285468101501465,
+      "pointer": "/metrics/visualization/test2/poses/38/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -36.86970901489258,
+      "pointer": "/metrics/visualization/test2/poses/39/translation/0",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 24.023820877075195,
+      "pointer": "/metrics/visualization/test2/poses/39/translation/1",
+      "tolerance": 0.001
+    },
+    {
+      "expected": -1.502503514289856,
+      "pointer": "/metrics/visualization/test2/poses/39/translation/2",
+      "tolerance": 0.001
+    },
+    {
+      "expected": 0.011856960132718086,
+      "pointer": "/metrics/visualization/test2/poses/39/quaternion_xyzw/0",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.008749326691031456,
+      "pointer": "/metrics/visualization/test2/poses/39/quaternion_xyzw/1",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -0.890611469745636,
+      "pointer": "/metrics/visualization/test2/poses/39/quaternion_xyzw/2",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": 0.45452621579170227,
+      "pointer": "/metrics/visualization/test2/poses/39/quaternion_xyzw/3",
+      "tolerance": 0.0001
+    },
+    {
+      "expected": -71.0111312866211,
+      "pointer": "/metrics/visualization/test2/min_bound/0",
+      "tolerance": 0.05
+    },
+    {
+      "expected": -21.938749313354492,
+      "pointer": "/metrics/visualization/test2/min_bound/1",
+      "tolerance": 0.05
+    },
+    {
+      "expected": -6.44158411026001,
+      "pointer": "/metrics/visualization/test2/min_bound/2",
+      "tolerance": 0.05
+    },
+    {
+      "expected": 35.07020950317383,
+      "pointer": "/metrics/visualization/test2/max_bound/0",
+      "tolerance": 0.05
+    },
+    {
+      "expected": 83.92766571044922,
+      "pointer": "/metrics/visualization/test2/max_bound/1",
+      "tolerance": 0.05
+    },
+    {
+      "expected": 18.03500747680664,
+      "pointer": "/metrics/visualization/test2/max_bound/2",
+      "tolerance": 0.05
+    }
+  ],
+  "baseline_id": "openlmm-test1-test2-tiny-baseline-v1",
+  "case_id": "openlmm-test1-test2-tiny-v1",
+  "case_manifest_sha256": "ef7d0b23ef790ced4fb26c525459409d2f56dd87adab6505d8ec1897d6573346",
+  "exact": [
+    {
+      "expected": [
+        "test1",
+        "test2"
+      ],
+      "pointer": "/agents"
+    },
+    {
+      "expected": "c8135600db68381bff5b5f3ba70b3aaac928f450bf8a9eda30a2e852c324b4b7",
+      "pointer": "/dataset_sha256"
+    },
+    {
+      "expected": "89f468a6d33a856b28af407df8ea65d91498b77937863b8140a55c66dbd6dbd3",
+      "pointer": "/config_sha256"
+    },
+    {
+      "expected": "succeeded",
+      "pointer": "/close_result"
+    },
+    {
+      "expected": "ready",
+      "pointer": "/health/state"
+    },
+    {
+      "expected": [
+        {
+          "agent": "test1",
+          "producer": "runtime",
+          "revision": 2,
+          "state": "ready",
+          "type": "agent_input"
+        },
+        {
+          "agent": "test2",
+          "producer": "runtime",
+          "revision": 3,
+          "state": "ready",
+          "type": "agent_input"
+        },
+        {
+          "agent": null,
+          "producer": "runtime",
+          "revision": 1,
+          "state": "ready",
+          "type": "config_snapshot"
+        },
+        {
+          "agent": null,
+          "producer": "loop_detect",
+          "revision": 30,
+          "state": "ready",
+          "type": "descriptor_state"
+        },
+        {
+          "agent": "test1",
+          "path": "global_map_test1.pcd",
+          "producer": "output_repository",
+          "revision": 40,
+          "state": "ready",
+          "type": "global_map"
+        },
+        {
+          "agent": "test2",
+          "path": "global_map_test2.pcd",
+          "producer": "output_repository",
+          "revision": 42,
+          "state": "ready",
+          "type": "global_map"
+        },
+        {
+          "agent": "test1",
+          "producer": "loop_detect",
+          "revision": 26,
+          "state": "ready",
+          "type": "loop_candidates"
+        },
+        {
+          "agent": "test2",
+          "producer": "loop_detect",
+          "revision": 27,
+          "state": "ready",
+          "type": "loop_candidates"
+        },
+        {
+          "agent": "test1",
+          "path": "map_alignments.json",
+          "producer": "output_repository",
+          "revision": 34,
+          "state": "ready",
+          "type": "map_alignment"
+        },
+        {
+          "agent": "test2",
+          "path": "map_alignments.json",
+          "producer": "output_repository",
+          "revision": 35,
+          "state": "ready",
+          "type": "map_alignment"
+        },
+        {
+          "agent": "test1",
+          "producer": "optimize",
+          "revision": 32,
+          "state": "ready",
+          "type": "optimized_poses"
+        },
+        {
+          "agent": "test2",
+          "producer": "optimize",
+          "revision": 33,
+          "state": "ready",
+          "type": "optimized_poses"
+        },
+        {
+          "agent": null,
+          "producer": "optimize",
+          "revision": 31,
+          "state": "ready",
+          "type": "optimizer_state"
+        },
+        {
+          "agent": "test1",
+          "path": "global_map_test1.pcd",
+          "producer": "output_repository",
+          "revision": 41,
+          "state": "ready",
+          "type": "pcd_file"
+        },
+        {
+          "agent": "test2",
+          "path": "global_map_test2.pcd",
+          "producer": "output_repository",
+          "revision": 43,
+          "state": "ready",
+          "type": "pcd_file"
+        },
+        {
+          "agent": "test1",
+          "path": "optimized_poses_test1.txt",
+          "producer": "output_repository",
+          "revision": 46,
+          "state": "ready",
+          "type": "pose_file"
+        },
+        {
+          "agent": "test2",
+          "path": "optimized_poses_test2.txt",
+          "producer": "output_repository",
+          "revision": 47,
+          "state": "ready",
+          "type": "pose_file"
+        },
+        {
+          "agent": "test1",
+          "producer": "data_load",
+          "revision": 18,
+          "state": "ready",
+          "type": "raw_data"
+        },
+        {
+          "agent": "test2",
+          "producer": "data_load",
+          "revision": 19,
+          "state": "ready",
+          "type": "raw_data"
+        }
+      ],
+      "pointer": "/artifacts"
+    },
+    {
+      "expected": 1,
+      "pointer": "/environment/max_agent_tasks"
+    },
+    {
+      "expected": "Open",
+      "pointer": "/steps/0/stage"
+    },
+    {
+      "expected": "succeeded",
+      "pointer": "/steps/0/result"
+    },
+    {
+      "expected": null,
+      "pointer": "/steps/0/error_code"
+    },
+    {
+      "expected": 0,
+      "pointer": "/steps/0/revision_before"
+    },
+    {
+      "expected": 1,
+      "pointer": "/steps/0/revision_after"
+    },
+    {
+      "expected": "DataLoad",
+      "pointer": "/steps/1/stage"
+    },
+    {
+      "expected": "succeeded",
+      "pointer": "/steps/1/result"
+    },
+    {
+      "expected": null,
+      "pointer": "/steps/1/error_code"
+    },
+    {
+      "expected": 1,
+      "pointer": "/steps/1/revision_before"
+    },
+    {
+      "expected": 2,
+      "pointer": "/steps/1/revision_after"
+    },
+    {
+      "expected": "Alignment",
+      "pointer": "/steps/2/stage"
+    },
+    {
+      "expected": "succeeded",
+      "pointer": "/steps/2/result"
+    },
+    {
+      "expected": null,
+      "pointer": "/steps/2/error_code"
+    },
+    {
+      "expected": 2,
+      "pointer": "/steps/2/revision_before"
+    },
+    {
+      "expected": 3,
+      "pointer": "/steps/2/revision_after"
+    },
+    {
+      "expected": "MapUpdate",
+      "pointer": "/steps/3/stage"
+    },
+    {
+      "expected": "succeeded",
+      "pointer": "/steps/3/result"
+    },
+    {
+      "expected": null,
+      "pointer": "/steps/3/error_code"
+    },
+    {
+      "expected": 3,
+      "pointer": "/steps/3/revision_before"
+    },
+    {
+      "expected": 4,
+      "pointer": "/steps/3/revision_after"
+    },
+    {
+      "expected": "Save",
+      "pointer": "/steps/4/stage"
+    },
+    {
+      "expected": "succeeded",
+      "pointer": "/steps/4/result"
+    },
+    {
+      "expected": null,
+      "pointer": "/steps/4/error_code"
+    },
+    {
+      "expected": 4,
+      "pointer": "/steps/4/revision_before"
+    },
+    {
+      "expected": 5,
+      "pointer": "/steps/4/revision_after"
+    },
+    {
+      "expected": true,
+      "pointer": "/metrics/visualization/test1/available"
+    },
+    {
+      "expected": 5,
+      "pointer": "/metrics/visualization/test1/revision"
+    },
+    {
+      "expected": 40,
+      "pointer": "/metrics/visualization/test1/pose_count"
+    },
+    {
+      "expected": [
+        {
+          "from_agent": "test1",
+          "from_index": 0,
+          "to_agent": "test1",
+          "to_index": 1,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 1,
+          "to_agent": "test1",
+          "to_index": 2,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 2,
+          "to_agent": "test1",
+          "to_index": 3,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 3,
+          "to_agent": "test1",
+          "to_index": 4,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 4,
+          "to_agent": "test1",
+          "to_index": 5,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 5,
+          "to_agent": "test1",
+          "to_index": 6,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 6,
+          "to_agent": "test1",
+          "to_index": 7,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 7,
+          "to_agent": "test1",
+          "to_index": 8,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 8,
+          "to_agent": "test1",
+          "to_index": 9,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 9,
+          "to_agent": "test1",
+          "to_index": 10,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 10,
+          "to_agent": "test1",
+          "to_index": 11,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 11,
+          "to_agent": "test1",
+          "to_index": 12,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 12,
+          "to_agent": "test1",
+          "to_index": 13,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 13,
+          "to_agent": "test1",
+          "to_index": 14,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 14,
+          "to_agent": "test1",
+          "to_index": 15,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 15,
+          "to_agent": "test1",
+          "to_index": 16,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 16,
+          "to_agent": "test1",
+          "to_index": 17,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 17,
+          "to_agent": "test1",
+          "to_index": 18,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 18,
+          "to_agent": "test1",
+          "to_index": 19,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 19,
+          "to_agent": "test1",
+          "to_index": 20,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 20,
+          "to_agent": "test1",
+          "to_index": 21,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 21,
+          "to_agent": "test1",
+          "to_index": 22,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 22,
+          "to_agent": "test1",
+          "to_index": 23,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 23,
+          "to_agent": "test1",
+          "to_index": 24,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 24,
+          "to_agent": "test1",
+          "to_index": 25,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 25,
+          "to_agent": "test1",
+          "to_index": 26,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 26,
+          "to_agent": "test1",
+          "to_index": 27,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 27,
+          "to_agent": "test1",
+          "to_index": 28,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 28,
+          "to_agent": "test1",
+          "to_index": 29,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 29,
+          "to_agent": "test1",
+          "to_index": 30,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 30,
+          "to_agent": "test1",
+          "to_index": 31,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 31,
+          "to_agent": "test1",
+          "to_index": 32,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 32,
+          "to_agent": "test1",
+          "to_index": 33,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 33,
+          "to_agent": "test1",
+          "to_index": 34,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 34,
+          "to_agent": "test1",
+          "to_index": 35,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 35,
+          "to_agent": "test1",
+          "to_index": 36,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 36,
+          "to_agent": "test1",
+          "to_index": 37,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 37,
+          "to_agent": "test1",
+          "to_index": 38,
+          "type": 0
+        },
+        {
+          "from_agent": "test1",
+          "from_index": 38,
+          "to_agent": "test1",
+          "to_index": 39,
+          "type": 0
+        }
+      ],
+      "pointer": "/metrics/visualization/test1/edges"
+    },
+    {
+      "expected": true,
+      "pointer": "/metrics/visualization/test1/has_bounds"
+    },
+    {
+      "expected": 0,
+      "pointer": "/metrics/visualization/test1/poses/0/index"
+    },
+    {
+      "expected": 1,
+      "pointer": "/metrics/visualization/test1/poses/1/index"
+    },
+    {
+      "expected": 2,
+      "pointer": "/metrics/visualization/test1/poses/2/index"
+    },
+    {
+      "expected": 3,
+      "pointer": "/metrics/visualization/test1/poses/3/index"
+    },
+    {
+      "expected": 4,
+      "pointer": "/metrics/visualization/test1/poses/4/index"
+    },
+    {
+      "expected": 5,
+      "pointer": "/metrics/visualization/test1/poses/5/index"
+    },
+    {
+      "expected": 6,
+      "pointer": "/metrics/visualization/test1/poses/6/index"
+    },
+    {
+      "expected": 7,
+      "pointer": "/metrics/visualization/test1/poses/7/index"
+    },
+    {
+      "expected": 8,
+      "pointer": "/metrics/visualization/test1/poses/8/index"
+    },
+    {
+      "expected": 9,
+      "pointer": "/metrics/visualization/test1/poses/9/index"
+    },
+    {
+      "expected": 10,
+      "pointer": "/metrics/visualization/test1/poses/10/index"
+    },
+    {
+      "expected": 11,
+      "pointer": "/metrics/visualization/test1/poses/11/index"
+    },
+    {
+      "expected": 12,
+      "pointer": "/metrics/visualization/test1/poses/12/index"
+    },
+    {
+      "expected": 13,
+      "pointer": "/metrics/visualization/test1/poses/13/index"
+    },
+    {
+      "expected": 14,
+      "pointer": "/metrics/visualization/test1/poses/14/index"
+    },
+    {
+      "expected": 15,
+      "pointer": "/metrics/visualization/test1/poses/15/index"
+    },
+    {
+      "expected": 16,
+      "pointer": "/metrics/visualization/test1/poses/16/index"
+    },
+    {
+      "expected": 17,
+      "pointer": "/metrics/visualization/test1/poses/17/index"
+    },
+    {
+      "expected": 18,
+      "pointer": "/metrics/visualization/test1/poses/18/index"
+    },
+    {
+      "expected": 19,
+      "pointer": "/metrics/visualization/test1/poses/19/index"
+    },
+    {
+      "expected": 20,
+      "pointer": "/metrics/visualization/test1/poses/20/index"
+    },
+    {
+      "expected": 21,
+      "pointer": "/metrics/visualization/test1/poses/21/index"
+    },
+    {
+      "expected": 22,
+      "pointer": "/metrics/visualization/test1/poses/22/index"
+    },
+    {
+      "expected": 23,
+      "pointer": "/metrics/visualization/test1/poses/23/index"
+    },
+    {
+      "expected": 24,
+      "pointer": "/metrics/visualization/test1/poses/24/index"
+    },
+    {
+      "expected": 25,
+      "pointer": "/metrics/visualization/test1/poses/25/index"
+    },
+    {
+      "expected": 26,
+      "pointer": "/metrics/visualization/test1/poses/26/index"
+    },
+    {
+      "expected": 27,
+      "pointer": "/metrics/visualization/test1/poses/27/index"
+    },
+    {
+      "expected": 28,
+      "pointer": "/metrics/visualization/test1/poses/28/index"
+    },
+    {
+      "expected": 29,
+      "pointer": "/metrics/visualization/test1/poses/29/index"
+    },
+    {
+      "expected": 30,
+      "pointer": "/metrics/visualization/test1/poses/30/index"
+    },
+    {
+      "expected": 31,
+      "pointer": "/metrics/visualization/test1/poses/31/index"
+    },
+    {
+      "expected": 32,
+      "pointer": "/metrics/visualization/test1/poses/32/index"
+    },
+    {
+      "expected": 33,
+      "pointer": "/metrics/visualization/test1/poses/33/index"
+    },
+    {
+      "expected": 34,
+      "pointer": "/metrics/visualization/test1/poses/34/index"
+    },
+    {
+      "expected": 35,
+      "pointer": "/metrics/visualization/test1/poses/35/index"
+    },
+    {
+      "expected": 36,
+      "pointer": "/metrics/visualization/test1/poses/36/index"
+    },
+    {
+      "expected": 37,
+      "pointer": "/metrics/visualization/test1/poses/37/index"
+    },
+    {
+      "expected": 38,
+      "pointer": "/metrics/visualization/test1/poses/38/index"
+    },
+    {
+      "expected": 39,
+      "pointer": "/metrics/visualization/test1/poses/39/index"
+    },
+    {
+      "expected": true,
+      "pointer": "/metrics/visualization/test2/available"
+    },
+    {
+      "expected": 5,
+      "pointer": "/metrics/visualization/test2/revision"
+    },
+    {
+      "expected": 40,
+      "pointer": "/metrics/visualization/test2/pose_count"
+    },
+    {
+      "expected": [
+        {
+          "from_agent": "test2",
+          "from_index": 0,
+          "to_agent": "test2",
+          "to_index": 1,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 1,
+          "to_agent": "test2",
+          "to_index": 2,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 2,
+          "to_agent": "test2",
+          "to_index": 3,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 3,
+          "to_agent": "test2",
+          "to_index": 4,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 4,
+          "to_agent": "test2",
+          "to_index": 5,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 5,
+          "to_agent": "test2",
+          "to_index": 6,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 6,
+          "to_agent": "test2",
+          "to_index": 7,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 7,
+          "to_agent": "test2",
+          "to_index": 8,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 8,
+          "to_agent": "test2",
+          "to_index": 9,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 9,
+          "to_agent": "test2",
+          "to_index": 10,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 10,
+          "to_agent": "test2",
+          "to_index": 11,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 11,
+          "to_agent": "test1",
+          "to_index": 14,
+          "type": 2
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 11,
+          "to_agent": "test2",
+          "to_index": 12,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 12,
+          "to_agent": "test2",
+          "to_index": 13,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 13,
+          "to_agent": "test2",
+          "to_index": 14,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 14,
+          "to_agent": "test2",
+          "to_index": 15,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 15,
+          "to_agent": "test2",
+          "to_index": 16,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 16,
+          "to_agent": "test2",
+          "to_index": 17,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 17,
+          "to_agent": "test2",
+          "to_index": 18,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 18,
+          "to_agent": "test2",
+          "to_index": 19,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 19,
+          "to_agent": "test1",
+          "to_index": 22,
+          "type": 2
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 19,
+          "to_agent": "test2",
+          "to_index": 20,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 20,
+          "to_agent": "test2",
+          "to_index": 21,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 21,
+          "to_agent": "test2",
+          "to_index": 22,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 22,
+          "to_agent": "test2",
+          "to_index": 23,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 23,
+          "to_agent": "test2",
+          "to_index": 24,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 24,
+          "to_agent": "test2",
+          "to_index": 25,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 25,
+          "to_agent": "test2",
+          "to_index": 26,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 26,
+          "to_agent": "test2",
+          "to_index": 27,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 27,
+          "to_agent": "test1",
+          "to_index": 30,
+          "type": 2
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 27,
+          "to_agent": "test2",
+          "to_index": 28,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 28,
+          "to_agent": "test2",
+          "to_index": 29,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 29,
+          "to_agent": "test2",
+          "to_index": 30,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 30,
+          "to_agent": "test2",
+          "to_index": 31,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 31,
+          "to_agent": "test2",
+          "to_index": 32,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 32,
+          "to_agent": "test2",
+          "to_index": 33,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 33,
+          "to_agent": "test2",
+          "to_index": 34,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 34,
+          "to_agent": "test2",
+          "to_index": 35,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 35,
+          "to_agent": "test2",
+          "to_index": 36,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 36,
+          "to_agent": "test1",
+          "to_index": 39,
+          "type": 2
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 36,
+          "to_agent": "test2",
+          "to_index": 37,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 37,
+          "to_agent": "test2",
+          "to_index": 38,
+          "type": 0
+        },
+        {
+          "from_agent": "test2",
+          "from_index": 38,
+          "to_agent": "test2",
+          "to_index": 39,
+          "type": 0
+        }
+      ],
+      "pointer": "/metrics/visualization/test2/edges"
+    },
+    {
+      "expected": true,
+      "pointer": "/metrics/visualization/test2/has_bounds"
+    },
+    {
+      "expected": 0,
+      "pointer": "/metrics/visualization/test2/poses/0/index"
+    },
+    {
+      "expected": 1,
+      "pointer": "/metrics/visualization/test2/poses/1/index"
+    },
+    {
+      "expected": 2,
+      "pointer": "/metrics/visualization/test2/poses/2/index"
+    },
+    {
+      "expected": 3,
+      "pointer": "/metrics/visualization/test2/poses/3/index"
+    },
+    {
+      "expected": 4,
+      "pointer": "/metrics/visualization/test2/poses/4/index"
+    },
+    {
+      "expected": 5,
+      "pointer": "/metrics/visualization/test2/poses/5/index"
+    },
+    {
+      "expected": 6,
+      "pointer": "/metrics/visualization/test2/poses/6/index"
+    },
+    {
+      "expected": 7,
+      "pointer": "/metrics/visualization/test2/poses/7/index"
+    },
+    {
+      "expected": 8,
+      "pointer": "/metrics/visualization/test2/poses/8/index"
+    },
+    {
+      "expected": 9,
+      "pointer": "/metrics/visualization/test2/poses/9/index"
+    },
+    {
+      "expected": 10,
+      "pointer": "/metrics/visualization/test2/poses/10/index"
+    },
+    {
+      "expected": 11,
+      "pointer": "/metrics/visualization/test2/poses/11/index"
+    },
+    {
+      "expected": 12,
+      "pointer": "/metrics/visualization/test2/poses/12/index"
+    },
+    {
+      "expected": 13,
+      "pointer": "/metrics/visualization/test2/poses/13/index"
+    },
+    {
+      "expected": 14,
+      "pointer": "/metrics/visualization/test2/poses/14/index"
+    },
+    {
+      "expected": 15,
+      "pointer": "/metrics/visualization/test2/poses/15/index"
+    },
+    {
+      "expected": 16,
+      "pointer": "/metrics/visualization/test2/poses/16/index"
+    },
+    {
+      "expected": 17,
+      "pointer": "/metrics/visualization/test2/poses/17/index"
+    },
+    {
+      "expected": 18,
+      "pointer": "/metrics/visualization/test2/poses/18/index"
+    },
+    {
+      "expected": 19,
+      "pointer": "/metrics/visualization/test2/poses/19/index"
+    },
+    {
+      "expected": 20,
+      "pointer": "/metrics/visualization/test2/poses/20/index"
+    },
+    {
+      "expected": 21,
+      "pointer": "/metrics/visualization/test2/poses/21/index"
+    },
+    {
+      "expected": 22,
+      "pointer": "/metrics/visualization/test2/poses/22/index"
+    },
+    {
+      "expected": 23,
+      "pointer": "/metrics/visualization/test2/poses/23/index"
+    },
+    {
+      "expected": 24,
+      "pointer": "/metrics/visualization/test2/poses/24/index"
+    },
+    {
+      "expected": 25,
+      "pointer": "/metrics/visualization/test2/poses/25/index"
+    },
+    {
+      "expected": 26,
+      "pointer": "/metrics/visualization/test2/poses/26/index"
+    },
+    {
+      "expected": 27,
+      "pointer": "/metrics/visualization/test2/poses/27/index"
+    },
+    {
+      "expected": 28,
+      "pointer": "/metrics/visualization/test2/poses/28/index"
+    },
+    {
+      "expected": 29,
+      "pointer": "/metrics/visualization/test2/poses/29/index"
+    },
+    {
+      "expected": 30,
+      "pointer": "/metrics/visualization/test2/poses/30/index"
+    },
+    {
+      "expected": 31,
+      "pointer": "/metrics/visualization/test2/poses/31/index"
+    },
+    {
+      "expected": 32,
+      "pointer": "/metrics/visualization/test2/poses/32/index"
+    },
+    {
+      "expected": 33,
+      "pointer": "/metrics/visualization/test2/poses/33/index"
+    },
+    {
+      "expected": 34,
+      "pointer": "/metrics/visualization/test2/poses/34/index"
+    },
+    {
+      "expected": 35,
+      "pointer": "/metrics/visualization/test2/poses/35/index"
+    },
+    {
+      "expected": 36,
+      "pointer": "/metrics/visualization/test2/poses/36/index"
+    },
+    {
+      "expected": 37,
+      "pointer": "/metrics/visualization/test2/poses/37/index"
+    },
+    {
+      "expected": 38,
+      "pointer": "/metrics/visualization/test2/poses/38/index"
+    },
+    {
+      "expected": 39,
+      "pointer": "/metrics/visualization/test2/poses/39/index"
+    }
+  ],
+  "generator": {
+    "commit": "001a80730c217975b267cbce85a1aaab683eb5a2",
+    "compiler": "12.3.0",
+    "container_digest": "sha256:0d1952784a97306414b1b1ab175d98c1dc1d9bf6dcf76f86173f6d61a37a77f4",
+    "evidence_bundle_id": "goal03-tiny-map-5run-001a807",
+    "kind": "reviewed-five-run-real-dataset-calibration",
+    "reviewed_at": "2026-08-25",
+    "runs": 5,
+    "threshold_policy": "case manifest tolerances; no observed-range auto widening"
+  },
+  "ranges": [
+    {
+      "maximum": 254017,
+      "minimum": 248985,
+      "pointer": "/metrics/visualization/test1/displayed_point_count"
+    },
+    {
+      "maximum": 254017,
+      "minimum": 248985,
+      "pointer": "/metrics/visualization/test1/source_point_count"
+    },
+    {
+      "maximum": 256555,
+      "minimum": 251473,
+      "pointer": "/metrics/visualization/test2/displayed_point_count"
+    },
+    {
+      "maximum": 256555,
+      "minimum": 251473,
+      "pointer": "/metrics/visualization/test2/source_point_count"
+    }
+  ],
+  "schema_version": 1
+}

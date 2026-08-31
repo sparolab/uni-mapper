@@ -202,7 +202,11 @@ struct DescriptorStore {
       (void)id;
       const Eigen::Matrix4f transform = state.global_T_agent.matrix().cast<float>();
       for (const auto& point : state.original_map.points) {
-        merged_map.push_back((transform * point.homogeneous()).head<3>());
+        const Eigen::Vector4f homogeneous(point.x(), point.y(), point.z(),
+                                          1.0F);
+        const Eigen::Vector4f transformed = transform * homogeneous;
+        merged_map.emplace_back(transformed.x(), transformed.y(),
+                                transformed.z());
       }
     }
   }

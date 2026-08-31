@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "tier": "failure",
+  "tier_id": "openlmm-test1-test2-failure-corrupt-pcd-v1",
+  "source_dataset_id": "openlmm-test1-test2-source-v1",
+  "generator_version": 1,
+  "agents": [
+    {
+      "id": "test1",
+      "source_directory": "test1",
+      "frames": [
+        110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 123, 124, 125, 126, 127, 128, 129,
+        130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
+        140, 141, 142, 143, 144, 145, 146, 147, 148, 149
+      ]
+    },
+    {
+      "id": "test2",
+      "source_directory": "test2",
+      "frames": [
+        100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+        110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+        120, 121, 122, 123, 124, 125, 126, 127, 128, 129,
+        130, 131, 132, 133, 134, 135, 136, 137, 138, 139
+      ]
+    }
+  ],
+  "corruption": {
+    "agent_id": "test2",
+    "frame": 120,
+    "method": "truncate",
+    "keep_bytes": 64
+  }
+}

@@ -19,8 +19,9 @@ bool Satisfies(const VisualizationQuery& available,
 }  // namespace
 
 VisualizationSnapshotWorker::VisualizationSnapshotWorker(
-    Provider provider)
+    Provider provider, CompletionNotification completion_notification)
     : provider_(std::move(provider)),
+      completion_notification_(std::move(completion_notification)),
       thread_([this] { Run(); }) {}
 
 VisualizationSnapshotWorker::~VisualizationSnapshotWorker() {
@@ -135,6 +136,7 @@ void VisualizationSnapshotWorker::Run() {
       CancellationContextScope cancellation_scope(cancellation);
       if (provider_) result = provider_(query);
     }
+    bool published = false;
     {
       std::lock_guard lock(mutex_);
       if (active_cancellation_ == cancellation) {
@@ -145,8 +147,10 @@ void VisualizationSnapshotWorker::Run() {
       if (!stopping_ && !cancellation->IsCancellationRequested()) {
         completed_.push_back(
             {std::move(query), generation, std::move(result)});
+        published = true;
       }
     }
+    if (published && completion_notification_) completion_notification_();
   }
 }
 

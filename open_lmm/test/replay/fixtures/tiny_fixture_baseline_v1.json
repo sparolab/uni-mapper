@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "baseline_id": "tiny-baseline-v1",
+  "case_id": "tiny-fixture-v1",
+  "case_manifest_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "generator": {
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "runs": 5
+  },
+  "exact": [
+    {"pointer": "/agents", "expected": ["agent-a", "agent-b"]},
+    {"pointer": "/close_result", "expected": "succeeded"}
+  ],
+  "absolute_tolerances": [
+    {
+      "pointer": "/metrics/pose/translation_max_m",
+      "expected": 0.001,
+      "tolerance": 0.0005
+    }
+  ],
+  "ranges": [
+    {
+      "pointer": "/metrics/map/point_count_ratio",
+      "minimum": 0.0,
+      "maximum": 0.02
+    }
+  ]
+}

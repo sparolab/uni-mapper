@@ -1,5 +1,6 @@
 #include "bounded_executor.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <stdexcept>
@@ -17,8 +18,10 @@ Result<void> BoundedTaskHandle::Wait() const {
 }
 
 BoundedExecutor::BoundedExecutor(std::size_t worker_count,
-                                 std::size_t queue_capacity)
-    : queue_capacity_(queue_capacity) {
+                                 std::size_t queue_capacity,
+                                 SubmissionWaitNotification wait_notification)
+    : queue_capacity_(queue_capacity),
+      wait_notification_(std::move(wait_notification)) {
   if (worker_count == 0 || queue_capacity == 0) {
     throw std::invalid_argument(
         "bounded executor worker and queue counts must be positive");
@@ -61,6 +64,11 @@ Result<BoundedTaskHandle> BoundedExecutor::Submit(
   {
     std::unique_lock lock(mutex_);
     ++waiting_submitters_;
+    max_waiting_submitters_ =
+        std::max(max_waiting_submitters_, waiting_submitters_);
+    if (queue_.size() >= queue_capacity_ && wait_notification_) {
+      wait_notification_();
+    }
     while (accepting_ && queue_.size() >= queue_capacity_ &&
            !(cancellation && cancellation->IsCancellationRequested())) {
       queue_space_.wait_for(lock, std::chrono::milliseconds(10));
@@ -77,6 +85,7 @@ Result<BoundedTaskHandle> BoundedExecutor::Submit(
     id = next_id_++;
     queue_.push_back(
         {id, std::move(task), std::move(cancellation), completion});
+    max_queued_tasks_ = std::max(max_queued_tasks_, queue_.size());
   }
   work_available_.notify_one();
   return Result<BoundedTaskHandle>::Ok(
@@ -115,7 +124,15 @@ void BoundedExecutor::WaitIdle() {
 BoundedExecutorSnapshot BoundedExecutor::Snapshot() const {
   std::lock_guard lock(mutex_);
   return {workers_.size(), queue_capacity_, queue_.size(), active_tasks_,
-          waiting_submitters_, completed_tasks_, cancelled_queued_tasks_};
+          waiting_submitters_, max_queued_tasks_, max_active_tasks_,
+          max_waiting_submitters_, completed_tasks_, cancelled_queued_tasks_};
+}
+
+void BoundedExecutor::ResetDiagnosticPeaksToCurrent() {
+  std::lock_guard lock(mutex_);
+  max_queued_tasks_ = queue_.size();
+  max_active_tasks_ = active_tasks_;
+  max_waiting_submitters_ = waiting_submitters_;
 }
 
 Result<void> BoundedExecutor::Run(const WorkItem& item) noexcept {
@@ -148,6 +165,7 @@ void BoundedExecutor::workerLoop() {
       item = std::move(queue_.front());
       queue_.pop_front();
       ++active_tasks_;
+      max_active_tasks_ = std::max(max_active_tasks_, active_tasks_);
     }
     queue_space_.notify_one();
     item.completion->set_value(Run(item));

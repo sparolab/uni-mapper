@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.invalid/schema/performance_report-v1.json",
+  "title": "OpenLMM performance raw report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "measurement_role", "profile", "scenario", "iteration",
+    "git", "build", "machine", "fixture", "timing", "stage_timings", "process_memory",
+    "owner_memory", "points", "io", "cache", "artifacts", "failures",
+    "result"
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullableUint": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "nullableNumber": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "reasons": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    }
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "measurement_role": {"enum": ["public", "owner"]},
+    "profile": {
+      "enum": ["contract", "pr", "nightly", "external", "gpu"]
+    },
+    "scenario": {
+      "enum": [
+        "open", "data-load", "alignment", "map-update-sequential",
+        "map-update-parallel", "save-fallback", "visualization-cold",
+        "visualization-warm", "full-pipeline", "cancellation"
+      ]
+    },
+    "iteration": {"type": "integer", "minimum": 1},
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "dirty"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "dirty": {"type": "boolean"}
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compiler", "build_type", "sanitizer", "container_digest"],
+      "properties": {
+        "compiler": {"type": "string", "minLength": 1},
+        "build_type": {"type": "string", "minLength": 1},
+        "sanitizer": {"type": "string", "minLength": 1},
+        "container_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os", "kernel", "cpu_model", "cpu_count", "cpu_affinity",
+        "memory_bytes", "memory_class"
+      ],
+      "properties": {
+        "os": {"type": "string", "minLength": 1},
+        "kernel": {"type": "string", "minLength": 1},
+        "cpu_model": {"type": "string", "minLength": 1},
+        "cpu_count": {"type": "integer", "minimum": 1},
+        "cpu_affinity": {"type": "string", "minLength": 1},
+        "memory_bytes": {"type": "integer", "minimum": 1},
+        "memory_class": {"type": "string", "minLength": 1}
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "manifest_sha256", "decoded_point_count",
+        "decoded_point_bytes", "config_fingerprint", "plugin_ids",
+        "pair_fingerprint", "parallelism"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "decoded_point_count": {"type": "integer", "minimum": 1},
+        "decoded_point_bytes": {"type": "integer", "minimum": 1},
+        "config_fingerprint": {"$ref": "#/$defs/sha256"},
+        "pair_fingerprint": {"$ref": "#/$defs/sha256"},
+        "plugin_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "parallelism": {
+          "enum": ["map-update-disabled", "sequential", "parallel"]
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wall_time_ns", "cpu_time_ns", "stage_latency_ns",
+        "command_latency_ns", "cancellation_latency_ns",
+        "unavailable_reasons"
+      ],
+      "properties": {
+        "wall_time_ns": {"$ref": "#/$defs/nullableUint"},
+        "cpu_time_ns": {"$ref": "#/$defs/nullableUint"},
+        "stage_latency_ns": {"$ref": "#/$defs/nullableUint"},
+        "command_latency_ns": {"$ref": "#/$defs/nullableUint"},
+        "cancellation_latency_ns": {"$ref": "#/$defs/nullableUint"},
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "stage_timings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "latency_ns", "start_sequence", "terminal_sequence"],
+        "properties": {
+          "stage": {"enum": ["data-load", "alignment", "map-update", "save"]},
+          "latency_ns": {"type": "integer", "minimum": 0},
+          "start_sequence": {"type": "integer", "minimum": 1},
+          "terminal_sequence": {"type": "integer", "minimum": 2}
+        }
+      }
+    },
+    "process_memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rss_start_bytes", "rss_end_bytes", "sampled_peak_rss_bytes",
+        "process_hwm_bytes", "target_peak_delta_bytes",
+        "retained_rss_delta_bytes", "sample_count", "sample_interval_ns",
+        "memory_confidence", "unavailable_reasons"
+      ],
+      "properties": {
+        "rss_start_bytes": {"$ref": "#/$defs/nullableUint"},
+        "rss_end_bytes": {"$ref": "#/$defs/nullableUint"},
+        "sampled_peak_rss_bytes": {"$ref": "#/$defs/nullableUint"},
+        "process_hwm_bytes": {"$ref": "#/$defs/nullableUint"},
+        "target_peak_delta_bytes": {"$ref": "#/$defs/nullableUint"},
+        "retained_rss_delta_bytes": {"type": ["integer", "null"]},
+        "sample_count": {"type": ["integer", "null"], "minimum": 1},
+        "sample_interval_ns": {"type": ["integer", "null"], "minimum": 1},
+        "memory_confidence": {"enum": ["low", "normal"]},
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "owner_memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "governor_reserved_total_bytes", "governor_resident_payload_bytes",
+        "governor_transient_task_bytes", "governor_heavy_map_bytes",
+        "governor_peak_reserved_total_bytes",
+        "governor_peak_resident_payload_bytes",
+        "governor_peak_transient_task_bytes",
+        "governor_peak_heavy_map_bytes",
+        "governor_admission_failures", "executor_worker_count",
+        "executor_queue_capacity", "executor_max_queued_tasks",
+        "executor_max_active_tasks", "executor_max_waiting_submitters",
+        "unavailable_reasons"
+      ],
+      "properties": {
+        "governor_reserved_total_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_resident_payload_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_transient_task_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_heavy_map_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_peak_reserved_total_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_peak_resident_payload_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_peak_transient_task_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_peak_heavy_map_bytes": {"$ref": "#/$defs/nullableUint"},
+        "governor_admission_failures": {"$ref": "#/$defs/nullableUint"},
+        "executor_worker_count": {"$ref": "#/$defs/nullableUint"},
+        "executor_queue_capacity": {"$ref": "#/$defs/nullableUint"},
+        "executor_max_queued_tasks": {"$ref": "#/$defs/nullableUint"},
+        "executor_max_active_tasks": {"$ref": "#/$defs/nullableUint"},
+        "executor_max_waiting_submitters": {"$ref": "#/$defs/nullableUint"},
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "points": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_file_bytes", "decoded_source_points", "decoded_source_bytes",
+        "retained_filtered_points", "retained_capacity_bytes",
+        "optimized_pose_count", "map_output_points", "map_output_file_bytes",
+        "visualization_source_points", "visualization_displayed_points",
+        "cache_entry_points", "public_dto_point_bytes", "gui_staging_bytes",
+        "unavailable_reasons"
+      ],
+      "properties": {
+        "input_file_bytes": {"$ref": "#/$defs/nullableUint"},
+        "decoded_source_points": {"$ref": "#/$defs/nullableUint"},
+        "decoded_source_bytes": {"$ref": "#/$defs/nullableUint"},
+        "retained_filtered_points": {"$ref": "#/$defs/nullableUint"},
+        "retained_capacity_bytes": {"$ref": "#/$defs/nullableUint"},
+        "optimized_pose_count": {"$ref": "#/$defs/nullableUint"},
+        "map_output_points": {"$ref": "#/$defs/nullableUint"},
+        "map_output_file_bytes": {"$ref": "#/$defs/nullableUint"},
+        "visualization_source_points": {"$ref": "#/$defs/nullableUint"},
+        "visualization_displayed_points": {"$ref": "#/$defs/nullableUint"},
+        "cache_entry_points": {"$ref": "#/$defs/nullableUint"},
+        "public_dto_point_bytes": {"$ref": "#/$defs/nullableUint"},
+        "gui_staging_bytes": {"$ref": "#/$defs/nullableUint"},
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "io": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rchar", "wchar", "syscr", "syscw", "read_bytes", "write_bytes",
+        "cancelled_write_bytes", "unavailable_reasons"
+      ],
+      "properties": {
+        "rchar": {"$ref": "#/$defs/nullableUint"},
+        "wchar": {"$ref": "#/$defs/nullableUint"},
+        "syscr": {"$ref": "#/$defs/nullableUint"},
+        "syscw": {"$ref": "#/$defs/nullableUint"},
+        "read_bytes": {"$ref": "#/$defs/nullableUint"},
+        "write_bytes": {"$ref": "#/$defs/nullableUint"},
+        "cancelled_write_bytes": {"$ref": "#/$defs/nullableUint"},
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entries", "bytes", "hits", "misses", "insertions", "evictions",
+        "clears", "returned_snapshot_bytes", "cpu_staging_bytes",
+        "gpu_upload_requested_bytes", "gpu_estimated_resident_bytes",
+        "gpu_measurement_kind", "unavailable_reasons"
+      ],
+      "properties": {
+        "entries": {"$ref": "#/$defs/nullableUint"},
+        "bytes": {"$ref": "#/$defs/nullableUint"},
+        "hits": {"$ref": "#/$defs/nullableUint"},
+        "misses": {"$ref": "#/$defs/nullableUint"},
+        "insertions": {"$ref": "#/$defs/nullableUint"},
+        "evictions": {"$ref": "#/$defs/nullableUint"},
+        "clears": {"$ref": "#/$defs/nullableUint"},
+        "returned_snapshot_bytes": {"$ref": "#/$defs/nullableUint"},
+        "cpu_staging_bytes": {"$ref": "#/$defs/nullableUint"},
+        "gpu_upload_requested_bytes": {"$ref": "#/$defs/nullableUint"},
+        "gpu_estimated_resident_bytes": {"$ref": "#/$defs/nullableUint"},
+        "gpu_measurement_kind": {
+          "enum": ["estimate", "driver_observed", "not_available"]
+        },
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_output_bytes", "retained_owner_bytes",
+        "sampled_target_peak_delta_bytes", "process_hwm_bytes",
+        "peak_to_output_ratio", "peak_to_retained_ratio", "output_digest",
+        "correctness", "unavailable_reasons"
+      ],
+      "properties": {
+        "logical_output_bytes": {"$ref": "#/$defs/nullableUint"},
+        "retained_owner_bytes": {"$ref": "#/$defs/nullableUint"},
+        "sampled_target_peak_delta_bytes": {"$ref": "#/$defs/nullableUint"},
+        "process_hwm_bytes": {"$ref": "#/$defs/nullableUint"},
+        "peak_to_output_ratio": {"$ref": "#/$defs/nullableNumber"},
+        "peak_to_retained_ratio": {"$ref": "#/$defs/nullableNumber"},
+        "output_digest": {"$ref": "#/$defs/sha256"},
+        "correctness": {"enum": ["pass", "fail"]},
+        "unavailable_reasons": {"$ref": "#/$defs/reasons"}
+      }
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase", "message"],
+        "properties": {
+          "phase": {"type": "string", "minLength": 1},
+          "message": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "result": {
+      "enum": ["pass", "fail", "uncalibrated", "not_available", "invalid"]
+    }
+  }
+}

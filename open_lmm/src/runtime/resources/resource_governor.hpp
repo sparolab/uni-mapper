@@ -35,11 +35,15 @@ class MemoryReservation {
  private:
   MemoryReservation(std::shared_ptr<std::atomic<uint64_t>> total_counter,
                     std::shared_ptr<std::atomic<uint64_t>> class_counter,
+                    std::shared_ptr<std::atomic<uint64_t>> total_peak,
+                    std::shared_ptr<std::atomic<uint64_t>> class_peak,
                     std::shared_ptr<std::atomic<uint64_t>> failure_counter,
                     uint64_t limit, uint64_t bytes,
                     MemoryClass memory_class) noexcept;
   std::shared_ptr<std::atomic<uint64_t>> total_counter_;
   std::shared_ptr<std::atomic<uint64_t>> class_counter_;
+  std::shared_ptr<std::atomic<uint64_t>> total_peak_;
+  std::shared_ptr<std::atomic<uint64_t>> class_peak_;
   std::shared_ptr<std::atomic<uint64_t>> failure_counter_;
   uint64_t limit_ = 0;
   uint64_t bytes_ = 0;
@@ -51,6 +55,17 @@ struct ResourceBudget {
   std::size_t max_agent_tasks = 2;
   std::size_t max_cpu_threads = 2;
   uint64_t soft_memory_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+};
+
+struct ResourceGovernorDiagnostics {
+  ResourceBudget budget;
+  uint64_t reserved_total_bytes = 0;
+  std::array<uint64_t, 3> reserved_by_class = {0, 0, 0};
+  uint64_t peak_reserved_total_bytes = 0;
+  std::array<uint64_t, 3> peak_reserved_by_class = {0, 0, 0};
+  uint64_t admission_failures = 0;
+  bool heavy_phase_active = false;
+  BoundedExecutorSnapshot executor;
 };
 
 class ResourceGovernor {
@@ -90,6 +105,8 @@ class ResourceGovernor {
   [[nodiscard]] const BoundedExecutor& AgentExecutor() const noexcept {
     return agent_executor_;
   }
+  [[nodiscard]] ResourceGovernorDiagnostics Diagnostics() const;
+  void ResetDiagnosticPeaksToCurrent();
 
  private:
   ResourceBudget budget_;
@@ -100,10 +117,17 @@ class ResourceGovernor {
           std::make_shared<std::atomic<uint64_t>>(0),
           std::make_shared<std::atomic<uint64_t>>(0),
           std::make_shared<std::atomic<uint64_t>>(0)};
+  std::shared_ptr<std::atomic<uint64_t>> peak_reserved_memory_bytes_ =
+      std::make_shared<std::atomic<uint64_t>>(0);
+  std::array<std::shared_ptr<std::atomic<uint64_t>>, 3>
+      peak_reserved_memory_by_class_ = {
+          std::make_shared<std::atomic<uint64_t>>(0),
+          std::make_shared<std::atomic<uint64_t>>(0),
+          std::make_shared<std::atomic<uint64_t>>(0)};
   std::shared_ptr<std::atomic<uint64_t>> memory_admission_failures_ =
       std::make_shared<std::atomic<uint64_t>>(0);
   BoundedExecutor agent_executor_;
-  std::mutex heavy_phase_mutex_;
+  mutable std::mutex heavy_phase_mutex_;
   std::condition_variable heavy_phase_ready_;
   bool heavy_phase_active_ = false;
 };

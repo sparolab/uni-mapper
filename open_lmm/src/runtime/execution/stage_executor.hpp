@@ -16,6 +16,12 @@
 
 namespace open_lmm {
 
+struct StageExecutorDiagnostics {
+  uint64_t runtime_revision = 0;
+  ResourceGovernorDiagnostics resources;
+  VisualizationProjectorDiagnostics visualization;
+};
+
 // Thin internal façade: bootstrap once, serialize commands, delegate stage
 // candidates/transactions, and publish committed query projections.
 class StageExecutor {
@@ -40,6 +46,7 @@ class StageExecutor {
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const VisualizationQuery& query) const;
+  [[nodiscard]] StageExecutorDiagnostics Diagnostics() const;
   Result<void> ValidateReady();
 
  private:

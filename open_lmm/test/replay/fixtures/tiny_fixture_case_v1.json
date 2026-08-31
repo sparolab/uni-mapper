@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "case_id": "tiny-fixture-v1",
+  "tier": "tiny",
+  "dataset": {
+    "bundle_id": "fixture-bundle-v1",
+    "bundle_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "source": "fixture://generated",
+    "license": "CC0-1.0",
+    "redistributable": true,
+    "agents": [
+      {
+        "id": "agent-a",
+        "frames": [1, 2, 3],
+        "pose_file": {
+          "path": "agent-a/poses.txt",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        "scan_index": {
+          "path": "agent-a/scans.sha256",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      },
+      {
+        "id": "agent-b",
+        "frames": [4, 5, 6],
+        "pose_file": {
+          "path": "agent-b/poses.txt",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        "scan_index": {
+          "path": "agent-b/scans.sha256",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "acquired_at": "2026-08-20",
+    "source_version": "fixture-v1",
+    "attribution_file": "ATTRIBUTION.md",
+    "transformations": ["generated fixture"],
+    "original_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "config": {
+    "root": "configs/root.json",
+    "files": [
+      {
+        "path": "configs/root.json",
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    ],
+    "plugins": [
+      {
+        "kind": "descriptor",
+        "id": "scan-context",
+        "capability": "descriptor-v1"
+      }
+    ]
+  },
+  "workflow": [
+    {"stage": "DataLoad", "agents": "all"},
+    {"stage": "Alignment", "agents": "all"},
+    {"stage": "MapUpdate", "agents": "all"},
+    {"stage": "Save", "agents": "all"}
+  ],
+  "expected": {
+    "result": "success",
+    "baseline_id": "tiny-baseline-v1"
+  },
+  "tolerances": {
+    "pose_translation_m": 0.001,
+    "map_point_count_ratio": 0.01
+  }
+}

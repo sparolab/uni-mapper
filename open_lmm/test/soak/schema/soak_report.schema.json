@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-lmm.org/schemas/soak-report-v1.json",
+  "title": "OpenLMM soak report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "profile", "scenario", "iterations",
+    "warmup_iterations", "seed", "git", "build", "machine", "samples",
+    "slopes", "latencies", "failures", "result"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "profile": {
+      "enum": ["contract", "fast", "sanitizer", "nightly", "external", "gpu"]
+    },
+    "scenario": {"type": "string", "minLength": 1},
+    "iterations": {"type": "integer", "minimum": 1},
+    "warmup_iterations": {"type": "integer", "minimum": 0},
+    "seed": {"type": "integer", "minimum": 0},
+    "git": {"$ref": "#/$defs/git"},
+    "build": {"$ref": "#/$defs/build"},
+    "machine": {"$ref": "#/$defs/machine"},
+    "samples": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/sample"}
+    },
+    "slopes": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/slope"}
+    },
+    "latencies": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/latency"}
+    },
+    "failures": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/failure"}
+    },
+    "result": {"enum": ["pass", "fail", "not_available"]}
+  },
+  "$defs": {
+    "git": {
+      "type": "object", "additionalProperties": false,
+      "required": ["commit", "dirty"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+        "dirty": {"type": "boolean"}
+      }
+    },
+    "build": {
+      "type": "object", "additionalProperties": false,
+      "required": ["compiler", "sanitizer", "build_type"],
+      "properties": {
+        "compiler": {"type": "string", "minLength": 1},
+        "sanitizer": {"type": "string", "minLength": 1},
+        "build_type": {"type": "string", "minLength": 1}
+      }
+    },
+    "machine": {
+      "type": "object", "additionalProperties": false,
+      "required": ["os", "kernel", "cpu_count", "memory_bytes", "container_digest"],
+      "properties": {
+        "os": {"type": "string", "minLength": 1},
+        "kernel": {"type": "string", "minLength": 1},
+        "cpu_count": {"type": ["integer", "null"], "minimum": 1},
+        "memory_bytes": {"type": ["integer", "null"], "minimum": 1},
+        "container_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "process": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rss_bytes", "peak_rss_bytes", "thread_count", "fd_count", "cpu_time_ns", "unavailable"],
+      "properties": {
+        "rss_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "peak_rss_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "thread_count": {"type": ["integer", "null"], "minimum": 0},
+        "fd_count": {"type": ["integer", "null"], "minimum": 0},
+        "cpu_time_ns": {"type": ["integer", "null"], "minimum": 0},
+        "unavailable": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "executor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["worker_count", "queue_capacity", "queued_tasks", "active_tasks", "waiting_submitters", "completed_tasks", "cancelled_queued_tasks"],
+      "properties": {
+        "worker_count": {"type": "integer", "minimum": 0},
+        "queue_capacity": {"type": "integer", "minimum": 0},
+        "queued_tasks": {"type": "integer", "minimum": 0},
+        "active_tasks": {"type": "integer", "minimum": 0},
+        "waiting_submitters": {"type": "integer", "minimum": 0},
+        "completed_tasks": {"type": "integer", "minimum": 0},
+        "cancelled_queued_tasks": {"type": "integer", "minimum": 0}
+      }
+    },
+    "sample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["iteration", "checkpoint", "process", "runtime_revision", "recent_event_count", "reserved_memory_bytes", "executor"],
+      "properties": {
+        "iteration": {"type": "integer", "minimum": 0},
+        "checkpoint": {"type": "string", "minLength": 1},
+        "process": {"$ref": "#/$defs/process"},
+        "runtime_revision": {"type": ["integer", "null"], "minimum": 0},
+        "recent_event_count": {"type": ["integer", "null"], "minimum": 0},
+        "reserved_memory_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "executor": {"oneOf": [{"$ref": "#/$defs/executor"}, {"type": "null"}]},
+        "owner": {"$ref": "#/$defs/owner"}
+      }
+    },
+    "owner": {
+      "type": "object", "additionalProperties": false,
+      "required": ["live_jobs", "live_subscriptions", "callbacks", "visualization_cache_entries", "visualization_cache_bytes", "output_final_files", "output_temporary_files", "output_backup_entries", "output_recovery_manifests", "output_directory_count", "loaded_plugin_mappings"],
+      "properties": {
+        "live_jobs": {"type": ["integer", "null"], "minimum": 0},
+        "live_subscriptions": {"type": ["integer", "null"], "minimum": 0},
+        "callbacks": {"type": ["integer", "null"], "minimum": 0},
+        "visualization_cache_entries": {"type": ["integer", "null"], "minimum": 0},
+        "visualization_cache_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "output_final_files": {"type": ["integer", "null"], "minimum": 0},
+        "output_temporary_files": {"type": ["integer", "null"], "minimum": 0},
+        "output_backup_entries": {"type": ["integer", "null"], "minimum": 0},
+        "output_recovery_manifests": {"type": ["integer", "null"], "minimum": 0},
+        "output_directory_count": {"type": ["integer", "null"], "minimum": 0},
+        "loaded_plugin_mappings": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "slope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sample_count", "warmup_samples", "theil_sen_per_iteration", "previous_quarter_median", "last_quarter_median", "quarter_median_delta", "minimum", "maximum"],
+      "properties": {
+        "sample_count": {"type": "integer", "minimum": 4},
+        "warmup_samples": {"type": "integer", "minimum": 0},
+        "theil_sen_per_iteration": {"type": "number"},
+        "previous_quarter_median": {"type": "number"},
+        "last_quarter_median": {"type": "number"},
+        "quarter_median_delta": {"type": "number"},
+        "minimum": {"type": "number"},
+        "maximum": {"type": "number"}
+      }
+    },
+    "latency": {
+      "type": "object", "additionalProperties": false,
+      "required": ["samples", "p50_ms", "p95_ms", "max_ms"],
+      "properties": {
+        "samples": {"type": "integer", "minimum": 1},
+        "p50_ms": {"type": "number", "minimum": 0},
+        "p95_ms": {"type": "number", "minimum": 0},
+        "max_ms": {"type": "number", "minimum": 0}
+      }
+    },
+    "failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["iteration", "phase", "message"],
+      "properties": {
+        "iteration": {"type": ["integer", "null"], "minimum": 0},
+        "phase": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

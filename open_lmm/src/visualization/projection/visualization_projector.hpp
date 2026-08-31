@@ -11,6 +11,16 @@
 
 namespace open_lmm {
 
+struct VisualizationProjectorDiagnostics {
+  std::size_t entries = 0;
+  std::size_t bytes = 0;
+  uint64_t hits = 0;
+  uint64_t misses = 0;
+  uint64_t insertions = 0;
+  uint64_t evictions = 0;
+  uint64_t clears = 0;
+};
+
 // Read model derived from one immutable committed runtime state or an isolated
 // DataLoad candidate that can be discarded without mutating that state.
 class VisualizationProjector {
@@ -34,6 +44,7 @@ class VisualizationProjector {
       const VisualizationQuery& query) const;
   [[nodiscard]] std::size_t PointCacheEntryCount() const;
   [[nodiscard]] std::size_t PointCacheBytes() const;
+  [[nodiscard]] VisualizationProjectorDiagnostics Diagnostics() const;
 
  private:
   struct State {
@@ -84,6 +95,11 @@ class VisualizationProjector {
   mutable std::map<PointCacheKey, CachedPointEntry> point_cache_;
   mutable std::size_t point_cache_bytes_ = 0;
   mutable uint64_t point_cache_access_ = 0;
+  mutable uint64_t point_cache_hits_ = 0;
+  mutable uint64_t point_cache_misses_ = 0;
+  mutable uint64_t point_cache_insertions_ = 0;
+  mutable uint64_t point_cache_evictions_ = 0;
+  mutable uint64_t point_cache_clears_ = 0;
 };
 
 }  // namespace open_lmm
