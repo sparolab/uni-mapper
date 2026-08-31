@@ -1,4 +1,4 @@
-#include <adapters/batch/compat/map_server.hpp>
+#include <runtime/composition/map_server.hpp>
 #include <config/document/config.hpp>
 #include <foundation/logging/logging.hpp>
 

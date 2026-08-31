@@ -159,6 +159,18 @@ openlmm_set_global_target_properties(open_lmm_stage_executor_fixture_tests)
 add_test(NAME open_lmm_stage_executor_fixture_tests
          COMMAND open_lmm_stage_executor_fixture_tests)
 
+add_executable(open_lmm_map_update_executor_tests
+  map_update_executor_tests.cpp
+)
+target_link_libraries(open_lmm_map_update_executor_tests PRIVATE
+  open_lmm_map_server
+  open_lmm_data_loader
+  open_lmm_dynamic_remover
+)
+openlmm_set_global_target_properties(open_lmm_map_update_executor_tests)
+add_test(NAME open_lmm_map_update_executor_tests
+         COMMAND open_lmm_map_update_executor_tests)
+
 add_executable(open_lmm_visualization_projector_tests
   visualization_projector_tests.cpp
 )
@@ -307,7 +319,14 @@ target_compile_definitions(open_lmm_plugin_fixture_no_entry PRIVATE
 add_executable(open_lmm_plugin_abi_tests plugin_abi_tests.cpp)
 target_include_directories(open_lmm_plugin_abi_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR})
+add_dependencies(open_lmm_plugin_abi_tests
+  open_lmm_plugin_fixture_valid
+  open_lmm_plugin_fixture_wrong_abi
+  open_lmm_plugin_fixture_null_factory
+  open_lmm_plugin_fixture_missing_destroy
+  open_lmm_plugin_fixture_no_entry)
 target_link_libraries(open_lmm_plugin_abi_tests PRIVATE
+  open_lmm_map_server
   open_lmm_common
   open_lmm_utils
   open_lmm_loop_detector
@@ -320,6 +339,7 @@ foreach(plugin_target IN ITEMS
     create_scan_context create_solid create_hmm_mos create_dufomap create_otd
     create_free_dom create_erasor)
   if(TARGET ${plugin_target})
+    add_dependencies(open_lmm_plugin_abi_tests ${plugin_target})
     list(APPEND _open_lmm_built_in_plugin_test_arguments
       "${plugin_target}=$<TARGET_FILE:${plugin_target}>")
   endif()
@@ -414,6 +434,7 @@ set_tests_properties(
   open_lmm_config_transaction_tests
   open_lmm_runtime_bootstrapper_tests
   open_lmm_execution_spec_tests
+  open_lmm_map_update_executor_tests
   open_lmm_controller_concurrency_tests
   open_lmm_map_alignment_coordinator_tests
   open_lmm_gui_plugin_tests

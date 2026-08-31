@@ -1,9 +1,22 @@
 #include <adapters/gui/presentation/visualization_snapshot_worker.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace open_lmm {
+namespace {
+
+bool Satisfies(const VisualizationQuery& available,
+               const VisualizationQuery& requested) {
+  if (available.agent != requested.agent) return false;
+  if (!requested.include_points) return true;
+  return available.include_points &&
+         std::abs(available.preview_voxel_size_m -
+                  requested.preview_voxel_size_m) <= 1e-6F;
+}
+
+}  // namespace
 
 VisualizationSnapshotWorker::VisualizationSnapshotWorker(
     Provider provider)
@@ -16,7 +29,7 @@ VisualizationSnapshotWorker::~VisualizationSnapshotWorker() {
 }
 
 std::optional<uint64_t> VisualizationSnapshotWorker::Request(
-    VisualizationQuery query) {
+    VisualizationQuery query, VisualizationRequestIntent intent) {
   if (!query.agent.IsValid()) return std::nullopt;
   uint64_t generation = 0;
   {
@@ -27,16 +40,33 @@ std::optional<uint64_t> VisualizationSnapshotWorker::Request(
     // assignment evaluation move the AgentId before the map lookup, causing
     // different agents to collapse onto the same moved-from key.
     const AgentId agent = query.agent;
-    if (active_agent_ && *active_agent_ == agent && active_cancellation_) {
+    if (intent != VisualizationRequestIntent::kSourceChanged) {
+      if (active_query_ && Satisfies(*active_query_, query)) {
+        return active_generation_;
+      }
+      const auto pending = pending_.find(agent);
+      if (pending != pending_.end() &&
+          Satisfies(pending->second.query, query)) {
+        return pending->second.generation;
+      }
+      const auto completed = std::find_if(
+          completed_.rbegin(), completed_.rend(),
+          [&query](const VisualizationSnapshotResult& result) {
+            return Satisfies(result.query, query);
+          });
+      if (completed != completed_.rend()) {
+        return completed->request_generation;
+      }
+    }
+    if (active_query_ && active_query_->agent == agent &&
+        active_cancellation_) {
       active_cancellation_->Request();
     }
     const auto pending = pending_.find(agent);
     if (pending != pending_.end()) {
-      // A metadata refresh must never downgrade an already queued point copy.
-      // Stage-completion refreshes can otherwise replace the full request for
-      // an earlier agent, leaving that map absent until the user toggles it.
-      query.include_points =
-          query.include_points || pending->second.query.include_points;
+      if (intent == VisualizationRequestIntent::kPoll) {
+        return pending->second.generation;
+      }
     }
     generation = next_generation_++;
     pending_[agent] = {std::move(query), generation};
@@ -50,6 +80,17 @@ std::vector<VisualizationSnapshotResult> VisualizationSnapshotWorker::Drain() {
   std::vector<VisualizationSnapshotResult> results;
   results.swap(completed_);
   return results;
+}
+
+void VisualizationSnapshotWorker::ResetEpoch() {
+  {
+    std::lock_guard lock(mutex_);
+    if (stopping_) return;
+    pending_.clear();
+    completed_.clear();
+    if (active_cancellation_) active_cancellation_->Request();
+  }
+  ready_.notify_all();
 }
 
 void VisualizationSnapshotWorker::Stop() {
@@ -75,13 +116,14 @@ void VisualizationSnapshotWorker::Run() {
       std::unique_lock lock(mutex_);
       ready_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
       if (stopping_) return;
-      const auto request = std::max_element(
+      const auto request = std::min_element(
           pending_.begin(), pending_.end(), [](const auto& left, const auto& right) {
             return left.second.generation < right.second.generation;
           });
       query = request->second.query;
       generation = request->second.generation;
-      active_agent_ = query.agent;
+      active_query_ = query;
+      active_generation_ = generation;
       cancellation = std::make_shared<CancellationToken>();
       active_cancellation_ = cancellation;
       pending_.erase(request);
@@ -96,7 +138,8 @@ void VisualizationSnapshotWorker::Run() {
     {
       std::lock_guard lock(mutex_);
       if (active_cancellation_ == cancellation) {
-        active_agent_.reset();
+        active_query_.reset();
+        active_generation_ = 0;
         active_cancellation_.reset();
       }
       if (!stopping_ && !cancellation->IsCancellationRequested()) {

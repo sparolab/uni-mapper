@@ -21,6 +21,6 @@
     "parallel": true,
     "num_threads": 8,
     // map
-    "levels": 20
+    "levels": 19
   }
 }

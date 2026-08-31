@@ -2,6 +2,7 @@
 #include <open_lmm/gui/gui_plugin.hpp>
 #include <adapters/gui/model/gui_event_queue.hpp>
 #include <adapters/gui/model/gui_model.hpp>
+#include <adapters/gui/presentation/alignment_presentation_state.hpp>
 #include <adapters/gui/presentation/map_presentation_state.hpp>
 #include <adapters/gui/presentation/visualization_repository.hpp>
 #include <adapters/gui/presentation/visualization_style.hpp>
@@ -33,16 +34,23 @@ class IridescenceGui final : public GuiPlugin {
   void DrawAlignmentUi();
   void DrawRuntimeLogsSection();
   void SynchronizeAlignmentFeedback();
+  [[nodiscard]] bool RenderPipelineAlignmentTransform(
+      const AgentId& source_agent, const Eigen::Matrix4f& transform);
   void ApplyPipelineAlignmentPreview(const AgentId& source_agent,
                                      const Eigen::Matrix4f& transform);
   void ResetPipelineAlignmentPreview();
   void SetManualAlignmentTransform(const Eigen::Isometry3d& transform);
   void SynchronizeManualAlignmentTransform();
+  void ResetVisualizationEpoch();
   void LoadConfigEditor();
   void RefreshDatasetCatalog();
   void LoadAlignmentEditor();
   void SynchronizeModel();
-  void RequestVisualization(AgentId agent, bool include_points = false);
+  void RequestVisualization(
+      AgentId agent, bool include_points = false,
+      VisualizationRequestIntent intent =
+          VisualizationRequestIntent::kSourceChanged);
+  void RequestAllVisualizationMetadata();
   void DrainVisualizationSnapshots();
   void UpdateDrawables(
       const std::shared_ptr<const VisualizationSnapshot>& snapshot,
@@ -50,12 +58,13 @@ class IridescenceGui final : public GuiPlugin {
       std::optional<uint64_t> request_generation = std::nullopt);
   void UpdateLoopDrawables(
       const std::shared_ptr<const VisualizationSnapshot>& snapshot);
+  void HideAlignmentLoopLayers();
   void ApplyVisualizationColorMode();
   void DrawAgentVisibilityControls();
   void SetAgentVisualizationVisible(const AgentId& agent, bool visible);
   [[nodiscard]] bool IsAgentVisualizationVisible(
       const AgentId& agent) const;
-  void HideDataLoadPointLayers();
+  void ReplacePipelineMapLayersWithAlignmentReview();
   GuiServices services_;
   std::shared_ptr<GuiEventQueue> event_queue_;
   ExecutionEventSubscription event_subscription_;
@@ -88,12 +97,14 @@ class IridescenceGui final : public GuiPlugin {
   double max_gui_work_ms_ = 0.0;
   int visualization_color_mode_ = kDefaultVisualizationColorMode;
   MapPresentationState map_presentation_;
+  AlignmentPresentationState alignment_presentation_;
   std::vector<std::string> runtime_logs_;
   bool runtime_logs_auto_scroll_ = true;
   std::chrono::steady_clock::time_point next_runtime_log_refresh_{};
   std::chrono::steady_clock::time_point next_data_load_preview_refresh_{};
   bool data_load_preview_active_ = false;
   bool alignment_stage_active_ = false;
+  bool map_update_stage_active_ = false;
   std::optional<Eigen::Vector3f> picked_point_;
   std::optional<AlignmentFeedbackSnapshot> alignment_feedback_;
   std::unique_ptr<guik::ModelControl> alignment_model_control_;

@@ -308,14 +308,15 @@ std::map<AgentId, StoredAlignment> LoadAlignmentCache(
   return alignments;
 }
 
-Result<void> WriteAgentManifest(const fs::path& output_directory,
-                                const AgentSymbolCatalog& catalog) {
+Result<std::shared_ptr<const Error>> WriteAgentManifest(
+    const fs::path& output_directory, const AgentSymbolCatalog& catalog) {
   nlohmann::json manifest;
   manifest["version"] = AgentSymbolCatalog::kVersion;
   manifest["agents"] = nlohmann::json::array();
   for (const AgentId& id : catalog.OrderedIds()) {
     auto symbol = catalog.SymbolFor(id);
-    if (!symbol) return Result<void>::Failure(symbol.GetError());
+    if (!symbol)
+      return Result<std::shared_ptr<const Error>>::Failure(symbol.GetError());
     manifest["agents"].push_back(
         {{"id", id.Value()}, {"symbol_byte", symbol.Value().Byte()}});
   }
@@ -327,7 +328,7 @@ Result<void> WriteAgentManifest(const fs::path& output_directory,
     if (!output) {
       std::error_code ignored;
       fs::remove(temporary, ignored);
-      return Result<void>::Failure(
+      return Result<std::shared_ptr<const Error>>::Failure(
           Error::IoError("failed to open agent manifest " +
                          temporary.string()));
     }
@@ -336,19 +337,30 @@ Result<void> WriteAgentManifest(const fs::path& output_directory,
       output.close();
       std::error_code ignored;
       fs::remove(temporary, ignored);
-      return Result<void>::Failure(
+      return Result<std::shared_ptr<const Error>>::Failure(
           Error::IoError("failed to write agent manifest " +
                          temporary.string()));
     }
   }
+  // Allocate before the commit so a committed-with-recovery outcome can be
+  // returned without a post-commit allocation failure.
+  auto recovery = std::make_shared<Error>(
+      Error::IoError("agent manifest recovery outcome"));
   auto committed = CommitFileSet({{temporary, destination}});
   if (!committed &&
       committed.GetError().severity != Error::Severity::kFatalRuntime) {
     std::error_code ignored;
     fs::remove(temporary, ignored);
   }
-  if (!committed) return Result<void>::Failure(committed.GetError());
-  return Result<void>::Ok();
+  if (!committed)
+    return Result<std::shared_ptr<const Error>>::Failure(committed.GetError());
+  auto outcome = std::move(committed).Value();
+  if (!outcome.recovery_required) {
+    return Result<std::shared_ptr<const Error>>::Ok({});
+  }
+  *recovery = std::move(*outcome.recovery_required);
+  recovery->MarkFatalRuntime().WithRuntimeRevision(1);
+  return Result<std::shared_ptr<const Error>>::Ok(std::move(recovery));
 }
 
 }  // namespace
@@ -680,7 +692,8 @@ Result<RuntimeBootstrapResult> RuntimeBootstrapper::Bootstrap(
   budget.max_agent_tasks = static_cast<std::size_t>(max_parallel);
   budget.max_cpu_threads = static_cast<std::size_t>(max_parallel);
   return Result<RuntimeBootstrapResult>::Ok(
-      {std::move(state), budget, algorithms_});
+      {std::move(state), budget, algorithms_,
+       std::move(manifest).Value()});
   } catch (const std::exception& error) {
     return Result<RuntimeBootstrapResult>::Failure(
         Error::ParseError(error.what()).WithConfig(

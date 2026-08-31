@@ -21,12 +21,15 @@ namespace open_lmm {
 class StageCoordinator {
  public:
   using DataLoadPreviewCallback =
-      std::function<void(uint64_t, const AgentId&, const AgentRawDataHandle&)>;
+      std::function<void(uint64_t, const AgentId&, const AgentRawDataHandle&,
+                         const VisualizationPointPreviewHandle&)>;
+  using AlignmentPreviewCallback = AlignmentExecutor::AlignmentPreviewCallback;
 
   StageCoordinator(RuntimeStateStore& runtime_states, OutputRepository& outputs,
                    std::shared_ptr<ResourceGovernor> governor,
                    std::shared_ptr<const AlgorithmProvider> algorithms,
-                   DataLoadPreviewCallback data_load_preview = {});
+                   DataLoadPreviewCallback data_load_preview = {},
+                   AlignmentPreviewCallback alignment_preview = {});
 
   Result<void> ExecuteStage(std::shared_ptr<const RuntimeState> base,
                             StageId stage,

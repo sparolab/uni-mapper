@@ -30,7 +30,7 @@ class RuntimeService {
   using PortFactory = std::function<Result<std::shared_ptr<StageRuntimePort>>(
       const BootstrapConfigSnapshot&, const std::filesystem::path&)>;
 
-  explicit RuntimeService(std::size_t max_agent_tasks = 2,
+  explicit RuntimeService(std::size_t max_agent_tasks = 4,
                           PortFactory port_factory = {});
   explicit RuntimeService(ResourceBudget budget, PortFactory port_factory = {});
   ~RuntimeService();
@@ -97,7 +97,8 @@ class RuntimeService {
   void ClearPublicJobsLocked();
   static bool IsActive(JobState state);
   static RuntimeStatus DeriveState(
-      const RuntimeInstance& instance, const PipelineSnapshot& pipeline);
+      const RuntimeInstance& instance, const PipelineSnapshot& pipeline,
+      const std::optional<Error>& fatal_runtime_error = std::nullopt);
   static std::string GenerateOutputNamespace();
 
   mutable std::mutex mutex_;

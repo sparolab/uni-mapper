@@ -4,6 +4,7 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace open_lmm {
@@ -45,6 +46,41 @@ std::size_t EffectiveWorkers(const ResourceBudget& budget) {
 
 std::size_t MemoryClassIndex(MemoryClass memory_class) noexcept {
   return static_cast<std::size_t>(memory_class);
+}
+
+const char* MemoryClassName(MemoryClass memory_class) noexcept {
+  switch (memory_class) {
+    case MemoryClass::kResidentPayload:
+      return "resident_payload";
+    case MemoryClass::kTransientTask:
+      return "transient_task";
+    case MemoryClass::kHeavyMap:
+      return "heavy_map";
+  }
+  return "unknown";
+}
+
+uint64_t SaturatingAdd(uint64_t lhs, uint64_t rhs) noexcept {
+  return rhs > std::numeric_limits<uint64_t>::max() - lhs
+             ? std::numeric_limits<uint64_t>::max()
+             : lhs + rhs;
+}
+
+Error MemoryAdmissionRejected(MemoryClass memory_class,
+                              uint64_t current_bytes,
+                              uint64_t requested_delta_bytes,
+                              uint64_t limit_bytes,
+                              std::string reason = {}) {
+  std::string message =
+      "memory admission rejected: class=" +
+      std::string(MemoryClassName(memory_class)) +
+      " current_bytes=" + std::to_string(current_bytes) +
+      " requested_delta_bytes=" + std::to_string(requested_delta_bytes) +
+      " requested_total_bytes=" +
+      std::to_string(SaturatingAdd(current_bytes, requested_delta_bytes)) +
+      " limit_bytes=" + std::to_string(limit_bytes);
+  if (!reason.empty()) message += " reason=" + std::move(reason);
+  return Error::InvalidArgument(std::move(message));
 }
 
 }  // namespace
@@ -93,8 +129,9 @@ Result<void> MemoryReservation::Resize(uint64_t bytes) {
       if (failure_counter_) {
         failure_counter_->fetch_add(1, std::memory_order_relaxed);
       }
-      return Result<void>::Failure(
-          Error::InvalidArgument("resident memory budget exceeded"));
+      return Result<void>::Failure(MemoryAdmissionRejected(
+          memory_class_, total_counter_->load(std::memory_order_acquire),
+          delta, limit_));
     }
     class_counter_->fetch_add(delta, std::memory_order_acq_rel);
   } else if (bytes < bytes_) {
@@ -150,8 +187,10 @@ Result<MemoryReservation> ResourceGovernor::ReserveMemory(
         Error::Cancelled("before memory reservation"));
   }
   if (!TryReserveMemory(bytes)) {
-    return Result<MemoryReservation>::Failure(
-        Error::InvalidArgument("resident memory budget exceeded"));
+    return Result<MemoryReservation>::Failure(MemoryAdmissionRejected(
+        memory_class,
+        reserved_memory_bytes_->load(std::memory_order_acquire), bytes,
+        budget_.soft_memory_bytes));
   }
   const std::size_t class_index = MemoryClassIndex(memory_class);
   if (class_index >= reserved_memory_by_class_.size()) {
@@ -192,8 +231,9 @@ Result<MemoryReservation> ResourceGovernor::ReserveReplacementMemory(
   for (;;) {
     if (current > limit || bytes > limit - current) {
       memory_admission_failures_->fetch_add(1, std::memory_order_relaxed);
-      return Result<MemoryReservation>::Failure(Error::InvalidArgument(
-          "replacement memory budget exceeded"));
+      return Result<MemoryReservation>::Failure(MemoryAdmissionRejected(
+          MemoryClass::kResidentPayload, current, bytes, limit,
+          "replacement_overlap"));
     }
     if (reserved_memory_bytes_->compare_exchange_weak(
             current, current + bytes, std::memory_order_acq_rel,
@@ -227,8 +267,10 @@ Result<void> ResourceGovernor::ValidateReplacementMemory(
           ? std::numeric_limits<uint64_t>::max()
           : budget_.soft_memory_bytes + replaced_resident_bytes;
   if (ReservedMemoryBytes() > committed_limit) {
-    return Result<void>::Failure(Error::InvalidArgument(
-        "replacement resident result exceeds the soft memory budget"));
+    const uint64_t current = ReservedMemoryBytes();
+    return Result<void>::Failure(MemoryAdmissionRejected(
+        MemoryClass::kResidentPayload, current, 0, committed_limit,
+        "replacement_result"));
   }
   return Result<void>::Ok();
 }

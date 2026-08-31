@@ -22,9 +22,6 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
       std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> scans,
       std::vector<std::pair<int, Eigen::Isometry3d>> optimized_poses);
 
-  static Result<std::shared_ptr<IOfflineRemoverPlugin>> loadModule(
-      const std::string& so_name, const std::string& config_json);
-
  private:
   PointCloud::Ptr ProcessImpl(
       const AlgorithmExecutionContext& context,
@@ -36,11 +33,6 @@ class DynamicRemoverOffline : public DynamicRemoverBase {
   OfflineParams params_;
   std::shared_ptr<IOfflineRemoverPlugin> offline_model_;
 
-  /**
-   * @brief Load an dynamic removal module from a dynamic library
-   * @param so_name  Dynamic library name
-   * @return         Loaded dynamic removal module
-   */
 };
 
 }  // namespace open_lmm

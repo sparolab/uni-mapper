@@ -38,8 +38,10 @@ Error OptimizerFactoryFailure(Error error, const RuntimeState& committed,
 }  // namespace
 
 AlignmentExecutor::AlignmentExecutor(
-    std::shared_ptr<const AlgorithmProvider> algorithms)
-    : algorithms_(std::move(algorithms)) {
+    std::shared_ptr<const AlgorithmProvider> algorithms,
+    AlignmentPreviewCallback alignment_preview)
+    : alignment_preview_(std::move(alignment_preview)),
+      algorithms_(std::move(algorithms)) {
   optimizer_factory_ = [algorithms = algorithms_](const OptimizerConfig& config) {
     return algorithms->CreateOptimizer(config);
   };
@@ -47,10 +49,12 @@ AlignmentExecutor::AlignmentExecutor(
 
 AlignmentExecutor::AlignmentExecutor(OptimizerFactory optimizer_factory,
                                      LoopStep loop_step,
-                                     OptimizeStep optimize_step)
+                                     OptimizeStep optimize_step,
+                                     AlignmentPreviewCallback alignment_preview)
     : optimizer_factory_(std::move(optimizer_factory)),
       loop_step_(std::move(loop_step)),
-      optimize_step_(std::move(optimize_step)) {}
+      optimize_step_(std::move(optimize_step)),
+      alignment_preview_(std::move(alignment_preview)) {}
 
 Result<void> AlignmentExecutor::ValidateBase(
     const RuntimeState& committed, const ExecutionContext& context) {
@@ -121,10 +125,21 @@ Result<ExecutionCandidate> AlignmentExecutor::ExecuteStage(
     }
     for (auto& item : contexts) {
       auto loop = loop_step_(item, *database);
-      if (!loop) return Result<ExecutionCandidate>::Failure(loop.GetError());
+      if (!loop) {
+        if (loop.GetError().code == Error::Code::kAgentExcluded &&
+            !item.agent.is_anchor()) {
+          item.flow = ControlFlow::kSkip;
+          item.loop_output.reset();
+          continue;
+        }
+        return Result<ExecutionCandidate>::Failure(loop.GetError());
+      }
       auto optimized = optimize_step_(item, *database, optimizer.Value());
       if (!optimized) {
         return Result<ExecutionCandidate>::Failure(optimized.GetError());
+      }
+      if (alignment_preview_) {
+        alignment_preview_(committed->revision, contexts, *database);
       }
     }
   } else {
@@ -147,10 +162,18 @@ Result<ExecutionCandidate> AlignmentExecutor::ExecuteStage(
             [algorithms = algorithms_,
              cfg = committed->config->loop_detector]() {
               return algorithms->CreateLoopDetector(*cfg);
-            }, loop_context));
+            }, loop_context,
+            static_cast<std::size_t>(
+                committed->config->optimizer->min_loop_frame_gap)));
       } else if (node == NodeId::kOptimize) {
-        pipeline.AddNode(std::make_unique<OptimizeNode>(optimizer.Value(),
-                                                        optimize_context));
+        pipeline.AddNode(std::make_unique<OptimizeNode>(
+            optimizer.Value(), optimize_context,
+            [this, base_revision = committed->revision, &contexts](
+                const AgentPipelineCtx&, const SharedDatabase& database) {
+              if (alignment_preview_) {
+                alignment_preview_(base_revision, contexts, database);
+              }
+            }));
       } else {
         return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
             "unsupported Alignment execution spec"));
@@ -165,11 +188,26 @@ Result<ExecutionCandidate> AlignmentExecutor::ExecuteStage(
   }
   ExecutionCandidate candidate;
   candidate.base_revision = committed->revision;
+  for (const auto& item : contexts) {
+    if (item.flow == ControlFlow::kSkip) {
+      if (item.agent.is_anchor()) {
+        return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+            "the anchor agent cannot be excluded from Alignment"));
+      }
+      candidate.excluded_agents.push_back(item.agent.id);
+    } else if (item.loop_output) {
+      candidate.execution_agents.push_back(item.agent.id);
+    }
+  }
+  if (candidate.execution_agents.empty() ||
+      candidate.execution_agents.front() != committed->ordered_agents.front()) {
+    return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+        "Alignment produced no successful anchor result"));
+  }
   auto payload = BuildPayload(*committed, std::move(contexts), database,
                               optimizer.Value());
   if (!payload) return Result<ExecutionCandidate>::Failure(payload.GetError());
   candidate.payload = std::move(payload).Value();
-  candidate.execution_agents = committed->ordered_agents;
   candidate.completion = ArtifactCompletionKind::kAlignmentStage;
   return Result<ExecutionCandidate>::Ok(std::move(candidate));
 }
@@ -220,7 +258,9 @@ Result<ExecutionCandidate> AlignmentExecutor::ReplayLoopDetectThrough(
         [algorithms = algorithms_, cfg = committed->config->loop_detector]() {
           return algorithms->CreateLoopDetector(*cfg);
         },
-        std::move(loop_context));
+        std::move(loop_context),
+        static_cast<std::size_t>(
+            committed->config->optimizer->min_loop_frame_gap));
     optimize_node = std::make_unique<OptimizeNode>(
         optimizer.Value(), std::move(optimize_context));
   }

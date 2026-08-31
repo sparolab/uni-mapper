@@ -61,6 +61,8 @@ Result<VoxelizedAgentMap> BuildAlignmentMap(
 
   const double inverse_voxel_size = 1.0 / static_cast<double>(voxel_size_m);
   std::map<VoxelKey, VoxelAccumulator> voxels;
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kBuildAlignmentMap,
+                          0, raw.filtered_scans.size());
   for (std::size_t frame = 0; frame < raw.filtered_scans.size(); ++frame) {
     auto active =
         CheckAlgorithmCancellation(context, "while building alignment map");
@@ -84,6 +86,9 @@ Result<VoxelizedAgentMap> BuildAlignmentMap(
       voxel.sum += transformed;
       ++voxel.count;
     }
+    ReportAlgorithmProgress(context,
+                            AlgorithmProgressPhase::kBuildAlignmentMap,
+                            frame + 1, raw.filtered_scans.size());
   }
   if (voxels.empty()) {
     return Result<VoxelizedAgentMap>::Failure(WithAlgorithmContext(

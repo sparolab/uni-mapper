@@ -273,10 +273,4 @@ DynamicRemoverOffline::ProcessStreamingImpl(
   return Result<PointCloud::Ptr>::Ok(std::move(static_map));
 }
 
-Result<std::shared_ptr<IOfflineRemoverPlugin>> DynamicRemoverOffline::loadModule(
-    const std::string& so_name, const std::string& config_json) {
-  return load_plugin_v1<IOfflineRemoverPlugin>(
-      so_name, "dynamic_remover_offline", config_json);
-}
-
 }  // namespace open_lmm

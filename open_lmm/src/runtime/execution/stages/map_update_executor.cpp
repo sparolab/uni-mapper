@@ -1,53 +1,114 @@
 #include "map_update_executor.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <exception>
 #include <limits>
 #include <optional>
+#include <string>
+#include <utility>
 
 #include <domain/data_loader/data_loader_base.hpp>
+#include <domain/data_loader/resident_memory.hpp>
 #include <domain/dynamic_removal/dynamic_remover_base.hpp>
+#include <foundation/diagnostics/profiling.hpp>
+#include <foundation/logging/logging.hpp>
 #include <plugins/host/algorithm_provider.hpp>
+#include <runtime/model/execution_spec.hpp>
 #include <runtime/execution/stages/algorithm_context.hpp>
 #include <runtime/execution/nodes/map_update_node.hpp>
-#include <runtime/execution/stage_runner.hpp>
 
 namespace open_lmm {
 namespace {
 
-uint64_t EstimateAgentMemory(const std::filesystem::path& directory) {
-  uint64_t bytes = 1;
-  std::error_code error;
-  std::filesystem::recursive_directory_iterator iterator(
-      directory, std::filesystem::directory_options::skip_permission_denied,
-      error);
-  const std::filesystem::recursive_directory_iterator end;
-  while (!error && iterator != end) {
-    if (iterator->is_regular_file(error)) {
-      const uint64_t size = iterator->file_size(error);
-      if (!error) {
-        if (size > (std::numeric_limits<uint64_t>::max() - bytes) / 2) {
-          return std::numeric_limits<uint64_t>::max();
-        }
-        bytes += size * 2;
-      }
-    }
-    iterator.increment(error);
+constexpr uint64_t kMapUpdateWorkingSetMultiplier = 3;
+
+struct MapUpdateMemoryEstimate {
+  uint64_t filtered_point_bytes = 0;
+  uint64_t known_host_bytes = 0;
+  uint64_t admitted_bytes = 1;
+};
+
+MapUpdateMemoryEstimate EstimateMapUpdateMemory(
+    const AgentRawData& raw, const AgentOptimizedData& optimized) noexcept {
+  MapUpdateMemoryEstimate estimate;
+  for (const auto& scan : raw.filtered_scans) {
+    if (!scan) continue;
+    estimate.filtered_point_bytes = data_loader_memory::SaturatingAdd(
+        estimate.filtered_point_bytes,
+        data_loader_memory::SaturatingMultiply(
+            scan->points.capacity(), sizeof(pcl::PointXYZI)));
   }
-  return bytes;
+  const uint64_t scan_workspace_bytes =
+      data_loader_memory::SaturatingMultiply(
+          raw.filtered_scans.size(),
+          sizeof(std::pair<std::size_t, ScanVec::value_type>) +
+              sizeof(ScanVec::value_type));
+  const uint64_t pose_workspace_bytes =
+      data_loader_memory::SaturatingMultiply(
+          optimized.optimized_poses.size(),
+          sizeof(PoseVec::value_type) + sizeof(bool));
+  estimate.known_host_bytes = data_loader_memory::SaturatingAdd(
+      scan_workspace_bytes, pose_workspace_bytes);
+  // Proxy the simultaneous buffered input, remover raw/static result, and
+  // final downsample output. This is deliberately a soft admission estimate,
+  // not a hard bound on plugin allocations or process RSS.
+  estimate.admitted_bytes = std::max<uint64_t>(
+      1, data_loader_memory::SaturatingAdd(
+             data_loader_memory::SaturatingMultiply(
+                 estimate.filtered_point_bytes,
+                 kMapUpdateWorkingSetMultiplier),
+             estimate.known_host_bytes));
+  return estimate;
+}
+
+class HeavyPhaseLease {
+ public:
+  explicit HeavyPhaseLease(std::shared_ptr<ResourceGovernor> governor)
+      : governor_(std::move(governor)) {}
+  ~HeavyPhaseLease() {
+    if (armed_) governor_->ReleaseHeavyMemoryPhase();
+  }
+  void Arm() noexcept { armed_ = true; }
+
+ private:
+  std::shared_ptr<ResourceGovernor> governor_;
+  bool armed_ = false;
+};
+
+void LogMapUpdateAdmission(const AgentId& agent, bool parallel,
+                           const MapUpdateMemoryEstimate& estimate,
+                           const ResourceGovernor& governor) {
+  // This is a soft allocation-shaped proxy, not a hard RSS bound. Raw decoded
+  // scans, allocator/hash overhead, and plugin-internal state remain opaque.
+  LogInfo("[resource] MapUpdate admission agent=" + agent.Value() +
+          " mode=" + (parallel ? "parallel" : "sequential") +
+          " filtered_point_bytes=" +
+          std::to_string(estimate.filtered_point_bytes) +
+          " known_host_bytes=" +
+          std::to_string(estimate.known_host_bytes) +
+          " estimated_heavy_bytes=" +
+          std::to_string(estimate.admitted_bytes) +
+          " current_bytes=" +
+          std::to_string(governor.ReservedMemoryBytes()) +
+          " limit_bytes=" +
+          std::to_string(governor.Budget().soft_memory_bytes));
+  OPEN_LMM_PLOT("map_update.estimated_heavy_bytes",
+                estimate.admitted_bytes);
 }
 
 Result<std::shared_ptr<void>> AcquireHeavyPhase(
     const std::shared_ptr<ResourceGovernor>& governor,
     const std::shared_ptr<CancellationToken>& cancellation) {
+  // Allocate the lifetime token before acquiring the one-slot gate so an
+  // allocation failure can never leave the phase permanently armed.
+  auto lease = std::make_shared<HeavyPhaseLease>(governor);
   auto acquired = governor->AcquireHeavyMemoryPhase(cancellation);
   if (!acquired) {
     return Result<std::shared_ptr<void>>::Failure(acquired.GetError());
   }
-  return Result<std::shared_ptr<void>>::Ok(
-      std::shared_ptr<void>(new int(0), [governor](void* value) {
-        delete static_cast<int*>(value);
-        governor->ReleaseHeavyMemoryPhase();
-      }));
+  lease->Arm();
+  return Result<std::shared_ptr<void>>::Ok(std::move(lease));
 }
 
 }  // namespace
@@ -97,6 +158,19 @@ Result<ExecutionCandidate> MapUpdateExecutor::execute(
     AgentPipelineCtx selected_context = *selected;
     contexts.clear();
     contexts.push_back(std::move(selected_context));
+    if (!base_payload->database->optimized_data.contains(*target_agent)) {
+      return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+          "MapUpdate target has no ready optimized result"));
+    }
+  } else {
+    std::erase_if(contexts, [&](const AgentPipelineCtx& context) {
+      return !base_payload->database->optimized_data.contains(
+          context.agent.id);
+    });
+    if (contexts.empty()) {
+      return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
+          "MapUpdate has no aligned agents to process"));
+    }
   }
   for (auto& context : contexts) {
     context.flow = ControlFlow::kContinue;
@@ -129,6 +203,73 @@ Result<ExecutionCandidate> MapUpdateExecutor::execute(
     input.pending_files->Add(std::move(temporary), std::move(destination));
   }
 
+  const auto run_agent = [&](std::size_t index,
+                             bool hide_progress) -> Result<void> {
+    const AgentId agent = contexts[index].agent.id;
+    const auto raw = database->raw_data.find(agent);
+    const auto optimized = database->optimized_data.find(agent);
+    if (raw == database->raw_data.end() || !raw->second ||
+        optimized == database->optimized_data.end() || !optimized->second) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "MapUpdate agent has no committed raw/optimized payload"));
+    }
+    const auto estimate = EstimateMapUpdateMemory(*raw->second,
+                                                   *optimized->second);
+    LogMapUpdateAdmission(agent, input.parallel, estimate, *input.governor);
+    auto admitted = input.governor->ReserveMemory(
+        estimate.admitted_bytes, MemoryClass::kHeavyMap,
+        input.cancellation);
+    if (!admitted) return Result<void>::Failure(admitted.GetError());
+    auto reservation = std::move(admitted).Value();
+
+    DataLoaderConfig loader_config = *input.committed->config->data_loader;
+    if (hide_progress) loader_config.show_progress = false;
+    auto loader = input.algorithms->CreateDataLoader(loader_config);
+    if (!loader) {
+      auto context = data_loader_context;
+      context.agent = contexts[index].agent;
+      return Result<void>::Failure(
+          WithAlgorithmContext(loader.GetError(), context));
+    }
+    try {
+      SharedDatabase isolated;
+      isolated.optimized_data.emplace(agent, optimized->second);
+      AgentPipelineCtx isolated_context = contexts[index];
+      MapUpdateNode node(
+          std::move(loader).Value(),
+          [algorithms = input.algorithms,
+           config = input.committed->config->dynamic_remover] {
+            return algorithms->CreateDynamicRemover(*config);
+          },
+          input.output_directory.string(), input.save_voxel_size, true,
+          [governor = input.governor, cancellation = input.cancellation] {
+            return AcquireHeavyPhase(governor, cancellation);
+          },
+          data_loader_context, remover_context);
+      auto updated = node.Process(isolated_context, isolated);
+      if (!updated) return Result<void>::Failure(updated.GetError());
+      if (updated.Value() == ControlFlow::kKill) {
+        return Result<void>::Failure(Error::InvalidArgument(
+            "MapUpdate node requested pipeline termination"));
+      }
+    } catch (const std::exception& error) {
+      auto context = remover_context;
+      context.agent = contexts[index].agent;
+      return Result<void>::Failure(WithAlgorithmContext(
+          Error::InvalidArgument(std::string("MapUpdate operation exception: ") +
+                                 error.what()),
+          context));
+    } catch (...) {
+      auto context = remover_context;
+      context.agent = contexts[index].agent;
+      return Result<void>::Failure(WithAlgorithmContext(
+          Error::InvalidArgument("unknown MapUpdate operation exception"),
+          context));
+    }
+    (void)reservation;
+    return Result<void>::Ok();
+  };
+
   if (input.parallel) {
     const auto& remover = *input.committed->config->dynamic_remover;
     if (remover.thread_safety !=
@@ -154,47 +295,11 @@ Result<ExecutionCandidate> MapUpdateExecutor::execute(
          begin += concurrency) {
       const std::size_t end = std::min(contexts.size(), begin + concurrency);
       std::vector<BoundedTaskHandle> tasks;
+      tasks.reserve(end - begin);
       for (std::size_t index = begin; index < end; ++index) {
         auto submitted = input.governor->AgentExecutor().Submit(
             [&, index]() -> Result<void> {
-              const AgentId agent = contexts[index].agent.id;
-              auto memory = input.governor->ReserveMemory(
-                  EstimateAgentMemory(contexts[index].data_dir),
-                  MemoryClass::kHeavyMap, input.cancellation);
-              if (!memory) return Result<void>::Failure(memory.GetError());
-              DataLoaderConfig loader_config =
-                  *input.committed->config->data_loader;
-              loader_config.show_progress = false;
-              auto loader = input.algorithms->CreateDataLoader(loader_config);
-              if (!loader) {
-                auto context = data_loader_context;
-                context.agent = contexts[index].agent;
-                return Result<void>::Failure(
-                    WithAlgorithmContext(loader.GetError(), context));
-              }
-              SharedDatabase isolated;
-              const auto optimized = database->optimized_data.find(agent);
-              if (optimized == database->optimized_data.end()) {
-                return Result<void>::Failure(Error::InvalidArgument(
-                    "MapUpdate optimized payload is unavailable"));
-              }
-              isolated.optimized_data.emplace(agent, optimized->second);
-              AgentPipelineCtx isolated_context = contexts[index];
-              MapUpdateNode node(
-                  std::move(loader).Value(),
-                  [algorithms = input.algorithms,
-                   config = input.committed->config->dynamic_remover] {
-                    return algorithms->CreateDynamicRemover(*config);
-                  },
-                  input.output_directory.string(), input.save_voxel_size, true,
-                  [governor = input.governor,
-                   cancellation = input.cancellation] {
-                    return AcquireHeavyPhase(governor, cancellation);
-                  },
-                  data_loader_context, remover_context);
-              auto updated = node.Process(isolated_context, isolated);
-              if (!updated) return Result<void>::Failure(updated.GetError());
-              return Result<void>::Ok();
+              return run_agent(index, true);
             },
             input.cancellation);
         if (!submitted) {
@@ -203,40 +308,19 @@ Result<ExecutionCandidate> MapUpdateExecutor::execute(
         }
         tasks.push_back(std::move(submitted).Value());
       }
+      std::optional<Error> first_error;
       for (const auto& task : tasks) {
         auto completed = task.Wait();
-        if (!completed) {
-          return Result<ExecutionCandidate>::Failure(completed.GetError());
-        }
+        if (!completed && !first_error) first_error = completed.GetError();
+      }
+      if (first_error) {
+        return Result<ExecutionCandidate>::Failure(std::move(*first_error));
       }
     }
   } else {
-    auto loader = input.algorithms->CreateDataLoader(
-        *input.committed->config->data_loader);
-    if (!loader) {
-      auto context = data_loader_context;
-      if (!contexts.empty()) context.agent = contexts.front().agent;
-      return Result<ExecutionCandidate>::Failure(
-          WithAlgorithmContext(loader.GetError(), context));
-    }
-    MapUpdateNode node(
-        std::move(loader).Value(),
-        [algorithms = input.algorithms,
-         config = input.committed->config->dynamic_remover] {
-          return algorithms->CreateDynamicRemover(*config);
-        },
-        input.output_directory.string(), input.save_voxel_size, true, {},
-        data_loader_context, remover_context);
-    for (auto& context : contexts) {
-      auto updated = node.Process(context, *database);
-      if (!updated) {
-        return Result<ExecutionCandidate>::Failure(updated.GetError());
-      }
-      context.flow = updated.Value();
-      if (updated.Value() == ControlFlow::kKill) {
-        return Result<ExecutionCandidate>::Failure(Error::InvalidArgument(
-            "MapUpdate node requested pipeline termination"));
-      }
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+      auto updated = run_agent(index, false);
+      if (!updated) return Result<ExecutionCandidate>::Failure(updated.GetError());
     }
   }
   if (input.cancellation && input.cancellation->IsCancellationRequested()) {

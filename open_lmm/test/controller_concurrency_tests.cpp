@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <future>
 #include <iostream>
@@ -73,6 +74,16 @@ class ConcurrencyRunner final : public test::RuntimePortFixture {
     return RuntimePortFixture::Snapshot();
   }
 
+  Result<void> AfterCommitFixture(
+      const ExecutionCommand&, const ExecutionContext&,
+      const ExecutionReceipt&) override {
+    if (!block_after_commit) return Result<void>::Ok();
+    committed_before_return.store(true, std::memory_order_release);
+    std::unique_lock lock(commit_mutex);
+    release_receipt.wait(lock, [this] { return release_after_commit; });
+    return Result<void>::Ok();
+  }
+
   mutable std::mutex runner_mutex;
   std::function<void()> agent_ids_hook;
   std::shared_ptr<CancellationToken> cancellation;
@@ -80,7 +91,51 @@ class ConcurrencyRunner final : public test::RuntimePortFixture {
   bool request_feedback = false;
   std::atomic<bool> feedback_window{false};
   std::atomic<bool> release_feedback{false};
+  bool block_after_commit = false;
+  std::atomic<bool> committed_before_return{false};
+  std::mutex commit_mutex;
+  std::condition_variable release_receipt;
+  bool release_after_commit = false;
 };
+
+void LateCancelAfterCommitKeepsCommittedSuccess() {
+  auto runner = std::make_shared<ConcurrencyRunner>();
+  runner->block_after_commit = true;
+  PipelineController controller(runner);
+  auto job = controller.SubmitStage(StageId::kDataLoad);
+  Check(job.IsOk(), "late-cancel fixture submission failed");
+
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(2);
+  while (!runner->committed_before_return.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  Check(runner->committed_before_return.load(std::memory_order_acquire) &&
+            runner->Snapshot().revision == 2,
+        "fixture did not commit before withholding its receipt");
+  Check(controller.Cancel(job.Value()).IsOk(),
+        "late cancellation request was rejected");
+  {
+    std::lock_guard lock(runner->commit_mutex);
+    runner->release_after_commit = true;
+  }
+  runner->release_receipt.notify_all();
+
+  Check(controller.Wait(job.Value()).IsOk(),
+        "valid committed receipt must win over late cancellation");
+  const auto snapshot = controller.Snapshot();
+  Check(snapshot.job && snapshot.job->state == JobState::kSucceeded &&
+            snapshot.runtime_revision == runner->Snapshot().revision &&
+            snapshot.runtime_revision == 2,
+        "controller did not reconcile the committed late-cancel authority");
+  runner->block_after_commit = false;
+  auto next = controller.SubmitStage(StageId::kDataLoad);
+  Check(next && controller.Wait(next.Value()) &&
+            controller.Snapshot().runtime_revision ==
+                runner->Snapshot().revision,
+        "a late cancellation poisoned the next command base revision");
+}
 
 void SnapshotUsesImmutableRunnerState() {
   auto runner = std::make_shared<ConcurrencyRunner>();
@@ -239,6 +294,7 @@ void TerminalFeedbackNotifiesOutsideBrokerLock() {
 }  // namespace
 
 int main() {
+  LateCancelAfterCommitKeepsCommittedSuccess();
   SnapshotUsesImmutableRunnerState();
   FeedbackAndSnapshotHaveNoLockInversion();
   FeedbackPublishesBeforeSynchronousNotification();

@@ -7,11 +7,11 @@
 #include <vector>
 
 #include <open_lmm/common/cancellation.hpp>
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <open_lmm/common/runtime_contracts.hpp>
+#include <runtime/model/agent_working_set.hpp>
 #include <runtime/state/shared_data.hpp>
 #include <domain/optimization/backend_optimizer_base.hpp>
 #include <config/domain/algorithm_config.hpp>
-#include <runtime/execution/stage_runner.hpp>
 #include <runtime/resources/resource_governor.hpp>
 
 namespace open_lmm {

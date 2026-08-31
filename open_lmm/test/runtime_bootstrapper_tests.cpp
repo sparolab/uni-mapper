@@ -371,6 +371,30 @@ void TestManifestPreflightFailureCleansTemporaryFile() {
   fs::remove_all(root, ignored);
 }
 
+void TestManifestCleanupFaultPreservesRecoveryHealth() {
+  const fs::path root = TemporaryDirectory();
+  WriteFixture(root);
+  const fs::path output = root / "recovery_output";
+  const fs::path manifest = output / "agent_manifest.json";
+  fs::create_directories(manifest);
+  std::ofstream(manifest / "retained") << "force backup cleanup failure\n";
+
+  RuntimeBootstrapper bootstrapper(std::make_shared<TrackingFactory>());
+  auto result = bootstrapper.Bootstrap(Request(
+      root / "config", output, std::make_shared<CancellationToken>()));
+  Check(result && result.Value().initial_state &&
+            result.Value().recovery_required &&
+            result.Value().recovery_required->severity ==
+                Error::Severity::kFatalRuntime &&
+            fs::is_regular_file(manifest) &&
+            fs::is_directory(manifest.string() + ".open_lmm_backup") &&
+            result.Value().recovery_required->Message().find(
+                "recovery manifest") != std::string::npos,
+        "manifest cleanup fault returns committed bootstrap plus recovery health");
+  std::error_code ignored;
+  fs::remove_all(root, ignored);
+}
+
 }  // namespace
 
 int main() {
@@ -381,6 +405,7 @@ int main() {
   TestEveryModuleReadIsBounded();
   TestInvalidInputsDoNotPublishManifest();
   TestManifestPreflightFailureCleansTemporaryFile();
+  TestManifestCleanupFaultPreservesRecoveryHealth();
   std::cout << "RuntimeBootstrapper tests passed\n";
   return EXIT_SUCCESS;
 }

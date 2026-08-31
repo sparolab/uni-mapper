@@ -4,7 +4,7 @@
 #include <string>
 
 #include <open_lmm/common/algorithm_execution_context.hpp>
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <runtime/execution/pipeline.hpp>
 
 namespace open_lmm {
 

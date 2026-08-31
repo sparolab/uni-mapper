@@ -1,5 +1,6 @@
 #include "data_loader_file.hpp"
 
+#include <domain/data_loader/resident_memory.hpp>
 #include <domain/support/validation.hpp>
 #include <foundation/diagnostics/profiling.hpp>
 #include <domain/support/algorithm_invariants.hpp>
@@ -56,7 +57,7 @@ Result<AgentRawData> DataLoaderFile::Process(
     return Result<AgentRawData>::Failure(cancellation.GetError());
   }
   try {
-    auto result = Load(context, input.data_directory);
+    auto result = Load(context, input);
     if (!result) {
       return Result<AgentRawData>::Failure(
           WithAlgorithmContext(result.GetError(), context));
@@ -78,21 +79,46 @@ Result<AgentRawData> DataLoaderFile::Process(
 }
 
 Result<AgentRawData> DataLoaderFile::Load(
-    const AlgorithmExecutionContext& context, const fs::path& data_dir) {
+    const AlgorithmExecutionContext& context, const DataLoaderInput& input) {
   OPEN_LMM_ZONE_N("DataLoader.Process");
   if (initialization_error_) {
     return Result<AgentRawData>::Failure(*initialization_error_);
   }
+  const auto& data_dir = input.data_directory;
   auto poses_result = loadPoseData(context, data_dir);
   if (!poses_result) return Result<AgentRawData>::Failure(poses_result.GetError());
   auto poses = std::move(poses_result).Value();
   ScanVec filtered_scans;
   filtered_scans.reserve(poses.size());
+  uint64_t resident_bytes = data_loader_memory::ResidentRawDataBaseBytes(
+      context.agent.id, poses, filtered_scans);
+  if (input.admit_resident_bytes) {
+    auto admitted = input.admit_resident_bytes(resident_bytes);
+    if (!admitted) {
+      return Result<AgentRawData>::Failure(admitted.GetError());
+    }
+  }
   auto scans_result = ForEachScanFile(
       context, data_dir, poses.size(), AlgorithmProgressPhase::kReadAndFilter,
       true,
-      [&](std::size_t, const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan) {
+      [&](std::size_t index,
+          const pcl::PointCloud<pcl::PointXYZI>::Ptr& scan) {
+        resident_bytes = data_loader_memory::SaturatingAdd(
+            resident_bytes,
+            scan ? data_loader_memory::ResidentFilteredScanBytes(*scan) : 0);
+        if (input.admit_resident_bytes) {
+          auto admitted = input.admit_resident_bytes(resident_bytes);
+          if (!admitted) return admitted;
+        }
         filtered_scans.push_back(scan);
+        if (input.observe_filtered_scan && scan && index < poses.size()) {
+          try {
+            input.observe_filtered_scan(index, poses[index], *scan);
+          } catch (...) {
+            // Preview observers are best-effort read models. They must never
+            // change DataLoader output or its transaction boundary.
+          }
+        }
         return Result<void>::Ok();
       });
   if (!scans_result) {

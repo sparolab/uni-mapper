@@ -97,16 +97,31 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
     }
     diagnostics.sampled_source_frames = sampled_source_frames.size();
 
-    LoopPairVec loops;
+    std::vector<AgentId> eligible_targets;
+    eligible_targets.reserve(input.optimized_agents.size());
     for (const auto& [target_id, optimized_handle] : input.optimized_agents) {
+      if (target_id == input.source.agent_id || !optimized_handle) continue;
+      const auto raw = input.all_raw_data.find(target_id);
+      if (raw == input.all_raw_data.end() || !raw->second) continue;
+      eligible_targets.push_back(target_id);
+    }
+    const uint64_t constraint_search_total =
+        static_cast<uint64_t>(sampled_source_frames.size()) *
+        static_cast<uint64_t>(eligible_targets.size());
+    uint64_t constraint_search_current = 0;
+    ReportAlgorithmProgress(
+        context, AlgorithmProgressPhase::kBuildLoopConstraints, 0,
+        constraint_search_total);
+
+    LoopPairVec loops;
+    for (const AgentId& target_id : eligible_targets) {
       cancelled = CheckAlgorithmCancellation(
           context, "while building loop constraints");
       if (!cancelled) {
         return Result<ValidatedLoopConstraints>::Failure(cancelled.GetError());
       }
-      if (target_id == input.source.agent_id || !optimized_handle) continue;
+      const auto& optimized_handle = input.optimized_agents.at(target_id);
       const auto raw = input.all_raw_data.find(target_id);
-      if (raw == input.all_raw_data.end() || !raw->second) continue;
       auto valid_target = ValidateOptimizedData(
           *optimized_handle, *raw->second,
           "loop constraint target agent '" + target_id.Value() + "'");
@@ -143,6 +158,10 @@ Result<ValidatedLoopConstraints> LoopConstraintBuilder::Build(
                           static_cast<float>(current.y()),
                           static_cast<float>(current.z())),
             1, indices, squared_distances);
+        ++constraint_search_current;
+        ReportAlgorithmProgress(
+            context, AlgorithmProgressPhase::kBuildLoopConstraints,
+            constraint_search_current, constraint_search_total);
         if (found == 1 && !squared_distances.empty()) {
           diagnostics.nearest_distance_m = std::min(
               diagnostics.nearest_distance_m,

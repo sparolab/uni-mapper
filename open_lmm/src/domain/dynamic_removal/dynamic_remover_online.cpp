@@ -171,10 +171,4 @@ DynamicRemoverOnline::ProcessStreaming(
   }
 }
 
-Result<std::shared_ptr<IOnlineRemoverPlugin>> DynamicRemoverOnline::loadModule(
-    const std::string& so_name, const std::string& config_json) {
-  return load_plugin_v1<IOnlineRemoverPlugin>(
-      so_name, "dynamic_remover_online", config_json);
-}
-
 }  // namespace open_lmm

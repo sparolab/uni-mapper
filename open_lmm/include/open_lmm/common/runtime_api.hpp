@@ -24,7 +24,8 @@ enum class EventType : uint8_t {
   kNodeFailed, kStageCompleted, kStageFailed,
   kCancellationRequested, kAlignmentFeedbackRequested,
   kAlignmentProposalAccepted, kAlignmentProposalRejected,
-  kAlignmentFeedbackCancelled, kJobCompleted, kJobCancelled
+  kAlignmentFeedbackCancelled, kAlignmentAgentExcluded,
+  kJobCompleted, kJobCancelled
 };
 
 struct ExecutionEvent {

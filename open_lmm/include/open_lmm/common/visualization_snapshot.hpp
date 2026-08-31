@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace open_lmm {
@@ -55,6 +56,21 @@ struct VisualizationPoint {
   float intensity = 0.0F;
 };
 
+// Precomputed point payload produced alongside a DataLoad candidate. It is
+// immutable once published so a failed candidate can be discarded without
+// touching the committed visualization state.
+struct VisualizationPointPreview {
+  uint32_t voxel_millimeters = 0;
+  std::vector<VisualizationPoint> points;
+  Eigen::Vector3f min_bound = Eigen::Vector3f::Zero();
+  Eigen::Vector3f max_bound = Eigen::Vector3f::Zero();
+  bool has_bounds = false;
+  std::size_t source_point_count = 0;
+};
+
+using VisualizationPointPreviewHandle =
+    std::shared_ptr<const VisualizationPointPreview>;
+
 // Immutable-by-convention transfer object. Algorithm-owned PCL/Eigen containers
 // are copied before this value crosses into the GUI thread.
 struct VisualizationSnapshot {
@@ -78,11 +94,16 @@ struct VisualizationSnapshot {
 };
 
 // Large point payloads are opt-in so routine GUI polling does not rebuild or
-// copy a map. The server clamps and validates caller-provided limits.
+// copy a map. Resolution defaults are owned by the runtime; callers may still
+// request an explicit positive override.
 struct VisualizationQuery {
   AgentId agent;
   bool include_points = true;
-  float preview_voxel_size_m = 0.4F;
+  // Zero selects the canonical runtime visualization resolution. Positive
+  // values are explicit caller overrides.
+  float preview_voxel_size_m = 0.0F;
+  // Retained for source and ABI compatibility. Point visualization is now
+  // bounded by voxel resolution rather than an arbitrary point-count cutoff.
   std::size_t maximum_points = 1'000'000;
 };
 

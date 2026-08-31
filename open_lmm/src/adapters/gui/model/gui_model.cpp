@@ -12,6 +12,13 @@ void ClearProgress(GuiStageView& stage) {
   stage.latest_progress_agent.reset();
 }
 
+bool IsCompletedDataLoadProgress(StageId stage,
+                                 const AlgorithmProgress& progress) {
+  return stage == StageId::kDataLoad &&
+         progress.phase == AlgorithmProgressPhase::kBuildPreview &&
+         progress.total && progress.current >= *progress.total;
+}
+
 }  // namespace
 
 GuiModel::GuiModel() {
@@ -83,6 +90,10 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
     case EventType::kAlignmentFeedbackCancelled:
       job_->state = JobState::kRunning;
       break;
+    case EventType::kAlignmentAgentExcluded:
+      // The stage remains successful and continues with the remaining ready
+      // agents. Artifact metadata carries the authoritative exclusion state.
+      break;
     case EventType::kJobCancelled:
       job_->state = JobState::kCancelled;
       job_->active_stage.reset();
@@ -105,8 +116,16 @@ bool GuiModel::Apply(const ExecutionEvent& event) {
         stage.progress_current = event.progress_current;
         stage.progress_total = event.progress_total;
         if (event.algorithm_progress && event.agent) {
-          stage.agent_progress[*event.agent] = *event.algorithm_progress;
-          stage.latest_progress_agent = *event.agent;
+          if (IsCompletedDataLoadProgress(*event.stage,
+                                          *event.algorithm_progress)) {
+            stage.agent_progress.erase(*event.agent);
+            if (stage.latest_progress_agent == event.agent) {
+              stage.latest_progress_agent.reset();
+            }
+          } else {
+            stage.agent_progress[*event.agent] = *event.algorithm_progress;
+            stage.latest_progress_agent = *event.agent;
+          }
         }
       }
       break;

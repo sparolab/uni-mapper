@@ -15,12 +15,17 @@ compiler_cxx=$4
 case "$sanitizer" in
   ASAN_UBSAN)
     sanitizer_option=OPEN_LMM_ENABLE_ASAN_UBSAN
-    test_pattern='open_lmm_(safety_regression|pipeline_controller|runtime_transaction|execution_spec|controller_concurrency|plugin_abi|plugin_selection|self_contained_e2e)_tests'
+    test_pattern='open_lmm_(safety_regression|pipeline_controller|runtime_service|runtime_transaction|config_transaction|save_executor|runtime_bootstrapper|execution_spec|map_update_executor|controller_concurrency|plugin_abi|plugin_selection|self_contained_e2e)_tests'
     targets=(
       open_lmm_safety_regression_tests
       open_lmm_pipeline_controller_tests
+      open_lmm_runtime_service_tests
       open_lmm_runtime_transaction_tests
+      open_lmm_config_transaction_tests
+      open_lmm_save_executor_tests
+      open_lmm_runtime_bootstrapper_tests
       open_lmm_execution_spec_tests
+      open_lmm_map_update_executor_tests
       open_lmm_controller_concurrency_tests
       open_lmm_plugin_abi_tests
       open_lmm_plugin_selection_tests
@@ -31,9 +36,10 @@ case "$sanitizer" in
     ;;
   TSAN)
     sanitizer_option=OPEN_LMM_ENABLE_TSAN
-    test_pattern='open_lmm_(bounded_executor|controller_concurrency|runtime_service|runtime_transaction|gui_plugin)_tests'
+    test_pattern='open_lmm_(bounded_executor|map_update_executor|controller_concurrency|runtime_service|runtime_transaction|gui_plugin)_tests'
     targets=(
       open_lmm_bounded_executor_tests
+      open_lmm_map_update_executor_tests
       open_lmm_controller_concurrency_tests
       open_lmm_runtime_service_tests
       open_lmm_runtime_transaction_tests

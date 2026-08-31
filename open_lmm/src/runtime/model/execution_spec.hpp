@@ -2,12 +2,10 @@
 
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/runtime_contracts.hpp>
-#include <open_lmm/common/alignment_feedback.hpp>
-#include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/config_transaction.hpp>
-#include <open_lmm/common/visualization_snapshot.hpp>
 #include <memory>
 
+#include <cstddef>
 #include <cstdint>
 #include <compare>
 #include <map>
@@ -25,6 +23,7 @@ struct CommittedRuntimeSnapshot {
   std::vector<ArtifactMetadata> artifacts;
   std::size_t descriptor_count = 0;
   std::map<AgentId, std::size_t> per_agent_descriptor_count;
+  std::shared_ptr<const Error> recovery_required;
 };
 
 struct ArtifactExecutionSpec {

@@ -48,7 +48,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 ### open_lmm_ros ###
 ament_auto_add_library(open_lmm_ros_component SHARED
-  ${ros_version}/open_lmm_ros/open_lmm_ros.cpp
+  ${ros_version}/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp
 )
 set_target_properties(open_lmm_ros_component PROPERTIES
   OUTPUT_NAME open_lmm_ros
@@ -65,7 +65,7 @@ rclcpp_components_register_nodes(open_lmm_ros_component "open_lmm::OpenLMMROS")
 
 if(OPEN_LMM_ROS_BUILD_GUI)
   ament_auto_add_library(open_lmm_ros_gui_component SHARED
-    ${ros_version}/open_lmm_ros/open_lmm_ros_gui.cpp
+    ${ros_version}/open_lmm_ros/gui_composition/open_lmm_ros_gui.cpp
   )
   set_target_properties(open_lmm_ros_gui_component PROPERTIES
     OUTPUT_NAME open_lmm_ros_gui
@@ -92,7 +92,7 @@ endif()
 
 ### open_lmm_rosnode ###
 ament_auto_add_executable(open_lmm_rosnode
-  ${ros_version}/open_lmm_ros/open_lmm_rosnode.cpp
+  ${ros_version}/open_lmm_ros/runtime_adapter/open_lmm_rosnode.cpp
 )
 target_link_libraries(open_lmm_rosnode
   $<IF:$<BOOL:${OPEN_LMM_ROS_BUILD_GUI}>,open_lmm_ros_gui_component,open_lmm_ros_component>

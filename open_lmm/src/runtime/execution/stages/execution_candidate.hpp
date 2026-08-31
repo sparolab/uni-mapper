@@ -29,6 +29,7 @@ struct ExecutionCandidate {
   std::vector<AgentId> execution_agents;
   ArtifactCompletionKind completion = ArtifactCompletionKind::kAlignmentStage;
   std::optional<AgentId> replay_target;
+  std::vector<AgentId> excluded_agents;
 };
 
 }  // namespace open_lmm

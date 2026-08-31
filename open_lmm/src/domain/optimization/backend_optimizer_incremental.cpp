@@ -155,12 +155,18 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
   }
 
   //! 3. intra-loop
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRegisterIntraLoops,
+                          0, intra_loops.size());
   auto T1 = tq::tqdm(intra_loops);
   T1.set_prefix("Intra Backend Optimizer");
+  uint64_t intra_loop_current = 0;
   for (auto loop : T1) {
     ThrowIfCancellationRequested(context.cancellation, "optimizer intra loop");
     if (!FrameGapAtLeast(loop.from.second, loop.to.second,
                          static_cast<size_t>(param_.min_loop_frame_gap))) {
+      ReportAlgorithmProgress(
+          context, AlgorithmProgressPhase::kRegisterIntraLoops,
+          ++intra_loop_current, intra_loops.size());
       continue;
     }
     gtsam::Symbol node_from = GraphSymbol(ctx, loop.from.first, loop.from.second);
@@ -173,14 +179,21 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
           node_from, node_to, gtsam::Pose3(refined.value().matrix()),
           robust_loop_noise_));
     }
+    ReportAlgorithmProgress(context,
+                            AlgorithmProgressPhase::kRegisterIntraLoops,
+                            ++intra_loop_current, intra_loops.size());
   }
   T1.finish();
 
   //! 4. inter-loop (follower만)
   if (!ctx.is_anchor()) {
     std::size_t valid_inter_loop_count = 0;
+    ReportAlgorithmProgress(
+        context, AlgorithmProgressPhase::kRegisterInterLoops, 0,
+        inter_loops.size());
     auto T2 = tq::tqdm(inter_loops);
     T2.set_prefix("Inter Backend Optimizer");
+    uint64_t inter_loop_current = 0;
     for (auto loop : T2) {
       ThrowIfCancellationRequested(context.cancellation, "optimizer inter loop");
       gtsam::Symbol node_from = GraphSymbol(ctx, loop.from.first, loop.from.second);
@@ -196,6 +209,9 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
             robust_loop_noise_));
         ++valid_inter_loop_count;
       }
+      ReportAlgorithmProgress(
+          context, AlgorithmProgressPhase::kRegisterInterLoops,
+          ++inter_loop_current, inter_loops.size());
     }
     T2.finish();
     if (valid_inter_loop_count == 0) {
@@ -206,6 +222,7 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
 
   //! 5. ISAM2 최적화 (누적된 전체 그래프로 배치 최적화)
   // 진짜 증분화는 BackendOptimizer를 MapServer 레벨에서 공유할 때 가능 (Step 05 이후)
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 0);
   {
     OPEN_LMM_ZONE_N("Optimizer.ISAM2.BatchUpdate");
   gtsam::ISAM2Params isam_param;
@@ -291,6 +308,7 @@ BackendOptimizerOutput BackendOptimizerIncremental::processTransactional(
   next->values = std::move(working_values);
   next->processed_agents = std::move(working_processed_agents);
   lifecycle_.swap(next);
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kSolveGraph, 1, 1);
   return all_results;
 }
 

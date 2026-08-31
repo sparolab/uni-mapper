@@ -131,6 +131,16 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
   status.method = proposal.method;
   std::vector<AlignmentAttemptStatus> history;
   uint64_t next_attempt = 1;
+  const auto report_waiting = [&]() noexcept {
+    if (!input.progress) return;
+    try {
+      input.progress({input.source_agent, "loop_detect",
+                      AlgorithmProgressPhase::kWaitAlignmentReview, 0,
+                      std::nullopt});
+    } catch (...) {
+      // Progress is observational and must not change review semantics.
+    }
+  };
 
   const auto snapshot = [&]() {
     AlignmentFeedbackSnapshot value;
@@ -159,6 +169,7 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
     return input.feedback->Update(session_id, snapshot());
   };
   const auto wait = [&]() -> Result<AlignmentResponse> {
+    report_waiting();
     return input.feedback->WaitDecision(session_id, input.cancellation,
                                         input.feedback_timeout);
   };
@@ -227,6 +238,15 @@ Result<MapAlignmentProposal> MapAlignmentCoordinator::Align(
         return terminal_failure(attempted.GetError());
       }
       continue;
+    }
+    if (response.Value().decision == AlignmentDecision::kExcludeAgent) {
+      if (input.source_agent == input.target_agent ||
+          status.state != AlignmentAttemptState::kFailedRecoverable) {
+        return terminal_failure(Error::InvalidArgument(
+            "only a failed follower alignment may be excluded"));
+      }
+      return Result<MapAlignmentProposal>::Failure(Error::AgentExcluded(
+          input.source_agent.Value() + " was excluded by user"));
     }
 
     auto resolved = ResolveResponse(proposal, response.Value());

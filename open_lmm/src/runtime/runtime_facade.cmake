@@ -3,14 +3,14 @@ target_sources(open_lmm_map_server PRIVATE
   $<TARGET_OBJECTS:open_lmm_plugin_host_objects>
   $<TARGET_OBJECTS:open_lmm_config_application_objects>
   $<TARGET_OBJECTS:open_lmm_storage_objects>
+  $<TARGET_OBJECTS:open_lmm_runtime_model_objects>
   $<TARGET_OBJECTS:open_lmm_runtime_state_objects>
   $<TARGET_OBJECTS:open_lmm_runtime_resources_objects>
   $<TARGET_OBJECTS:open_lmm_runtime_execution_objects>
   $<TARGET_OBJECTS:open_lmm_visualization_projection_objects>
   $<TARGET_OBJECTS:open_lmm_runtime_control_objects>
   $<TARGET_OBJECTS:open_lmm_runtime_service_objects>
-  $<TARGET_OBJECTS:open_lmm_runtime_composition_objects>
-  $<TARGET_OBJECTS:open_lmm_batch_compat_objects>)
+  $<TARGET_OBJECTS:open_lmm_runtime_composition_objects>)
 target_link_libraries(open_lmm_map_server
  PUBLIC
   Eigen3::Eigen

@@ -171,8 +171,18 @@ void TestResourceBudget() {
               governor.ReservedMemoryBytes() == 70 &&
               governor.ReservedMemoryBytes(MemoryClass::kResidentPayload) == 70,
           "resident reservation can be corrected to measured size");
-    Check(!owned->Resize(110) && owned->Bytes() == 70 &&
-              governor.ReservedMemoryBytes() == 70,
+    auto rejected_resize = owned->Resize(110);
+    Check(!rejected_resize && owned->Bytes() == 70 &&
+              governor.ReservedMemoryBytes() == 70 &&
+              rejected_resize.GetError().Message().find(
+                  "memory admission rejected: class=resident_payload") !=
+                  std::string::npos &&
+              rejected_resize.GetError().Message().find(
+                  "current_bytes=70 requested_delta_bytes=40") !=
+                  std::string::npos &&
+              rejected_resize.GetError().Message().find(
+                  "requested_total_bytes=110 limit_bytes=100") !=
+                  std::string::npos,
           "failed resize preserves the previous reservation");
     auto shared_owner = owned;
     owned.reset();

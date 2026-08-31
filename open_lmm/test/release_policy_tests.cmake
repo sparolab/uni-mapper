@@ -101,6 +101,13 @@ assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/build_sanitizer_tests.sh"
   "--output-junit"
   "ctest.xml")
+assert_file_contains(
+  "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/check_architecture_policy.sh"
+  "architecture_boundary_tests.cmake"
+  "release_policy_tests.cmake")
+assert_file_contains(
+  "${workflow}"
+  "scripts/ci/check_architecture_policy.sh")
 
 file(READ "${workflow}" workflow_contents)
 string(FIND "${workflow_contents}" "paths:" paths_filter)

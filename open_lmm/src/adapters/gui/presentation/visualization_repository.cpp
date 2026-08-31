@@ -46,12 +46,22 @@ std::shared_ptr<const VisualizationSnapshot> MetadataOnly(
 }  // namespace
 
 VisualizationUpdate VisualizationRepository::Commit(
-    std::shared_ptr<const VisualizationSnapshot> snapshot) {
+    std::shared_ptr<const VisualizationSnapshot> snapshot,
+    uint64_t presentation_generation) {
   VisualizationUpdate update;
   if (!snapshot || !snapshot->agent.IsValid()) return update;
   const auto found = snapshots_.find(snapshot->agent);
   if (found != snapshots_.end()) {
-    if (!IsNewer(*found->second, *snapshot)) return update;
+    if (presentation_generation == 0) {
+      if (!IsNewer(*found->second, *snapshot)) return update;
+    } else {
+      const uint64_t previous_generation =
+          presentation_generations_[snapshot->agent];
+      if (presentation_generation <= previous_generation ||
+          snapshot->revision < found->second->revision) {
+        return update;
+      }
+    }
     update.remove_drawables = {
         MapName(snapshot->agent, found->second->revision),
         TrajectoryName(snapshot->agent, found->second->revision),
@@ -64,6 +74,9 @@ VisualizationUpdate VisualizationRepository::Commit(
     }
   }
   const AgentId agent = snapshot->agent;
+  if (presentation_generation != 0) {
+    presentation_generations_[agent] = presentation_generation;
+  }
   snapshots_[agent] = MetadataOnly(*snapshot);
   const auto& current = snapshots_.at(agent);
   update.add_drawables = {
@@ -103,6 +116,24 @@ std::size_t VisualizationRepository::ApproximateBytes() const {
     bytes += snapshot->displayed_point_count * sizeof(VisualizationPoint);
   }
   return bytes;
+}
+
+std::vector<std::string> VisualizationRepository::ResetEpoch() {
+  std::vector<std::string> drawables;
+  for (const auto& [agent, snapshot] : snapshots_) {
+    (void)agent;
+    drawables.push_back(MapName(snapshot->agent, snapshot->revision));
+    drawables.push_back(TrajectoryName(snapshot->agent, snapshot->revision));
+    drawables.push_back(IntraLoopName(snapshot->agent, snapshot->revision));
+    drawables.push_back(InterLoopName(snapshot->agent, snapshot->revision));
+    for (std::size_t index = 0; index < snapshot->poses.size(); ++index) {
+      drawables.push_back(
+          PoseName(snapshot->agent, index, snapshot->revision));
+    }
+  }
+  snapshots_.clear();
+  presentation_generations_.clear();
+  return drawables;
 }
 
 std::string VisualizationRepository::MapName(const AgentId& agent, uint64_t revision) {

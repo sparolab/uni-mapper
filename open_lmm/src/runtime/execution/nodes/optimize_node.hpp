@@ -1,6 +1,7 @@
 #pragma once
+#include <functional>
 #include <memory>
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <runtime/execution/pipeline.hpp>
 #include <domain/optimization/backend_optimizer_base.hpp>
 
 namespace open_lmm {
@@ -9,12 +10,17 @@ namespace open_lmm {
 // MapServer에서 단 하나의 인스턴스를 공유한다.
 class OptimizeNode : public PipelineNodeBase {
  public:
+  using PreviewCallback =
+      std::function<void(const AgentPipelineCtx&, const SharedDatabase&)>;
+
   explicit OptimizeNode(std::shared_ptr<BackendOptimizerBase> optimizer)
       : optimizer_(std::move(optimizer)) {}
   OptimizeNode(std::shared_ptr<BackendOptimizerBase> optimizer,
-               AlgorithmExecutionContext algorithm_context)
+               AlgorithmExecutionContext algorithm_context,
+               PreviewCallback preview = {})
       : optimizer_(std::move(optimizer)),
-        algorithm_context_(std::move(algorithm_context)) {}
+        algorithm_context_(std::move(algorithm_context)),
+        preview_(std::move(preview)) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
@@ -79,6 +85,7 @@ class OptimizeNode : public PipelineNodeBase {
       return Result<ControlFlow>::Failure(stored_map.GetError());
     }
     db.descriptor_store.update_transforms(optimized_map_transforms);
+    if (preview_) preview_(ctx, db);
     if (algorithm_context.progress) {
       algorithm_context.progress({ctx.agent.id, "optimize",
                                   AlgorithmProgressPhase::kOptimizeGraph, 1,
@@ -121,6 +128,7 @@ class OptimizeNode : public PipelineNodeBase {
 
   std::shared_ptr<BackendOptimizerBase> optimizer_;
   AlgorithmExecutionContext algorithm_context_;
+  PreviewCallback preview_;
 };
 
 }  // namespace open_lmm

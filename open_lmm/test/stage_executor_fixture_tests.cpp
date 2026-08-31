@@ -3,8 +3,10 @@
 #include <plugins/host/algorithm_factory.hpp>
 #include <domain/data_loader/data_loader_base.hpp>
 
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 namespace {
 
@@ -22,10 +24,16 @@ class PreviewLoader final : public open_lmm::DataLoaderBase {
  public:
   open_lmm::Result<open_lmm::AgentRawData> Process(
       const open_lmm::AlgorithmExecutionContext& context,
-      const open_lmm::DataLoaderInput&) override {
+      const open_lmm::DataLoaderInput& input) override {
     open_lmm::AgentRawData raw;
     raw.agent_id = context.agent.id;
     raw.odom_poses.push_back(Eigen::Isometry3d::Identity());
+    auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    scan->push_back({1.0F, 2.0F, 3.0F, 0.5F});
+    raw.filtered_scans.push_back(scan);
+    if (input.observe_filtered_scan) {
+      input.observe_filtered_scan(0, raw.odom_poses.front(), *scan);
+    }
     return open_lmm::Result<open_lmm::AgentRawData>::Ok(std::move(raw));
   }
   open_lmm::Result<std::size_t> VisitRawScanData(
@@ -43,6 +51,66 @@ class PreviewFactory final : public open_lmm::AlgorithmFactory {
         std::unique_ptr<open_lmm::DataLoaderBase>>::Ok(
         std::make_unique<PreviewLoader>());
   }
+};
+
+struct AdmissionBarrier {
+  std::atomic<int> entered{0};
+  std::atomic<int> completed{0};
+};
+
+class CoordinatedAdmissionLoader final : public open_lmm::DataLoaderBase {
+ public:
+  explicit CoordinatedAdmissionLoader(
+      std::shared_ptr<AdmissionBarrier> barrier)
+      : barrier_(std::move(barrier)) {}
+
+  open_lmm::Result<open_lmm::AgentRawData> Process(
+      const open_lmm::AlgorithmExecutionContext& context,
+      const open_lmm::DataLoaderInput& input) override {
+    ++barrier_->entered;
+    while (barrier_->entered.load() != 2) std::this_thread::yield();
+    auto admitted = input.admit_resident_bytes
+                        ? input.admit_resident_bytes(1024)
+                        : open_lmm::Result<void>::Failure(
+                              open_lmm::Error::InvalidArgument(
+                                  "resident admission callback missing"));
+    ++barrier_->completed;
+    while (barrier_->completed.load() != 2) std::this_thread::yield();
+    if (!admitted) {
+      return open_lmm::Result<open_lmm::AgentRawData>::Failure(
+          admitted.GetError());
+    }
+    open_lmm::AgentRawData raw;
+    raw.agent_id = context.agent.id;
+    raw.odom_poses.push_back(Eigen::Isometry3d::Identity());
+    return open_lmm::Result<open_lmm::AgentRawData>::Ok(std::move(raw));
+  }
+
+  open_lmm::Result<std::size_t> VisitRawScanData(
+      const open_lmm::AlgorithmExecutionContext&, const fs::path&,
+      const RawScanVisitor&, open_lmm::AlgorithmProgressPhase) override {
+    return open_lmm::Result<std::size_t>::Ok(0);
+  }
+
+ private:
+  std::shared_ptr<AdmissionBarrier> barrier_;
+};
+
+class CoordinatedAdmissionFactory final : public open_lmm::AlgorithmFactory {
+ public:
+  CoordinatedAdmissionFactory()
+      : barrier_(std::make_shared<AdmissionBarrier>()) {}
+
+ protected:
+  open_lmm::Result<std::unique_ptr<open_lmm::DataLoaderBase>>
+  CreateDataLoaderImpl(const open_lmm::DataLoaderConfig&) const override {
+    return open_lmm::Result<
+        std::unique_ptr<open_lmm::DataLoaderBase>>::Ok(
+        std::make_unique<CoordinatedAdmissionLoader>(barrier_));
+  }
+
+ private:
+  std::shared_ptr<AdmissionBarrier> barrier_;
 };
 
 class PreviewOptimizer final : public open_lmm::BackendOptimizerBase {
@@ -156,6 +224,7 @@ void TestDataLoadPublishesEachCandidateAgent() {
       std::make_shared<const open_lmm::DataLoaderConfig>();
   config->documents = std::make_shared<open_lmm::RuntimeConfigDocuments>();
   config->root.max_parallel_agents = 1;
+  config->root.save_voxel_size = 0.25;
   auto payload = std::make_shared<open_lmm::RuntimePayload>();
   payload->database = std::make_shared<open_lmm::SharedDatabase>();
   auto committed = std::make_shared<open_lmm::RuntimeState>();
@@ -169,24 +238,107 @@ void TestDataLoadPublishesEachCandidateAgent() {
   contexts[1].agent = {.id = Id("B"), .role = open_lmm::AgentRole::kFollower,
                        .order = 1};
   std::vector<open_lmm::AgentId> published;
+  std::vector<open_lmm::AlgorithmProgress> progress;
+  auto governor = std::make_shared<open_lmm::ResourceGovernor>(
+      open_lmm::ResourceBudget{1, 1, 1 << 20});
   open_lmm::DataLoadExecutor executor;
   auto result = executor.Execute(
       {committed, std::move(contexts),
        std::make_shared<open_lmm::SharedDatabase>(),
-       std::make_shared<open_lmm::ResourceGovernor>(
-           open_lmm::ResourceBudget{1, 1, 1 << 20}),
+       governor,
        std::make_shared<open_lmm::CancellationToken>(),
-       open_lmm::AlgorithmProgressCallback{},
+       [&progress](const open_lmm::AlgorithmProgress& update) {
+         progress.push_back(update);
+       },
        std::make_shared<PreviewOptimizer>(),
-       std::make_shared<PreviewFactory>(), false, 1,
+       std::make_shared<PreviewFactory>(), 0.25F, false, 1,
        [&published](const open_lmm::AgentId& agent,
-                    const open_lmm::AgentRawDataHandle& raw) {
-         Check(raw && raw->agent_id == agent && raw->odom_poses.size() == 1,
+                    const open_lmm::AgentRawDataHandle& raw,
+                    const open_lmm::VisualizationPointPreviewHandle& preview) {
+         Check(raw && raw->agent_id == agent && raw->odom_poses.size() == 1 &&
+                   preview && preview->voxel_millimeters == 250 &&
+                   preview->points.size() == 1 &&
+                   preview->points.front().x == 1.0F,
                "candidate callback receives immutable loaded data");
          published.push_back(agent);
        }});
   Check(result && published == std::vector<open_lmm::AgentId>{Id("A"), Id("B")},
         "DataLoad publishes an odometry candidate after each agent finishes");
+  Check(result.Value().payload->resident_memory_reservations.size() == 2 &&
+            result.Value().payload->resident_memory_reservations.at(Id("A"))
+                    ->Bytes() > 1 &&
+            result.Value().payload->resident_memory_reservations.at(Id("B"))
+                    ->Bytes() > 1,
+        "custom loaders receive final measured resident calibration");
+  Check(progress.size() == 4 && progress[0].agent == Id("A") &&
+            progress[0].phase ==
+                open_lmm::AlgorithmProgressPhase::kBuildPreview &&
+            progress[0].current == 0 && progress[0].total == 1 &&
+            progress[1].agent == Id("A") && progress[1].current == 1 &&
+            progress[2].agent == Id("B") && progress[2].current == 0 &&
+            progress[3].agent == Id("B") && progress[3].current == 1,
+        "DataLoad reports one active preview interval per completed agent");
+
+  auto agent_state = std::make_shared<open_lmm::RuntimeState>();
+  agent_state->revision = 6;
+  agent_state->config = committed->config;
+  agent_state->payload = result.Value().payload;
+  std::vector<open_lmm::AlgorithmProgress> agent_progress;
+  auto agent_result = executor.ExecuteAgent(
+      {agent_state, {}, {}, governor,
+       std::make_shared<open_lmm::CancellationToken>(),
+       [&agent_progress](const open_lmm::AlgorithmProgress& update) {
+         agent_progress.push_back(update);
+       },
+       std::make_shared<PreviewOptimizer>(),
+       std::make_shared<PreviewFactory>(), 0.25F, false, 1, {}},
+      Id("A"));
+  Check(agent_result && agent_progress.size() == 2 &&
+            agent_progress[0].phase ==
+                open_lmm::AlgorithmProgressPhase::kBuildPreview &&
+            agent_progress[0].current == 0 &&
+            agent_progress[1].phase ==
+                open_lmm::AlgorithmProgressPhase::kBuildPreview &&
+            agent_progress[1].current == 1,
+        "single-agent DataLoad uses the same active progress contract");
+}
+
+void TestParallelDataLoadAdmissionFailureDrainsAllTasks() {
+  auto config = std::make_shared<open_lmm::RuntimeConfig>();
+  config->data_loader =
+      std::make_shared<const open_lmm::DataLoaderConfig>();
+  config->documents = std::make_shared<open_lmm::RuntimeConfigDocuments>();
+  config->root.max_parallel_agents = 2;
+  auto payload = std::make_shared<open_lmm::RuntimePayload>();
+  payload->database = std::make_shared<open_lmm::SharedDatabase>();
+  auto committed = std::make_shared<open_lmm::RuntimeState>();
+  committed->revision = 8;
+  committed->config = std::move(config);
+  committed->payload = std::move(payload);
+
+  std::vector<open_lmm::AgentPipelineCtx> contexts(2);
+  contexts[0].agent = {.id = Id("A"), .role = open_lmm::AgentRole::kAnchor,
+                       .order = 0};
+  contexts[1].agent = {.id = Id("B"), .role = open_lmm::AgentRole::kFollower,
+                       .order = 1};
+  auto governor = std::make_shared<open_lmm::ResourceGovernor>(
+      open_lmm::ResourceBudget{2, 2, 1500});
+  open_lmm::DataLoadExecutor executor;
+  auto result = executor.Execute(
+      {committed, std::move(contexts),
+       std::make_shared<open_lmm::SharedDatabase>(), governor,
+       std::make_shared<open_lmm::CancellationToken>(),
+       open_lmm::AlgorithmProgressCallback{},
+       std::make_shared<PreviewOptimizer>(),
+       std::make_shared<CoordinatedAdmissionFactory>(), 0.2F, true, 2, {}});
+  Check(!result &&
+            result.GetError().Message().find(
+                "memory admission rejected: class=resident_payload") !=
+                std::string::npos &&
+            result.GetError().context.stage == "data_load" &&
+            governor->ReservedMemoryBytes() == 0 &&
+            governor->MemoryAdmissionFailures() == 1,
+        "parallel admission failure drains tasks and releases all ownership");
 }
 
 }  // namespace
@@ -197,6 +349,7 @@ int main() {
   TestMapUpdateCandidateSharesExistingReservation();
   TestResidentReplacementUsesOnlyRetiringOwnershipAsCredit();
   TestDataLoadPublishesEachCandidateAgent();
+  TestParallelDataLoadAdmissionFailureDrainsAllTasks();
   std::cout << "stage executor fixture tests passed\n";
   return 0;
 }

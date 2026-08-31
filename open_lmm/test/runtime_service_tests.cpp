@@ -3,6 +3,7 @@
 
 #include "test_runtime_port.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -12,7 +13,9 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <thread>
+#include <vector>
 
 namespace {
 using namespace open_lmm;
@@ -108,6 +111,83 @@ class SuccessPort final : public test::RuntimePortFixture {
   }
 };
 
+class RecoveryPort final : public test::RuntimePortFixture {
+ public:
+  RecoveryPort() : RuntimePortFixture({Id("agent")}) {}
+
+  std::optional<Error> RecoveryAfterCommit() const override {
+    Error recovery = Error::IoError(
+        "manual recovery manifest: /tmp/recovery-runtime.json");
+    recovery.WithExecution("file_transaction", "recovery_required")
+        .MarkFatalRuntime();
+    return recovery;
+  }
+
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext&) override {
+    return Result<void>::Ok();
+  }
+
+  Result<VisualizationSnapshot> CreateVisualization(
+      const AgentId& agent) const override {
+    VisualizationSnapshot snapshot;
+    snapshot.agent = agent;
+    snapshot.revision = 1;
+    return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
+  }
+};
+
+class RecoveryReceiptMismatchPort final : public test::RuntimePortFixture {
+ public:
+  RecoveryReceiptMismatchPort() : RuntimePortFixture({Id("agent")}) {}
+
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext&) override {
+    return Result<void>::Ok();
+  }
+
+  std::optional<Error> RecoveryAfterCommit() const override {
+    Error recovery = Error::IoError(
+        "manual recovery manifest: /tmp/compound-recovery.json");
+    recovery.WithExecution("file_transaction", "recovery_required")
+        .MarkFatalRuntime();
+    return recovery;
+  }
+
+  ExecutionReceipt AdjustReceipt(ExecutionReceipt receipt) const override {
+    receipt.recovery_required.reset();
+    return receipt;
+  }
+
+  Result<VisualizationSnapshot> CreateVisualization(
+      const AgentId& agent) const override {
+    VisualizationSnapshot snapshot;
+    snapshot.agent = agent;
+    snapshot.revision = 2;
+    return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
+  }
+};
+
+class PostCommitConfigFaultPort final : public test::RuntimePortFixture {
+ public:
+  PostCommitConfigFaultPort() : RuntimePortFixture({Id("agent")}) {}
+
+  Result<void> ExecuteFixture(const ExecutionCommand&,
+                              const ExecutionContext&) override {
+    return Result<void>::Ok();
+  }
+
+  Result<ConfigCommandReceipt> ApplyConfig(
+      const ConfigCandidate& candidate, const ExpectedRevision& expected,
+      const ExecutionContext& context) override {
+    auto committed = RuntimePortFixture::ApplyConfig(candidate, expected,
+                                                     context);
+    if (!committed) return committed;
+    return Result<ConfigCommandReceipt>::Failure(
+        Error::InvalidArgument("fixture failed after config commit"));
+  }
+};
+
 class OpenLatch {
  public:
   Result<std::shared_ptr<StageRuntimePort>> Create() {
@@ -146,6 +226,55 @@ class OpenLatch {
   bool entered_ = false;
   bool release_ = false;
   unsigned calls_ = 0;
+};
+
+class OutputOpenLatch {
+ public:
+  Result<std::shared_ptr<StageRuntimePort>> Create(
+      const fs::path& output_directory) {
+    fs::create_directories(output_directory);
+    std::ofstream(output_directory / "candidate.marker") << "created\n";
+
+    bool block = false;
+    {
+      std::lock_guard lock(mutex_);
+      outputs_.push_back(output_directory);
+      block = outputs_.size() == 1;
+      if (block) entered_ = true;
+    }
+    entered_changed_.notify_all();
+    if (block) {
+      std::unique_lock lock(mutex_);
+      released_.wait(lock, [&] { return release_; });
+    }
+    return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+        std::make_shared<SuccessPort>());
+  }
+
+  void WaitForEntry() {
+    std::unique_lock lock(mutex_);
+    entered_changed_.wait(lock, [&] { return entered_; });
+  }
+  void Release() {
+    {
+      std::lock_guard lock(mutex_);
+      release_ = true;
+    }
+    released_.notify_all();
+  }
+  [[nodiscard]] fs::path Output(std::size_t index) const {
+    std::lock_guard lock(mutex_);
+    Check(index < outputs_.size(), "requested output was captured");
+    return outputs_[index];
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::condition_variable entered_changed_;
+  std::condition_variable released_;
+  bool entered_ = false;
+  bool release_ = false;
+  std::vector<fs::path> outputs_;
 };
 
 template <typename Predicate>
@@ -473,6 +602,93 @@ void TestOpenCloseTransitionCancellation() {
   fs::remove_all(root);
 }
 
+void TestCancelledOpenRollsBackUnpublishedOutput(bool use_root_candidate) {
+  const auto root = fs::temp_directory_path() /
+                    (use_root_candidate
+                         ? "open_lmm_root_candidate_output_rollback"
+                         : "open_lmm_file_config_output_rollback");
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  auto latch = std::make_shared<OutputOpenLatch>();
+  RuntimeService service(
+      1, [latch](const BootstrapConfigSnapshot&,
+                 const fs::path& output_directory)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return latch->Create(output_directory);
+      });
+
+  std::optional<ConfigCandidate> candidate;
+  if (use_root_candidate) {
+    candidate = ReplacementCandidate(root / "config", root / "output",
+                                     root / "candidate-output");
+  }
+  const auto open = [&](const char* label) {
+    const BootstrapRequest request{root / "config", label};
+    return candidate ? service.Open(request, *candidate) : service.Open(request);
+  };
+
+  Result<void> opened = Result<void>::Failure(Error::InvalidArgument("not run"));
+  std::thread opening([&] { opened = open("opening"); });
+  latch->WaitForEntry();
+  const auto unpublished_output = latch->Output(0);
+  Check(fs::is_regular_file(unpublished_output / "candidate.marker"),
+        "fixture creates output before publication");
+
+  std::atomic<bool> close_returned{false};
+  std::atomic<bool> output_existed_when_close_returned{true};
+  Result<void> closed = Result<void>::Failure(Error::InvalidArgument("not run"));
+  std::thread closing([&] {
+    closed = service.Close();
+    output_existed_when_close_returned.store(
+        fs::exists(unpublished_output), std::memory_order_release);
+    close_returned.store(true, std::memory_order_release);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  Check(!close_returned.load(std::memory_order_acquire),
+        "close waits while output candidate is unpublished");
+  latch->Release();
+  opening.join();
+  closing.join();
+
+  Check(!opened && closed && !service.IsOpen(),
+        "cancelled open does not publish a runtime");
+  Check(!output_existed_when_close_returned.load(std::memory_order_acquire),
+        "Close returns only after unpublished output rollback completes");
+  Check(!fs::exists(unpublished_output),
+        "cancelled open removes its unpublished runtime output");
+
+  Check(open("reopen").IsOk(), "runtime reopens after cancelled output candidate");
+  const auto published_output = latch->Output(1);
+  Check(fs::is_regular_file(published_output / "candidate.marker"),
+        "published runtime retains its output");
+  Check(service.Close().IsOk(), "reopened output fixture closes");
+  Check(fs::is_regular_file(published_output / "candidate.marker"),
+        "closing a published runtime does not roll back its output");
+  fs::remove_all(root);
+}
+
+void TestBuildFailureStillRollsBackOutput() {
+  const auto root =
+      fs::temp_directory_path() / "open_lmm_build_output_rollback";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  fs::path failed_output;
+  RuntimeService service(
+      1, [&failed_output](const BootstrapConfigSnapshot&,
+                          const fs::path& output_directory)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        failed_output = output_directory;
+        fs::create_directories(output_directory);
+        std::ofstream(output_directory / "candidate.marker") << "created\n";
+        return Result<std::shared_ptr<StageRuntimePort>>::Failure(
+            Error::InvalidArgument("factory rejected candidate"));
+      });
+  const auto opened = service.Open({root / "config", "failure"});
+  Check(!opened && !failed_output.empty() && !fs::exists(failed_output),
+        "BuildInstance retains responsibility for failed factory output");
+  fs::remove_all(root);
+}
+
 void TestConcurrentOpenReservesTransitionBeforeBootstrap() {
   const auto root = fs::temp_directory_path() / "open_lmm_single_runtime_open_race";
   fs::remove_all(root);
@@ -532,6 +748,209 @@ void TestPublicJobRetentionIsBounded() {
   fs::remove_all(root);
 }
 
+void TestSynchronousPostCommitFailurePublishesFatalHealth() {
+  const auto root =
+      fs::temp_directory_path() / "open_lmm_post_commit_config_fault";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  auto port = std::make_shared<PostCommitConfigFaultPort>();
+  RuntimeService service(
+      1, [port](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(port);
+      });
+  Check(service.Open({root / "config", "post-commit-config"}).IsOk(),
+        "post-commit config fixture opens");
+  ConfigCandidate candidate;
+  candidate.domain = ConfigDomain::kMapSave;
+  candidate.document_json = "{}";
+  auto applied = service.ApplyConfig(candidate, {1, 1});
+  Check(!applied &&
+            applied.GetError().severity == Error::Severity::kFatalRuntime,
+        "advanced config authority without receipt is fatal");
+  const auto snapshot = service.Snapshot();
+  Check(snapshot && snapshot.Value().state == RuntimeStatus::kFailedFatal &&
+            snapshot.Value().pipeline.runtime_revision == 2 &&
+            snapshot.Value().pipeline.config_revision == 2,
+        "public runtime snapshot exposes synchronous protocol failure");
+  const auto revision = port->Snapshot().revision;
+  auto retry = service.ApplyConfig(candidate, {2, 2});
+  Check(!retry &&
+            retry.GetError().severity == Error::Severity::kFatalRuntime &&
+            port->Snapshot().revision == revision,
+        "fatal protocol health rejects later mutation before port entry");
+  Check(service.Close().IsOk(), "post-commit config fixture closes");
+  fs::remove_all(root);
+}
+
+void TestCommittedRecoveryHealthIsPersistentAndGatesMutation() {
+  const auto root =
+      fs::temp_directory_path() / "open_lmm_committed_recovery_health";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<RecoveryPort>());
+      });
+  Check(service.Open({root / "config", "recovery"}).IsOk(),
+        "recovery fixture opens healthy");
+  auto job = service.Submit(
+      {ExecutionRequestKind::kStage, StageId::kDataLoad});
+  Check(job && service.Wait(job.Value()),
+        "committed recovery stage remains a successful command");
+  auto snapshot = service.Snapshot();
+  bool structured_event = false;
+  for (const auto& event : snapshot.Value().pipeline.recent_events) {
+    structured_event = structured_event ||
+                       (event.type == EventType::kStageCompleted &&
+                        event.error &&
+                        event.error->severity ==
+                            Error::Severity::kFatalRuntime);
+  }
+  Check(snapshot && snapshot.Value().state == RuntimeStatus::kFailedFatal &&
+            structured_event,
+        "public snapshot and structured event expose recovery health");
+  const auto rejected = service.Submit(
+      {ExecutionRequestKind::kStage, StageId::kDataLoad});
+  Check(!rejected && rejected.GetError().severity ==
+                         Error::Severity::kFatalRuntime,
+        "persistent recovery health rejects another mutation");
+  ConfigCandidate config;
+  config.domain = ConfigDomain::kMapSave;
+  config.document_json = "{}";
+  const auto config_rejected = service.ApplyConfig(config, {2, 1});
+  Check(!config_rejected && config_rejected.GetError().severity ==
+                                Error::Severity::kFatalRuntime,
+        "persistent recovery health rejects config mutation");
+  Check(service.NodeDescriptors().IsOk() && service.Snapshot().IsOk() &&
+            service.Visualization(Id("agent")).IsOk(),
+        "read-only queries remain available while recovery is required");
+  Check(service.Close().IsOk(), "recovery fixture closes deterministically");
+  fs::remove_all(root);
+}
+
+void TestCompoundRecoveryAndProtocolHealthRemainPublic() {
+  const auto root = fs::temp_directory_path() /
+                    "open_lmm_compound_recovery_protocol_health";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<RecoveryReceiptMismatchPort>());
+      });
+  Check(service.Open({root / "config", "compound-recovery"}).IsOk(),
+        "compound recovery fixture opens");
+  const auto job = service.Submit(
+      {ExecutionRequestKind::kStage, StageId::kDataLoad});
+  Check(job && !service.Wait(job.Value()),
+        "recovery receipt mismatch fails the job");
+
+  const auto snapshot = service.Snapshot();
+  const auto exposes_both_causes = [](const Error& error) {
+    return error.Message().find("/tmp/compound-recovery.json") !=
+               std::string::npos &&
+           error.Message().find("receipt recovery health does not match") !=
+               std::string::npos;
+  };
+  Check(snapshot && snapshot.Value().state == RuntimeStatus::kFailedFatal &&
+            std::any_of(snapshot.Value().pipeline.recent_events.begin(),
+                        snapshot.Value().pipeline.recent_events.end(),
+                        [&](const ExecutionEvent& event) {
+                          return event.error &&
+                                 event.error->code == Error::Code::kIoError &&
+                                 exposes_both_causes(*event.error);
+                        }),
+        "public snapshot event preserves recovery and protocol causes");
+
+  const auto rejected = service.Submit(
+      {ExecutionRequestKind::kStage, StageId::kDataLoad});
+  ConfigCandidate config;
+  config.domain = ConfigDomain::kMapSave;
+  config.document_json = "{}";
+  const auto config_rejected = service.ApplyConfig(config, {2, 1});
+  Check(!rejected && !config_rejected &&
+            rejected.GetError().code == Error::Code::kIoError &&
+            exposes_both_causes(rejected.GetError()) &&
+            exposes_both_causes(config_rejected.GetError()),
+        "compound health gates later mutations without hiding manifest");
+  Check(service.Snapshot().IsOk() &&
+            service.Visualization(Id("agent")).IsOk(),
+        "compound fatal health keeps read-only queries available");
+  Check(service.Close().IsOk(), "compound recovery fixture closes");
+  fs::remove_all(root);
+}
+
+void TestRootReplacementPublishesCommittedRecoveryHealth() {
+  const auto root =
+      fs::temp_directory_path() / "open_lmm_root_recovery_health";
+  fs::remove_all(root);
+  WriteRootConfig(root / "config", root / "output", "agent");
+  RuntimeService service(
+      1, [](const BootstrapConfigSnapshot&, const fs::path&)
+             -> Result<std::shared_ptr<StageRuntimePort>> {
+        return Result<std::shared_ptr<StageRuntimePort>>::Ok(
+            std::make_shared<SuccessPort>());
+      });
+  Check(service.Open({root / "config", "old"}).IsOk(),
+        "root recovery fixture opens");
+  const auto before = service.Snapshot().Value().pipeline;
+  auto candidate = ReplacementCandidate(root / "config", root / "output",
+                                        root / "replacement-output");
+  fs::remove(root / "config/config.json");
+  fs::create_directories(root / "config/config.json");
+  std::ofstream(root / "config/config.json/retained")
+      << "force backup cleanup failure\n";
+  auto replaced = service.ReplaceRootConfig(
+      {root / "config", "new"}, candidate,
+      {before.runtime_revision, before.config_revision});
+  auto snapshot = service.Snapshot();
+  bool structured_event = false;
+  for (const auto& event : snapshot.Value().pipeline.recent_events) {
+    structured_event = structured_event ||
+                       (event.error &&
+                        event.error->severity ==
+                            Error::Severity::kFatalRuntime &&
+                        event.error->Message().find("recovery manifest") !=
+                            std::string::npos);
+  }
+  Check(replaced && snapshot && snapshot.Value().label == "new" &&
+            snapshot.Value().state == RuntimeStatus::kFailedFatal &&
+            structured_event &&
+            fs::is_regular_file(root / "config/config.json") &&
+            fs::is_directory(
+                root / "config/config.json.open_lmm_backup"),
+        "root files and candidate runtime stay authoritative with recovery health");
+  Check(!service.Submit(
+            {ExecutionRequestKind::kStage, StageId::kDataLoad}),
+        "root recovery health gates later pipeline mutation");
+
+  fs::remove_all(root / "config/config.json.open_lmm_backup");
+  for (const auto& entry : fs::directory_iterator(root / "config")) {
+    if (entry.path().filename().string().find(".open_lmm_recovery_") == 0) {
+      fs::remove(entry.path());
+    }
+  }
+  const auto degraded = service.Snapshot().Value().pipeline;
+  auto healthy_candidate = ReplacementCandidate(
+      root / "config", root / "replacement-output", root / "healthy-output");
+  auto healthy = service.ReplaceRootConfig(
+      {root / "config", "healthy"}, healthy_candidate,
+      {degraded.runtime_revision, degraded.config_revision});
+  const auto recovered = service.Snapshot();
+  auto accepted = service.Submit(
+      {ExecutionRequestKind::kStage, StageId::kDataLoad});
+  Check(healthy && recovered &&
+            recovered.Value().state == RuntimeStatus::kReady && accepted &&
+            service.Wait(accepted.Value()),
+        "verified healthy replacement clears recovery health");
+  Check(service.Close().IsOk(), "root recovery fixture closes");
+  fs::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -542,8 +961,15 @@ int main() {
   TestSubscriptionOutlivesRuntime();
   TestSubscriptionResetWaitsForCopiedCallback();
   TestOpenCloseTransitionCancellation();
+  TestCancelledOpenRollsBackUnpublishedOutput(false);
+  TestCancelledOpenRollsBackUnpublishedOutput(true);
+  TestBuildFailureStillRollsBackOutput();
   TestConcurrentOpenReservesTransitionBeforeBootstrap();
   TestPublicJobRetentionIsBounded();
+  TestSynchronousPostCommitFailurePublishesFatalHealth();
+  TestCommittedRecoveryHealthIsPersistentAndGatesMutation();
+  TestCompoundRecoveryAndProtocolHealthRemainPublic();
+  TestRootReplacementPublishesCommittedRecoveryHealth();
   std::cout << "runtime service single-runtime tests passed\n";
   return 0;
 }

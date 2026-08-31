@@ -159,8 +159,19 @@ void IridescenceGui::ViewerLoop() {
              event.type == EventType::kNodeStarted) && event.stage) {
           if (*event.stage == StageId::kAlignment) {
             alignment_stage_active_ = true;
+            // Preserve the installed map until the review clouds are ready,
+            // but prevent work requested by the preceding stage from being
+            // published into the new presentation epoch.
+            if (visualization_worker_) visualization_worker_->ResetEpoch();
+            map_presentation_.CancelPending();
           } else {
             alignment_stage_active_ = false;
+          }
+          if (*event.stage == StageId::kMapUpdate) {
+            map_update_stage_active_ = true;
+            HideAlignmentLoopLayers();
+          } else {
+            map_update_stage_active_ = false;
           }
           data_load_preview_active_ =
               *event.stage == StageId::kDataLoad &&
@@ -172,6 +183,15 @@ void IridescenceGui::ViewerLoop() {
         }
         if (event.type == EventType::kArtifactCommitted && event.agent) {
           RequestVisualization(*event.agent);
+        }
+        if (event.type == EventType::kProgressUpdated &&
+            event.algorithm_progress &&
+            event.algorithm_progress->phase ==
+                AlgorithmProgressPhase::kOptimizeGraph &&
+            event.algorithm_progress->total &&
+            event.algorithm_progress->current >=
+                *event.algorithm_progress->total) {
+          RequestAllVisualizationMetadata();
         }
         if (event.type == EventType::kStageCompleted && event.stage &&
             (*event.stage == StageId::kDataLoad ||
@@ -193,10 +213,24 @@ void IridescenceGui::ViewerLoop() {
             event.stage && *event.stage == StageId::kAlignment) {
           alignment_stage_active_ = false;
           ResetPipelineAlignmentPreview();
+          RequestAllVisualizationMetadata();
+        }
+        if ((event.type == EventType::kStageFailed ||
+             event.type == EventType::kNodeFailed) &&
+            event.stage && *event.stage == StageId::kMapUpdate) {
+          map_update_stage_active_ = false;
+          for (const auto& snapshot : visualization_.Snapshots()) {
+            UpdateLoopDrawables(snapshot);
+          }
         }
         if (event.type == EventType::kJobCancelled) {
           alignment_stage_active_ = false;
+          map_update_stage_active_ = false;
           ResetPipelineAlignmentPreview();
+          RequestAllVisualizationMetadata();
+          for (const auto& snapshot : visualization_.Snapshots()) {
+            UpdateLoopDrawables(snapshot);
+          }
         }
       }
       if (event_queue_->Stats().resync_required && services_.snapshot) {
@@ -210,7 +244,8 @@ void IridescenceGui::ViewerLoop() {
       if (model_.Stage(StageId::kDataLoad).state == GuiStageState::kRunning &&
           now >= next_data_load_preview_refresh_) {
         for (const AgentId& agent : model_.Agents()) {
-          RequestVisualization(agent);
+          RequestVisualization(agent, false,
+                               VisualizationRequestIntent::kPoll);
         }
         next_data_load_preview_refresh_ = now + std::chrono::milliseconds(100);
       }
@@ -255,12 +290,60 @@ void IridescenceGui::SynchronizeModel() {
   }
 }
 
-void IridescenceGui::RequestVisualization(AgentId agent, bool include_points) {
+void IridescenceGui::ResetVisualizationEpoch() {
+  if (visualization_worker_) visualization_worker_->ResetEpoch();
+
+  auto viewer = guik::LightViewer::instance();
+  for (const auto& drawable : map_presentation_.ResetEpoch()) {
+    viewer->remove_drawable(drawable);
+  }
+  for (const auto& drawable : visualization_.ResetEpoch()) {
+    viewer->remove_drawable(drawable);
+  }
+  for (const char* drawable : {
+           "open_lmm.alignment.target",
+           "open_lmm.alignment.source",
+           "open_lmm.alignment.target_trajectory",
+           "open_lmm.alignment.source_trajectory",
+           "open_lmm.alignment.inlier_loops",
+           "open_lmm.alignment.outlier_loops",
+       }) {
+    viewer->remove_drawable(drawable);
+  }
+
+  data_load_preview_active_ = false;
+  alignment_stage_active_ = false;
+  map_update_stage_active_ = false;
+  picked_point_.reset();
+  alignment_feedback_.reset();
+  alignment_model_control_.reset();
+  alignment_request_id_ = 0;
+  alignment_session_revision_ = 0;
+  alignment_manual_mode_ = false;
+  alignment_kiss_transform_.reset();
+  alignment_descriptor_transform_.reset();
+  alignment_preview_agent_.reset();
+  alignment_presentation_.Clear();
+  alignment_manual_transform_ = Eigen::Isometry3d::Identity();
+  alignment_previous_render_matrix_ = Eigen::Matrix4f::Identity();
+  alignment_gizmo_operation_ = 0;
+  alignment_gizmo_mode_ = 0;
+}
+
+void IridescenceGui::RequestVisualization(
+    AgentId agent, bool include_points, VisualizationRequestIntent intent) {
   if (!visualization_worker_ || !map_presentation_.IsVisible(agent)) return;
   const AgentId requested_agent = agent;
   const auto generation = visualization_worker_->Request(
-      {std::move(agent), include_points, 0.4F, 1'000'000});
+      {std::move(agent), include_points, 0.0F, 1'000'000}, intent);
   if (generation) map_presentation_.Begin(requested_agent, *generation);
+}
+
+void IridescenceGui::RequestAllVisualizationMetadata() {
+  for (const AgentId& agent : model_.Agents()) {
+    RequestVisualization(agent, false,
+                         VisualizationRequestIntent::kSourceChanged);
+  }
 }
 
 void IridescenceGui::DrainVisualizationSnapshots() {
@@ -286,16 +369,17 @@ void IridescenceGui::DrainVisualizationSnapshots() {
           completed.query.agent, completed.request_generation);
       continue;
     }
-    auto update = visualization_.Commit(snapshot);
+    auto update = visualization_.Commit(snapshot,
+                                        completed.request_generation);
     if (update.changed) {
       UpdateDrawables(snapshot, update, completed.request_generation);
     }
     const auto preferences = DefaultVisualizationPreferences(snapshot->phase);
     if (preferences.points && snapshot->points_available &&
-        !(alignment_stage_active_ &&
-          snapshot->phase == VisualizationPhase::kDataLoad) &&
+        !alignment_stage_active_ &&
         !snapshot->points_complete && !completed.query.include_points) {
-      RequestVisualization(snapshot->agent, true);
+      RequestVisualization(snapshot->agent, true,
+                           VisualizationRequestIntent::kExpandPoints);
     }
     if (map_presentation_.IsCurrent(completed.query.agent,
                                     completed.request_generation)) {
@@ -430,10 +514,17 @@ void IridescenceGui::UpdateDrawables(
   for (const auto& current : visualization_.Snapshots()) {
     UpdateLoopDrawables(current);
   }
+  alignment_presentation_.ObserveSnapshot(snapshot->agent,
+                                          snapshot->pose_kind);
   if (alignment_feedback_ && alignment_model_control_ &&
       alignment_feedback_->proposal.source_agent == snapshot->agent) {
     ApplyPipelineAlignmentPreview(
         snapshot->agent, alignment_model_control_->model_matrix());
+  } else if (const auto accepted =
+                 alignment_presentation_.TransformForOdometry(snapshot->agent);
+             accepted &&
+             snapshot->pose_kind == VisualizationPoseKind::kOdometry) {
+    (void)RenderPipelineAlignmentTransform(snapshot->agent, *accepted);
   }
 }
 
@@ -444,7 +535,10 @@ void IridescenceGui::UpdateLoopDrawables(
       snapshot->agent, snapshot->revision));
   viewer->remove_drawable(VisualizationRepository::InterLoopName(
       snapshot->agent, snapshot->revision));
-  if (!IsAgentVisualizationVisible(snapshot->agent)) return;
+  if (map_update_stage_active_ ||
+      !IsAgentVisualizationVisible(snapshot->agent)) {
+    return;
+  }
   const auto preferences = DefaultVisualizationPreferences(snapshot->phase);
   std::map<std::pair<AgentId, std::size_t>, Eigen::Vector3f> pose_lookup;
   for (const auto& current : visualization_.Snapshots()) {
@@ -485,6 +579,16 @@ void IridescenceGui::UpdateLoopDrawables(
   }
 }
 
+void IridescenceGui::HideAlignmentLoopLayers() {
+  auto viewer = guik::LightViewer::instance();
+  for (const auto& snapshot : visualization_.Snapshots()) {
+    viewer->remove_drawable(VisualizationRepository::IntraLoopName(
+        snapshot->agent, snapshot->revision));
+    viewer->remove_drawable(VisualizationRepository::InterLoopName(
+        snapshot->agent, snapshot->revision));
+  }
+}
+
 void IridescenceGui::SetAgentVisualizationVisible(const AgentId& agent,
                                                   bool visible) {
   auto viewer = guik::LightViewer::instance();
@@ -513,7 +617,8 @@ void IridescenceGui::SetAgentVisualizationVisible(const AgentId& agent,
         snapshot->points_available &&
         !(alignment_stage_active_ &&
           snapshot->phase == VisualizationPhase::kDataLoad)) {
-      RequestVisualization(snapshot->agent, true);
+      RequestVisualization(snapshot->agent, true,
+                           VisualizationRequestIntent::kExpandPoints);
     }
   }
   for (const auto& current : visualization_.Snapshots()) {
@@ -526,13 +631,10 @@ bool IridescenceGui::IsAgentVisualizationVisible(
   return map_presentation_.IsVisible(agent);
 }
 
-void IridescenceGui::HideDataLoadPointLayers() {
+void IridescenceGui::ReplacePipelineMapLayersWithAlignmentReview() {
   auto viewer = guik::LightViewer::instance();
-  for (const auto& snapshot : visualization_.Snapshots()) {
-    if (snapshot->phase != VisualizationPhase::kDataLoad) continue;
-    if (auto removed = map_presentation_.DiscardVisible(snapshot->agent)) {
-      viewer->remove_drawable(*removed);
-    }
+  for (const auto& drawable : map_presentation_.DiscardAllVisible()) {
+    viewer->remove_drawable(drawable);
   }
 }
 
@@ -642,6 +744,12 @@ void IridescenceGui::DrawPipelineUi() {
         const std::string overlay = std::to_string(progress.current) + "/" +
                                     std::to_string(*progress.total);
         ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 0.0F), overlay.c_str());
+      } else if (!progress.total) {
+        // Opaque solvers and user review have no meaningful percentage. Use
+        // an oscillating fill to communicate activity without inventing one.
+        const float pulse =
+            0.5F + 0.4F * std::sin(static_cast<float>(ImGui::GetTime()) * 3.0F);
+        ImGui::ProgressBar(pulse, ImVec2(-FLT_MIN, 0.0F), "in progress");
       }
     };
     const auto latest = view.latest_progress_agent
@@ -649,12 +757,18 @@ void IridescenceGui::DrawPipelineUi() {
                                   *view.latest_progress_agent)
                             : view.agent_progress.end();
     const bool show_latest_algorithm_only =
-        stage == StageId::kDataLoad || stage == StageId::kAlignment ||
-        stage == StageId::kMapUpdate;
-    if (show_latest_algorithm_only && latest != view.agent_progress.end()) {
+        stage == StageId::kAlignment || stage == StageId::kMapUpdate;
+    if (stage == StageId::kDataLoad) {
+      // DataLoad can execute several agents concurrently. GuiModel retains
+      // only active streams, so one bar is rendered for each admitted task.
+      for (const auto& [agent, progress] : view.agent_progress) {
+        draw_algorithm_progress(agent, progress);
+      }
+    } else if (show_latest_algorithm_only &&
+               latest != view.agent_progress.end()) {
       // These stages can expose both aggregate completion and algorithm-level
       // progress. Show only the latest active stream so the panel never stacks
-      // duplicate or already-completed progress bars.
+      // duplicate progress bars.
       draw_algorithm_progress(latest->first, latest->second);
     } else {
       if (view.progress_total > 0) {
@@ -837,8 +951,12 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
       snapshot->proposal.request_id != alignment_request_id_;
   if (new_alignment_session && alignment_preview_agent_ &&
       *alignment_preview_agent_ != snapshot->proposal.source_agent) {
-    ResetPipelineAlignmentPreview();
+    // Keep the accepted transform visible until the optimizer candidate read
+    // model replaces it. Resetting to identity here exposes the DataLoad pose
+    // while the next follower waits for review.
+    alignment_preview_agent_.reset();
   }
+  if (new_alignment_session) RequestAllVisualizationMetadata();
   if (new_alignment_session ||
       snapshot->session_revision != alignment_session_revision_) {
     alignment_feedback_ = std::move(snapshot);
@@ -910,7 +1028,7 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
             .set_point_scale(kAlignmentReviewPointScale));
     // The review clouds are ready now, so replacing DataLoad point layers no
     // longer exposes an empty frame between the two visualization products.
-    HideDataLoadPointLayers();
+    ReplacePipelineMapLayersWithAlignmentReview();
 
     viewer->remove_drawable("open_lmm.alignment.target_trajectory");
     viewer->remove_drawable("open_lmm.alignment.source_trajectory");
@@ -975,15 +1093,15 @@ void IridescenceGui::SynchronizeAlignmentFeedback() {
   }
 }
 
-void IridescenceGui::ApplyPipelineAlignmentPreview(
+bool IridescenceGui::RenderPipelineAlignmentTransform(
     const AgentId& source_agent, const Eigen::Matrix4f& transform) {
   const auto snapshot = visualization_.Latest(source_agent);
-  // Only the DataLoad trajectory is still in the source-agent frame. Later
-  // projections already contain loop/alignment or optimized global poses and
-  // must not receive the proposal transform a second time.
-  if (!snapshot || snapshot->phase != VisualizationPhase::kDataLoad ||
+  // Candidate snapshots can mix optimized predecessors with the unoptimized
+  // source. Apply the proposal only to odometry poses; optimized poses are
+  // already expressed in the global frame.
+  if (!snapshot || snapshot->pose_kind != VisualizationPoseKind::kOdometry ||
       !IsAgentVisualizationVisible(source_agent)) {
-    return;
+    return false;
   }
   auto viewer = guik::LightViewer::instance();
   const std::string trajectory_name = VisualizationRepository::TrajectoryName(
@@ -1007,14 +1125,28 @@ void IridescenceGui::ApplyPipelineAlignmentPreview(
               .scale(0.25F));
     }
   }
-  alignment_preview_agent_ = source_agent;
+  return true;
+}
+
+void IridescenceGui::ApplyPipelineAlignmentPreview(
+    const AgentId& source_agent, const Eigen::Matrix4f& transform) {
+  if (RenderPipelineAlignmentTransform(source_agent, transform)) {
+    alignment_preview_agent_ = source_agent;
+  }
 }
 
 void IridescenceGui::ResetPipelineAlignmentPreview() {
-  if (!alignment_preview_agent_) return;
-  const AgentId source_agent = *alignment_preview_agent_;
-  alignment_preview_agent_.reset();
-  ApplyPipelineAlignmentPreview(source_agent, Eigen::Matrix4f::Identity());
+  auto agents = alignment_presentation_.Agents();
+  if (alignment_preview_agent_ &&
+      std::find(agents.begin(), agents.end(), *alignment_preview_agent_) ==
+          agents.end()) {
+    agents.push_back(*alignment_preview_agent_);
+  }
+  for (const AgentId& agent : agents) {
+    (void)RenderPipelineAlignmentTransform(agent,
+                                           Eigen::Matrix4f::Identity());
+  }
+  alignment_presentation_.Clear();
   alignment_preview_agent_.reset();
 }
 
@@ -1193,6 +1325,13 @@ void IridescenceGui::DrawAlignmentUi() {
     response.session_revision = alignment_session_revision_;
     auto result = services_.respond_to_alignment(model_.Job()->id,
                                                   std::move(response));
+    if (result && alignment_feedback_ && alignment_model_control_ &&
+        (decision == AlignmentDecision::kAccept ||
+         decision == AlignmentDecision::kManual)) {
+      alignment_presentation_.RememberAccepted(
+          alignment_feedback_->proposal.source_agent,
+          alignment_model_control_->model_matrix());
+    }
     command_error_ = result ? std::string{} : result.GetError().Message();
   };
 
@@ -1258,6 +1397,13 @@ void IridescenceGui::DrawAlignmentUi() {
     }
   }
   if (attempt_running) ImGui::EndDisabled();
+  if (!terminal_read_only && !attempt_running &&
+      attempt.state == AlignmentAttemptState::kFailedRecoverable) {
+    ImGui::SameLine();
+    if (ImGui::Button("Exclude Agent and Continue")) {
+      respond(AlignmentDecision::kExcludeAgent);
+    }
+  }
   ImGui::SameLine();
   if (ImGui::Button("Cancel Alignment")) {
     respond(AlignmentDecision::kCancel);
@@ -1370,8 +1516,8 @@ Result<void> IridescenceGui::SaveAndApplyConfig() {
     result = replaced ? Result<void>::Ok()
                       : Result<void>::Failure(replaced.GetError());
     if (result) {
+      ResetVisualizationEpoch();
       event_queue_->ResetEpoch();
-      SynchronizeModel();
     }
   } else if (*config_stage_ == StageId::kAlignment) {
     candidate.domain = ConfigDomain::kLoopDetector;
@@ -1448,6 +1594,10 @@ void IridescenceGui::DrawStageConfigModal() {
   }
   ImGui::SameLine();
   if (ImGui::Button("Refresh datasets")) RefreshDatasetCatalog();
+  ImGui::SameLine();
+  if (ImGui::Button("Clear all")) {
+    ClearDatasetSelection(selected_datasets_);
+  }
   ImGui::SameLine();
   ImGui::Text("Selected dataset root: %s", root_dir_path_.data());
   ImGui::TextUnformatted("Datasets / agents (execution order follows this list)");

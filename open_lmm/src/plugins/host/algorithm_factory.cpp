@@ -62,7 +62,13 @@ Result<void> AlgorithmFactory::Preflight(
 
 Result<void> AlgorithmFactory::PreflightDescriptor(
     const LoopDetectorConfig& loop_detector) const {
-  return InspectDescriptorPlugin(loop_detector);
+  const std::string library =
+      "libcreate_" + loop_detector.model + ".so";
+  auto descriptor = inspect_plugin_v1(library, "descriptor");
+  if (!descriptor) {
+    return Result<void>::Failure(descriptor.GetError());
+  }
+  return Result<void>::Ok();
 }
 
 Result<void> AlgorithmFactory::PreflightRemover(
@@ -110,8 +116,8 @@ AlgorithmFactory::CreateLoopDetectorImpl(
                                "'. Supported: kdtree"));
   }
   const std::string library = "libcreate_" + config.model + ".so";
-  auto module = LoopDetectorKdtree::loadModule(
-      library, config.plugin_config_json);
+  auto module = load_plugin_v1<IDescriptorKdtree>(
+      library, "descriptor", config.plugin_config_json);
   if (!module) {
     return Result<std::unique_ptr<LoopDetectorBase>>::Failure(
         module.GetError());
@@ -148,8 +154,9 @@ Result<std::shared_ptr<DynamicRemoverBase>>
 AlgorithmFactory::CreateDynamicRemoverImpl(
     const DynamicRemoverConfig& config) const {
   if (config.type == "offline") {
-    auto module = DynamicRemoverOffline::loadModule(
-        "libcreate_" + config.model + ".so", config.plugin_config_json);
+    auto module = load_plugin_v1<IOfflineRemoverPlugin>(
+        "libcreate_" + config.model + ".so", "dynamic_remover_offline",
+        config.plugin_config_json);
     if (!module) {
       return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
           module.GetError());
@@ -159,8 +166,9 @@ AlgorithmFactory::CreateDynamicRemoverImpl(
                                                 std::move(module).Value()));
   }
   if (config.type == "online") {
-    auto module = DynamicRemoverOnline::loadModule(
-        "libcreate_" + config.model + ".so", config.plugin_config_json);
+    auto module = load_plugin_v1<IOnlineRemoverPlugin>(
+        "libcreate_" + config.model + ".so", "dynamic_remover_online",
+        config.plugin_config_json);
     if (!module) {
       return Result<std::shared_ptr<DynamicRemoverBase>>::Failure(
           module.GetError());

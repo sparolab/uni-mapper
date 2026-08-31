@@ -40,7 +40,7 @@ struct Clustering {
     bool parallel{true};                       // Use parallel execution for integration
     int num_threads{16};                       // Number of threads to use, 8 times number of physical cores seems to be a good number and it is chosen if 0 is given
     //[map]
-    int levels{20};      // Levels of the octree
+    int levels{19};      // Safe Morton-code depth supported by UFOMap
     //TODO(gil) : 
 		// bool propagate{false};
     // std::string ray_casting_method{"simple"};   // ["simple", "proper"]

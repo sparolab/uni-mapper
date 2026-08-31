@@ -18,11 +18,16 @@ class AlignmentExecutor {
   using OptimizeStep = std::function<Result<void>(
       AgentPipelineCtx&, SharedDatabase&,
       const std::shared_ptr<BackendOptimizerBase>&)>;
+  using AlignmentPreviewCallback = std::function<void(
+      uint64_t, const std::vector<AgentPipelineCtx>&,
+      const SharedDatabase&)>;
 
   explicit AlignmentExecutor(
-      std::shared_ptr<const AlgorithmProvider> algorithms);
+      std::shared_ptr<const AlgorithmProvider> algorithms,
+      AlignmentPreviewCallback alignment_preview = {});
   AlignmentExecutor(OptimizerFactory optimizer_factory, LoopStep loop_step,
-                    OptimizeStep optimize_step);
+                    OptimizeStep optimize_step,
+                    AlignmentPreviewCallback alignment_preview = {});
 
   [[nodiscard]] Result<ExecutionCandidate> ExecuteStage(
       std::shared_ptr<const RuntimeState> committed,
@@ -44,6 +49,7 @@ class AlignmentExecutor {
   OptimizerFactory optimizer_factory_;
   LoopStep loop_step_;
   OptimizeStep optimize_step_;
+  AlignmentPreviewCallback alignment_preview_;
   std::shared_ptr<const AlgorithmProvider> algorithms_;
 };
 

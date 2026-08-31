@@ -1,6 +1,6 @@
 #pragma once
 
-#include "open_lmm_ros.hpp"
+#include "../runtime_adapter/open_lmm_ros.hpp"
 
 #include <memory>
 

@@ -5,103 +5,36 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
-#include <map>
-#include <set>
-#include <tuple>
 #include <utility>
 
 #include <pcl/common/point_tests.h>
 #include <pcl/io/pcd_io.h>
 
 #include <open_lmm/common/cancellation.hpp>
+#include <domain/support/pointcloud_utils.hpp>
 
 namespace open_lmm {
 namespace {
-constexpr std::size_t kMaximumVisualizationPoints = 1'000'000;
-
-using VoxelKey = std::tuple<int64_t, int64_t, int64_t>;
-
-struct BuiltPointCache {
-  std::vector<VisualizationPoint> points;
-  Eigen::Vector3f min_bound = Eigen::Vector3f::Zero();
-  Eigen::Vector3f max_bound = Eigen::Vector3f::Zero();
-  bool has_bounds = false;
-  std::size_t source_point_count = 0;
-};
-
-uint64_t HashVoxel(const VoxelKey& key) {
-  uint64_t hash = 14695981039346656037ULL;
-  const auto mix = [&hash](int64_t value) {
-    const uint64_t bits = static_cast<uint64_t>(value);
-    for (unsigned shift = 0; shift != 64; shift += 8) {
-      hash ^= (bits >> shift) & 0xffU;
-      hash *= 1099511628211ULL;
-    }
-  };
-  mix(std::get<0>(key));
-  mix(std::get<1>(key));
-  mix(std::get<2>(key));
-  return hash;
+std::shared_ptr<const VisualizationPointPreview> FinishVoxelPreview(
+    IncrementalVoxelAccumulator accumulator, uint32_t voxel_millimeters) {
+  auto preview = std::make_shared<VisualizationPointPreview>();
+  preview->voxel_millimeters = voxel_millimeters;
+  preview->source_point_count = accumulator.SourcePointCount();
+  preview->points.reserve(accumulator.Size());
+  std::move(accumulator).ConsumeAverages(
+      [&preview](float x, float y, float z, float intensity) {
+        preview->points.push_back({x, y, z, intensity});
+        const Eigen::Vector3f position(x, y, z);
+        if (!preview->has_bounds) {
+          preview->min_bound = preview->max_bound = position;
+          preview->has_bounds = true;
+        } else {
+          preview->min_bound = preview->min_bound.cwiseMin(position);
+          preview->max_bound = preview->max_bound.cwiseMax(position);
+        }
+      });
+  return preview;
 }
-
-class BoundedVoxelPreview {
- public:
-  BoundedVoxelPreview(float voxel_size, std::size_t maximum_points)
-      : inverse_voxel_(1.0 / static_cast<double>(voxel_size)),
-        maximum_points_(maximum_points) {}
-
-  void Add(const Eigen::Vector3f& point, float intensity) {
-    if (!point.allFinite()) return;
-    ++source_point_count_;
-    const VoxelKey voxel{
-        static_cast<int64_t>(std::floor(point.x() * inverse_voxel_)),
-        static_cast<int64_t>(std::floor(point.y() * inverse_voxel_)),
-        static_cast<int64_t>(std::floor(point.z() * inverse_voxel_))};
-    if (selected_voxels_.contains(voxel)) return;
-    const std::pair<uint64_t, VoxelKey> priority{HashVoxel(voxel), voxel};
-    if (points_.size() >= maximum_points_ &&
-        priority >= points_.rbegin()->first) {
-      return;
-    }
-    points_.emplace(priority,
-                    VisualizationPoint{point.x(), point.y(), point.z(),
-                                       intensity});
-    selected_voxels_.insert(voxel);
-    if (points_.size() > maximum_points_) {
-      const auto worst = std::prev(points_.end());
-      selected_voxels_.erase(worst->first.second);
-      points_.erase(worst);
-    }
-  }
-
-  BuiltPointCache Finish() && {
-    BuiltPointCache result;
-    result.source_point_count = source_point_count_;
-    result.points.reserve(points_.size());
-    for (const auto& [priority, point] : points_) {
-      (void)priority;
-      result.points.push_back(point);
-      const Eigen::Vector3f position(point.x, point.y, point.z);
-      if (!result.has_bounds) {
-        result.min_bound = result.max_bound = position;
-        result.has_bounds = true;
-      } else {
-        result.min_bound = result.min_bound.cwiseMin(position);
-        result.max_bound = result.max_bound.cwiseMax(position);
-      }
-    }
-    return result;
-  }
-
- private:
-  double inverse_voxel_;
-  std::size_t maximum_points_;
-  std::size_t source_point_count_ = 0;
-  // Voxel identity is exact. Hashes only provide deterministic bounded
-  // selection priority; collisions are ordered by the full voxel key.
-  std::set<VoxelKey> selected_voxels_;
-  std::map<std::pair<uint64_t, VoxelKey>, VisualizationPoint> points_;
-};
 
 std::vector<Eigen::Isometry3d> PreviewPoses(
     const AgentRawData& raw, const AgentOptimizedDataHandle& optimized,
@@ -135,9 +68,23 @@ void VisualizationProjector::ClearPointCacheLocked() const {
   point_cache_bytes_ = 0;
 }
 
-void VisualizationProjector::Clear(uint64_t runtime_revision) {
+void VisualizationProjector::ClearPointCacheForAgentLocked(
+    const AgentId& agent) const {
+  for (auto entry = point_cache_.begin(); entry != point_cache_.end();) {
+    if (entry->first.agent == agent) {
+      point_cache_bytes_ -= entry->second.bytes;
+      entry = point_cache_.erase(entry);
+    } else {
+      ++entry;
+    }
+  }
+}
+
+void VisualizationProjector::Clear(uint64_t runtime_revision,
+                                   float preview_voxel_size_m) {
   auto state = std::make_shared<State>();
   state->revision = runtime_revision;
+  state->preview_voxel_size_m = preview_voxel_size_m;
   std::lock_guard lock(mutex_);
   state_ = std::move(state);
   candidate_base_revision_.reset();
@@ -145,12 +92,14 @@ void VisualizationProjector::Clear(uint64_t runtime_revision) {
   ClearPointCacheLocked();
 }
 
-void VisualizationProjector::Publish(
+std::shared_ptr<VisualizationProjector::State>
+VisualizationProjector::MakeState(
     VisualizationSource source, VisualizationPhase phase,
     bool include_maps) {
   auto state = std::make_shared<State>();
   state->revision = source.revision;
   state->phase = phase;
+  state->preview_voxel_size_m = source.preview_voxel_size_m;
   for (const auto& agent_source : source.agents) {
     const auto& agent = agent_source.agent;
     const auto& raw = agent_source.raw_data;
@@ -216,16 +165,63 @@ void VisualizationProjector::Publish(
     }
   }
 
+  return state;
+}
+
+void VisualizationProjector::Publish(
+    VisualizationSource source, VisualizationPhase phase,
+    bool include_maps) {
+  auto state = MakeState(std::move(source), phase, include_maps);
   std::lock_guard lock(mutex_);
+  if (phase == VisualizationPhase::kDataLoad && candidate_base_revision_) {
+    for (const auto& [agent, raw] : state->raw_data) {
+      const auto candidate_raw = state_->raw_data.find(agent);
+      const auto candidate_preview = state_->data_load_previews.find(agent);
+      if (candidate_raw != state_->raw_data.end() &&
+          candidate_raw->second == raw &&
+          candidate_preview != state_->data_load_previews.end() &&
+          candidate_preview->second) {
+        state->data_load_previews.emplace(agent, candidate_preview->second);
+      }
+    }
+  }
   state_ = std::move(state);
   candidate_base_revision_.reset();
   candidate_rollback_state_.reset();
   ClearPointCacheLocked();
 }
 
+void VisualizationProjector::PublishAlignmentCandidate(
+    VisualizationSource source) {
+  const uint64_t base_revision = source.revision;
+  auto state = MakeState(std::move(source),
+                         VisualizationPhase::kOptimization, false);
+  std::lock_guard lock(mutex_);
+  if (state_->revision > base_revision) return;
+  if (candidate_base_revision_ != base_revision) {
+    candidate_base_revision_ = base_revision;
+    candidate_rollback_state_ = state_;
+  }
+  state_ = std::move(state);
+  ClearPointCacheLocked();
+}
+
+void VisualizationProjector::RollbackAlignmentCandidate(
+    uint64_t base_revision) {
+  std::lock_guard lock(mutex_);
+  if (candidate_base_revision_ != base_revision ||
+      !candidate_rollback_state_ ||
+      state_->phase != VisualizationPhase::kOptimization) {
+    return;
+  }
+  state_ = std::move(candidate_rollback_state_);
+  candidate_base_revision_.reset();
+  ClearPointCacheLocked();
+}
+
 void VisualizationProjector::PublishDataLoadCandidate(
     uint64_t base_revision, const AgentId& agent,
-    const AgentRawDataHandle& raw) {
+    const AgentRawDataHandle& raw, VisualizationPointPreviewHandle preview) {
   if (!agent.IsValid() || !raw) return;
 
   std::lock_guard lock(mutex_);
@@ -237,6 +233,7 @@ void VisualizationProjector::PublishDataLoadCandidate(
     candidate_base_revision_ = base_revision;
     candidate_rollback_state_ = state_;
     next = std::make_shared<State>();
+    next->preview_voxel_size_m = state_->preview_voxel_size_m;
   }
   next->revision = base_revision;
   next->phase = VisualizationPhase::kDataLoad;
@@ -261,9 +258,16 @@ void VisualizationProjector::PublishDataLoadCandidate(
   next->agents[agent] = std::move(snapshot);
   next->raw_data[agent] = raw;
   next->point_poses[agent] = raw->odom_poses;
+  if (preview) {
+    next->preview_voxel_size_m =
+        static_cast<float>(preview->voxel_millimeters) / 1000.0F;
+    next->data_load_previews[agent] = std::move(preview);
+  } else {
+    next->data_load_previews.erase(agent);
+  }
   next->map_paths.erase(agent);
   state_ = std::move(next);
-  ClearPointCacheLocked();
+  ClearPointCacheForAgentLocked(agent);
 }
 
 void VisualizationProjector::RollbackDataLoadCandidate(
@@ -294,9 +298,9 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
         Error::InvalidArgument("visualization query agent is invalid"));
   }
   if (!std::isfinite(query.preview_voxel_size_m) ||
-      query.preview_voxel_size_m <= 0.0F || query.maximum_points == 0) {
+      query.preview_voxel_size_m < 0.0F) {
     return Result<VisualizationSnapshot>::Failure(Error::InvalidArgument(
-        "visualization query requires a positive voxel size and point limit"));
+        "visualization query voxel size must be non-negative"));
   }
 
   std::shared_ptr<const State> state;
@@ -314,16 +318,23 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
     return Result<VisualizationSnapshot>::Ok(std::move(snapshot));
   }
 
+  const float preview_voxel_size_m =
+      query.preview_voxel_size_m > 0.0F ? query.preview_voxel_size_m
+                                       : state->preview_voxel_size_m;
+  if (!std::isfinite(preview_voxel_size_m) ||
+      preview_voxel_size_m <= 0.0F) {
+    return Result<VisualizationSnapshot>::Failure(Error::InvalidArgument(
+        "runtime visualization voxel size is unavailable"));
+  }
+
   const auto map_path = state->map_paths.find(query.agent);
   const bool final_static_map = map_path != state->map_paths.end();
   const uint32_t voxel_millimeters = static_cast<uint32_t>(std::clamp(
-      std::llround(static_cast<double>(query.preview_voxel_size_m) * 1000.0),
+      std::llround(static_cast<double>(preview_voxel_size_m) * 1000.0),
       1LL,
       static_cast<long long>(std::numeric_limits<uint32_t>::max())));
-  const std::size_t maximum_points =
-      std::min(query.maximum_points, kMaximumVisualizationPoints);
   const PointCacheKey key{state->revision, state->phase, query.agent,
-                          voxel_millimeters, maximum_points};
+                          voxel_millimeters};
   std::shared_ptr<const PointCacheEntry> cached;
   {
     std::lock_guard lock(mutex_);
@@ -331,6 +342,15 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
     if (entry != point_cache_.end()) {
       entry->second.last_used = ++point_cache_access_;
       cached = entry->second.entry;
+    }
+  }
+  bool cache_new_entry = false;
+  if (!cached && !final_static_map) {
+    const auto preview = state->data_load_previews.find(query.agent);
+    if (preview != state->data_load_previews.end() && preview->second &&
+        preview->second->voxel_millimeters == voxel_millimeters) {
+      cached = preview->second;
+      cache_new_entry = true;
     }
   }
   if (!cached) {
@@ -342,26 +362,20 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
                            map_path->second.string()));
       }
       if (auto stopped = cancelled()) return std::move(*stopped);
-      BoundedVoxelPreview builder(
-          static_cast<float>(voxel_millimeters) / 1000.0F,
-          maximum_points);
+      IncrementalVoxelAccumulator accumulator(
+          static_cast<float>(voxel_millimeters) / 1000.0F);
       std::size_t visited = 0;
       for (const auto& point : cloud) {
         if ((++visited & 4095U) == 0U) {
           if (auto stopped = cancelled()) return std::move(*stopped);
         }
         if (!pcl::isFinite(point)) continue;
-        builder.Add(Eigen::Vector3f(point.x, point.y, point.z),
-                    point.intensity);
+        accumulator.Add(point);
       }
-      auto built = std::move(builder).Finish();
-      cached = std::make_shared<const PointCacheEntry>(PointCacheEntry{
-          std::move(built.points), built.min_bound, built.max_bound,
-          built.has_bounds, built.source_point_count});
+      cached = FinishVoxelPreview(std::move(accumulator), voxel_millimeters);
     } else {
-      BoundedVoxelPreview builder(
-          static_cast<float>(voxel_millimeters) / 1000.0F,
-          maximum_points);
+      IncrementalVoxelAccumulator accumulator(
+          static_cast<float>(voxel_millimeters) / 1000.0F);
       const auto raw = state->raw_data.find(query.agent);
       const auto poses = state->point_poses.find(query.agent);
       if (raw == state->raw_data.end() || poses == state->point_poses.end()) {
@@ -380,17 +394,24 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
             if (auto stopped = cancelled()) return std::move(*stopped);
           }
           if (!pcl::isFinite(point)) continue;
-          builder.Add((poses->second[frame] *
-                       Eigen::Vector3d(point.x, point.y, point.z))
-                          .cast<float>(),
-                      point.intensity);
+          const Eigen::Vector3f transformed =
+              (poses->second[frame] *
+               Eigen::Vector3d(point.x, point.y, point.z))
+                  .cast<float>();
+          if (!transformed.allFinite()) continue;
+          pcl::PointXYZI global_point;
+          global_point.x = transformed.x();
+          global_point.y = transformed.y();
+          global_point.z = transformed.z();
+          global_point.intensity = point.intensity;
+          accumulator.Add(global_point);
         }
       }
-      auto built = std::move(builder).Finish();
-      cached = std::make_shared<const PointCacheEntry>(PointCacheEntry{
-          std::move(built.points), built.min_bound, built.max_bound,
-          built.has_bounds, built.source_point_count});
+      cached = FinishVoxelPreview(std::move(accumulator), voxel_millimeters);
     }
+    cache_new_entry = true;
+  }
+  if (cache_new_entry) {
     if (auto stopped = cancelled()) return std::move(*stopped);
     std::lock_guard lock(mutex_);
     if (state_ == state) {
@@ -404,8 +425,7 @@ Result<VisualizationSnapshot> VisualizationProjector::Project(
         point_cache_.emplace(
             key, CachedPointEntry{cached, bytes, ++point_cache_access_});
         point_cache_bytes_ += bytes;
-        while (point_cache_.size() > kMaximumPointCacheEntries ||
-               point_cache_bytes_ > kMaximumPointCacheBytes) {
+        while (point_cache_.size() > kMaximumPointCacheEntries) {
           const auto oldest = std::min_element(
               point_cache_.begin(), point_cache_.end(),
               [](const auto& left, const auto& right) {

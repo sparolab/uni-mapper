@@ -250,6 +250,44 @@ int main() {
               return line.find("[config/path_policy]") != std::string::npos;
             }),
         "external config remains compatible and emits a path-policy warning");
+  // Exercise the production StageCoordinator glue, not just the file-set
+  // primitive: the in-memory root document remains authoritative while its
+  // on-disk destination is replaced by a non-empty directory. The selected
+  // module and root are installed, but root backup cleanup requires recovery.
+  const auto recovery_base = sessions.Snapshot();
+  const fs::path recovery_document = root / "server/recovery.json";
+  fs::remove(root / "config.json");
+  fs::create_directories(root / "config.json/retained-child");
+  std::ofstream(root / "config.json/retained-child/entry") << "retain\n";
+  auto recovery_apply = coordinator.ApplyConfig(
+      recovery_base, Candidate("server/recovery.json", 1.05),
+      {recovery_base->revision, recovery_base->config->revision},
+      {cancellation, {}, recovery_base->revision});
+  if (!recovery_apply) {
+    std::cerr << recovery_apply.GetError().Message() << '\n';
+  }
+  const auto recovery_authority = sessions.AuthoritySnapshot();
+  Check(recovery_apply && recovery_authority.state &&
+            recovery_authority.state->revision == recovery_base->revision + 1 &&
+            recovery_authority.state->config->revision ==
+                recovery_base->config->revision + 1 &&
+            recovery_authority.recovery_required &&
+            recovery_authority.recovery_required->severity ==
+                Error::Severity::kFatalRuntime &&
+            fs::is_regular_file(recovery_document) &&
+            fs::is_regular_file(root / "config.json") &&
+            fs::is_directory((root / "config.json").string() +
+                             ".open_lmm_backup"),
+        "StageCoordinator publishes config, state, and recovery health together");
+  const fs::path rejected_document = root / "server/rejected-after-recovery.json";
+  auto rejected_after_recovery = coordinator.ApplyConfig(
+      recovery_authority.state,
+      Candidate("server/rejected-after-recovery.json", 1.15),
+      {recovery_authority.state->revision,
+       recovery_authority.state->config->revision},
+      {cancellation, {}, recovery_authority.state->revision});
+  Check(!rejected_after_recovery && !fs::exists(rejected_document),
+        "recovery health rejects the next config mutation before file staging");
   fs::remove_all(external_root, ignored);
 
   // Backup cleanup happens after every final has been installed. A cleanup
@@ -268,17 +306,28 @@ int main() {
   RuntimeStateStore cleanup_sessions(initial);
   auto cleanup_candidate = std::make_shared<RuntimeState>(*initial);
   cleanup_candidate->revision = 2;
-  std::optional<Error> cleanup_recovery;
+  std::shared_ptr<const Error> cleanup_recovery;
   auto cleanup_commit = cleanup_sessions.CommitWithBarrier(
       initial, cleanup_candidate, [&cleanup_pending, &cleanup_recovery] {
+        auto recovery = std::make_shared<Error>(
+            Error::IoError("config transaction recovery outcome"));
         auto outcome = cleanup_pending.Commit();
-        if (!outcome) return Result<void>::Failure(outcome.GetError());
-        cleanup_recovery = outcome.Value().recovery_required;
-        return Result<void>::Ok();
+        if (!outcome)
+          return Result<RuntimeCommitOutcome>::Failure(outcome.GetError());
+        if (outcome.Value().recovery_required) {
+          *recovery = std::move(*outcome.Value().recovery_required);
+          recovery->MarkFatalRuntime().WithRuntimeRevision(2);
+          cleanup_recovery = std::move(recovery);
+        }
+        return Result<RuntimeCommitOutcome>::Ok({cleanup_recovery});
       });
   Check(cleanup_commit &&
-            cleanup_recovery.has_value() &&
+            cleanup_recovery &&
             cleanup_sessions.Snapshot().get() == cleanup_candidate.get() &&
+            cleanup_sessions.AuthoritySnapshot().recovery_required &&
+            cleanup_sessions.AuthoritySnapshot()
+                    .recovery_required->severity ==
+                Error::Severity::kFatalRuntime &&
             Read(cleanup_root / "first.final") == "new-one" &&
             Read(cleanup_root / "second.final") == "new-two" &&
             fs::is_directory(cleanup_root /

@@ -23,6 +23,16 @@ enum class AlgorithmProgressPhase : uint8_t {
   kDetectLoops,
   kOptimizeGraph,
   kWriteOutput,
+  kBuildAlignmentMap,
+  kDetectIntraLoops,
+  kRunKissMatcher,
+  kDetectInterLoops,
+  kBuildDescriptorConsensus,
+  kWaitAlignmentReview,
+  kBuildLoopConstraints,
+  kRegisterIntraLoops,
+  kRegisterInterLoops,
+  kSolveGraph,
 };
 
 struct AlgorithmProgress {
@@ -52,6 +62,24 @@ using AlgorithmProgressCallback = std::function<void(const AlgorithmProgress&)>;
     case AlgorithmProgressPhase::kDetectLoops: return "detect loops";
     case AlgorithmProgressPhase::kOptimizeGraph: return "optimize graph";
     case AlgorithmProgressPhase::kWriteOutput: return "write output";
+    case AlgorithmProgressPhase::kBuildAlignmentMap:
+      return "build alignment map";
+    case AlgorithmProgressPhase::kDetectIntraLoops:
+      return "detect intra loops";
+    case AlgorithmProgressPhase::kRunKissMatcher: return "run KISS Matcher";
+    case AlgorithmProgressPhase::kDetectInterLoops:
+      return "detect inter loops";
+    case AlgorithmProgressPhase::kBuildDescriptorConsensus:
+      return "build descriptor consensus";
+    case AlgorithmProgressPhase::kWaitAlignmentReview:
+      return "wait for alignment review";
+    case AlgorithmProgressPhase::kBuildLoopConstraints:
+      return "build loop constraints";
+    case AlgorithmProgressPhase::kRegisterIntraLoops:
+      return "register intra loops";
+    case AlgorithmProgressPhase::kRegisterInterLoops:
+      return "register inter loops";
+    case AlgorithmProgressPhase::kSolveGraph: return "solve graph";
   }
   return "unknown";
 }

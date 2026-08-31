@@ -1,7 +1,8 @@
-#include "stage_runner.hpp"
+#include "execution_spec.hpp"
 
 #include <array>
 #include <algorithm>
+#include <iterator>
 #include <set>
 #include <stdexcept>
 
@@ -224,7 +225,8 @@ std::vector<ArtifactType> AffectedArtifacts(ConfigDomain domain) {
            ArtifactType::kMapAlignment}, true);
     case ConfigDomain::kOptimizer:
       return TransitiveArtifacts(
-          {ArtifactType::kOptimizerState, ArtifactType::kOptimizedPoses}, true);
+          {ArtifactType::kLoopCandidates, ArtifactType::kOptimizerState,
+           ArtifactType::kOptimizedPoses}, true);
     case ConfigDomain::kDynamicRemover:
     case ConfigDomain::kMapSave:
       return TransitiveArtifacts(

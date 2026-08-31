@@ -2,7 +2,6 @@
 add_library(open_lmm_loop_detector SHARED)
 target_sources(open_lmm_loop_detector PRIVATE
   alignment_map_builder.cpp
-  loop_detector_base.cpp
   loop_detector_kdtree.cpp
   kiss_alignment_proposer.cpp
   descriptor_alignment_proposer.cpp

@@ -5,12 +5,14 @@
 #include <adapters/gui/model/gui_event_queue.hpp>
 #include <adapters/gui/model/gui_model.hpp>
 #include <adapters/gui/gui_plugin_host.hpp>
+#include <adapters/gui/presentation/alignment_presentation_state.hpp>
 #include <adapters/gui/presentation/map_presentation_state.hpp>
 #include <adapters/gui/presentation/visualization_repository.hpp>
 #include <adapters/gui/presentation/visualization_snapshot_worker.hpp>
 #include <adapters/gui/presentation/visualization_style.hpp>
 #include <plugins/host/load_module.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -124,16 +126,54 @@ void TestGuiUtilities() {
       open_lmm::VisualizationPhase::kDataLoad);
   const auto optimization = open_lmm::DefaultVisualizationPreferences(
       open_lmm::VisualizationPhase::kOptimization);
+  const auto map_update = open_lmm::DefaultVisualizationPreferences(
+      open_lmm::VisualizationPhase::kMapUpdate);
   Require(data_load.trajectory && data_load.pose_axes && data_load.points &&
               optimization.trajectory && optimization.pose_axes &&
               optimization.points &&
-              optimization.intra_loops && optimization.inter_loops,
+              optimization.intra_loops && optimization.inter_loops &&
+              map_update.trajectory && map_update.pose_axes &&
+              map_update.points && !map_update.intra_loops &&
+              !map_update.inter_loops,
           "visualization layers retain stage-specific defaults");
   Require(open_lmm::kVisualizationTrajectoryLineWidth == 1.0F &&
-              open_lmm::kVisualizationIntraLoopLineWidth == 4.0F &&
+              open_lmm::kVisualizationIntraLoopLineWidth == 5.0F &&
               open_lmm::kVisualizationInterLoopLineWidth == 5.0F &&
+              open_lmm::kVisualizationIntraLoopLineWidth ==
+                  open_lmm::kVisualizationInterLoopLineWidth &&
               open_lmm::kDefaultVisualizationColorMode == 2,
           "trajectory and loop presentation widths match the UI contract");
+
+  open_lmm::AlignmentPresentationState alignment_presentation;
+  Eigen::Matrix4f accepted_a = Eigen::Matrix4f::Identity();
+  accepted_a(0, 3) = 10.0F;
+  Eigen::Matrix4f accepted_b = Eigen::Matrix4f::Identity();
+  accepted_b(1, 3) = 20.0F;
+  alignment_presentation.RememberAccepted(Id("A"), accepted_a);
+  alignment_presentation.RememberAccepted(Id("B"), accepted_b);
+  alignment_presentation.ObserveSnapshot(
+      Id("A"), open_lmm::VisualizationPoseKind::kOdometry);
+  Require(alignment_presentation.TransformForOdometry(Id("A")) &&
+              alignment_presentation.TransformForOdometry(Id("A"))
+                  ->isApprox(accepted_a) &&
+              alignment_presentation.TransformForOdometry(Id("B"))
+                  ->isApprox(accepted_b),
+          "delayed odometry redraw preserves every accepted agent transform");
+  alignment_presentation.ObserveSnapshot(
+      Id("A"), open_lmm::VisualizationPoseKind::kOptimized);
+  Require(!alignment_presentation.TransformForOdometry(Id("A")) &&
+              alignment_presentation.TransformForOdometry(Id("B")),
+          "optimized installation retires only the matching accepted transform");
+  alignment_presentation.Clear();
+  Require(alignment_presentation.Agents().empty(),
+          "alignment presentation reset clears pending accepted transforms");
+
+  std::vector<std::string> selected_datasets{"agent1", "agent2"};
+  open_lmm::ClearDatasetSelection(selected_datasets);
+  Require(selected_datasets.empty(),
+          "DataLoad Clear all mutates only the dataset selection draft");
+  open_lmm::ClearDatasetSelection(selected_datasets);
+  Require(selected_datasets.empty(), "DataLoad Clear all is idempotent");
 
   auto document = open_lmm::ConfigEditorDocument::Parse(R"({
     "global":{"config_map_server":"map.json","config_data_loader":"data.json",
@@ -141,6 +181,14 @@ void TestGuiUtilities() {
     "config_dynamic_remover":"remover.json"},
     "directory":{"root_dir_path":"/data","sub_dir_list":["a"],"root_save_dir":"/out"}})");
   Require(document && document.Value().Values(), "GUI config document is schema validated");
+  auto mutable_document = std::move(document).Value();
+  auto empty_values = mutable_document.Values().Value();
+  open_lmm::ClearDatasetSelection(empty_values.sub_dir_list);
+  const auto before_empty_apply = mutable_document.CanonicalJson();
+  Require(!mutable_document.SetValues(empty_values) &&
+              mutable_document.CanonicalJson().Value() ==
+                  before_empty_apply.Value(),
+          "empty DataLoad draft is rejected without mutating committed editor state");
   Require(!open_lmm::ConfigEditorDocument::Parse("{}").IsOk(),
           "GUI rejects incomplete root config");
 
@@ -175,6 +223,33 @@ void TestGuiUtilities() {
   snapshot->agent = Id("A");
   snapshot->revision = 1;
   Require(repository.Commit(snapshot).changed, "visualization revision commits");
+  open_lmm::VisualizationRepository candidate_repository;
+  Require(candidate_repository.Commit(snapshot).changed,
+          "candidate repository accepts its committed baseline");
+  auto intermediate = std::make_shared<open_lmm::VisualizationSnapshot>();
+  intermediate->agent = Id("A");
+  intermediate->revision = 1;
+  intermediate->phase = open_lmm::VisualizationPhase::kOptimization;
+  intermediate->pose_kind = open_lmm::VisualizationPoseKind::kOptimized;
+  Eigen::Isometry3f optimized_pose = Eigen::Isometry3f::Identity();
+  optimized_pose.translation().x() = 10.0F;
+  intermediate->poses.push_back({0, optimized_pose});
+  Require(candidate_repository.Commit(intermediate, 2).changed,
+          "same-revision optimizer presentation replaces DataLoad metadata");
+  auto revised_intermediate =
+      std::make_shared<open_lmm::VisualizationSnapshot>(*intermediate);
+  revised_intermediate->poses.front().transform.translation().x() = 11.0F;
+  Require(candidate_repository.Commit(revised_intermediate, 3).changed &&
+              candidate_repository.Latest(Id("A"))->poses.front()
+                      .transform.translation().x() == 11.0F &&
+              !candidate_repository.Commit(intermediate, 2).changed,
+          "presentation generation accepts the latest same-phase pose only");
+  auto rolled_back_candidate =
+      std::make_shared<open_lmm::VisualizationSnapshot>(*snapshot);
+  Require(candidate_repository.Commit(rolled_back_candidate, 4).changed &&
+              candidate_repository.Latest(Id("A"))->phase ==
+                  open_lmm::VisualizationPhase::kDataLoad,
+          "newer presentation generation accepts same-revision rollback");
   auto second_snapshot = std::make_shared<open_lmm::VisualizationSnapshot>();
   second_snapshot->agent = Id("B");
   second_snapshot->revision = 1;
@@ -217,11 +292,74 @@ void TestGuiUtilities() {
               *replacement.replaced_drawable == "map/A/1" &&
               presentation.Visible(Id("A"))->drawable == "map/A/2",
           "presentation commit atomically identifies old and new drawable");
+  presentation.Begin(Id("A"), 30);
+  presentation.Begin(Id("B"), 31);
+  presentation.CancelPending();
+  const auto retired_stage_commit = presentation.Commit(
+      Id("A"), 30, "map/A/stale-map-update",
+      open_lmm::VisualizationPointKind::kFinalStaticMap);
+  Require(!retired_stage_commit.accepted &&
+              presentation.Phase(Id("A")) ==
+                  open_lmm::MapPresentationPhase::kVisible &&
+              presentation.Visible(Id("A"))->drawable == "map/A/2",
+          "Alignment transition cancels stale MapUpdate work without clearing the visible map");
+  presentation.Begin(Id("B"), 32);
+  Require(presentation.Commit(
+              Id("B"), 32, "map/B/review-target",
+              open_lmm::VisualizationPointKind::kFinalStaticMap)
+              .accepted,
+          "second visible map is installed for the review replacement fixture");
+  const auto replaced_by_review = presentation.DiscardAllVisible();
+  Require(replaced_by_review.size() == 2 &&
+              std::find(replaced_by_review.begin(), replaced_by_review.end(),
+                        "map/A/2") != replaced_by_review.end() &&
+              std::find(replaced_by_review.begin(), replaced_by_review.end(),
+                        "map/B/review-target") != replaced_by_review.end() &&
+              !presentation.Visible(Id("A")) &&
+              !presentation.Visible(Id("B")),
+          "ready Alignment review replaces all prior pipeline maps in one presentation commit");
+  presentation.Begin(Id("A"), 33);
+  Require(presentation.Commit(
+              Id("A"), 33, "map/A/2",
+              open_lmm::VisualizationPointKind::kFinalStaticMap)
+              .accepted,
+          "visibility fixture restores a presented map after review replacement");
   const auto hidden = presentation.SetVisible(Id("A"), false);
   Require(hidden && *hidden == "map/A/2" &&
               !presentation.IsVisible(Id("A")) &&
               !presentation.Visible(Id("A")),
           "agent visibility removes only the presented drawable");
+  presentation.Begin(Id("B"), 4);
+  const auto second_agent = presentation.Commit(
+      Id("B"), 4, "map/B/1",
+      open_lmm::VisualizationPointKind::kFilteredScanPreview);
+  const auto reset_maps = presentation.ResetEpoch();
+  Require(second_agent.accepted && reset_maps.size() == 1 &&
+              reset_maps.front() == "map/B/1" &&
+              presentation.Phase(Id("B")) ==
+                  open_lmm::MapPresentationPhase::kEmpty &&
+              presentation.IsVisible(Id("A")) &&
+              presentation.IsVisible(Id("B")),
+          "presentation epoch reset returns installed maps and restores default visibility");
+
+  open_lmm::VisualizationRepository epoch_repository;
+  auto epoch_snapshot = std::make_shared<open_lmm::VisualizationSnapshot>();
+  epoch_snapshot->agent = Id("A");
+  epoch_snapshot->revision = 7;
+  epoch_snapshot->poses.resize(2);
+  Require(epoch_repository.Commit(epoch_snapshot).changed,
+          "epoch repository fixture commits visualization metadata");
+  const auto reset_drawables = epoch_repository.ResetEpoch();
+  Require(reset_drawables.size() == 6 &&
+              std::find(reset_drawables.begin(), reset_drawables.end(),
+                        open_lmm::VisualizationRepository::MapName(Id("A"), 7)) !=
+                  reset_drawables.end() &&
+              std::find(reset_drawables.begin(), reset_drawables.end(),
+                        open_lmm::VisualizationRepository::PoseName(
+                            Id("A"), 1, 7)) != reset_drawables.end() &&
+              epoch_repository.Snapshots().empty() &&
+              epoch_repository.ApproximateBytes() == 0,
+          "repository epoch reset enumerates every layer and releases metadata");
 
   std::mutex request_mutex;
   std::condition_variable request_changed;
@@ -247,9 +385,14 @@ void TestGuiUtilities() {
     request_changed.wait(lock,
                          [&] { return !observed_queries.empty(); });
   }
-  (void)snapshot_worker.Request({Id("B"), true});
-  (void)snapshot_worker.Request({Id("B"), false});
-  (void)snapshot_worker.Request({Id("C"), true});
+  const auto first_b = snapshot_worker.Request(
+      {Id("B"), true},
+      open_lmm::VisualizationRequestIntent::kExpandPoints);
+  const auto polled_b = snapshot_worker.Request(
+      {Id("B"), false}, open_lmm::VisualizationRequestIntent::kPoll);
+  (void)snapshot_worker.Request(
+      {Id("C"), true},
+      open_lmm::VisualizationRequestIntent::kExpandPoints);
   {
     std::lock_guard lock(request_mutex);
     release_first_request = true;
@@ -262,12 +405,76 @@ void TestGuiUtilities() {
   }
   snapshot_worker.Stop();
   snapshot_worker.Join();
-  Require(observed_queries.size() == 3 &&
-              observed_queries[1].agent == Id("C") &&
+  Require(first_b && polled_b && *first_b == *polled_b &&
+              observed_queries.size() == 3 &&
+              observed_queries[1].agent == Id("B") &&
               observed_queries[1].include_points &&
-              observed_queries[2].agent == Id("B") &&
+              observed_queries[2].agent == Id("C") &&
               observed_queries[2].include_points,
-          "queued map requests retain both agents and run newest first");
+          "polling preserves point requests and queued agents run FIFO");
+
+  std::atomic<bool> point_started{false};
+  std::atomic<bool> release_point{false};
+  std::atomic<bool> point_returned{false};
+  std::atomic<bool> point_cancelled{false};
+  std::atomic<unsigned> point_calls{0};
+  open_lmm::VisualizationSnapshotWorker polling_worker(
+      [&](const open_lmm::VisualizationQuery& query) {
+        point_calls.fetch_add(1, std::memory_order_relaxed);
+        const auto cancellation = open_lmm::CurrentCancellationToken();
+        point_started.store(true, std::memory_order_release);
+        while (!release_point.load(std::memory_order_acquire)) {
+          if (cancellation->IsCancellationRequested()) {
+            point_cancelled.store(true, std::memory_order_release);
+            return open_lmm::Result<open_lmm::VisualizationSnapshot>::Failure(
+                open_lmm::Error::Cancelled("unexpected poll cancellation"));
+          }
+          std::this_thread::yield();
+        }
+        open_lmm::VisualizationSnapshot result;
+        result.agent = query.agent;
+        result.points_complete = query.include_points;
+        point_returned.store(true, std::memory_order_release);
+        return open_lmm::Result<open_lmm::VisualizationSnapshot>::Ok(
+            std::move(result));
+      });
+  const auto point_generation = polling_worker.Request(
+      {Id("A"), true},
+      open_lmm::VisualizationRequestIntent::kExpandPoints);
+  while (!point_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::optional<uint64_t> poll_generation;
+  for (int repeat = 0; repeat != 8; ++repeat) {
+    poll_generation = polling_worker.Request(
+        {Id("A"), false}, open_lmm::VisualizationRequestIntent::kPoll);
+  }
+  release_point.store(true, std::memory_order_release);
+  while (!point_returned.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  // Give the worker an opportunity to publish the result, then verify that a
+  // poll also reuses a completed full request which has not yet been drained.
+  std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  const auto completed_poll_generation = polling_worker.Request(
+      {Id("A"), false}, open_lmm::VisualizationRequestIntent::kPoll);
+  std::vector<open_lmm::VisualizationSnapshotResult> polling_results;
+  while (polling_results.empty()) {
+    polling_results = polling_worker.Drain();
+    if (polling_results.empty()) std::this_thread::yield();
+  }
+  polling_worker.Stop();
+  polling_worker.Join();
+  Require(point_generation && poll_generation && completed_poll_generation &&
+              *point_generation == *poll_generation &&
+              *point_generation == *completed_poll_generation &&
+              !point_cancelled.load(std::memory_order_acquire) &&
+              point_calls.load(std::memory_order_acquire) == 1 &&
+              polling_results.size() == 1 &&
+              polling_results.front().request_generation == *point_generation &&
+              polling_results.front().result.IsOk() &&
+              polling_results.front().result.Value().points_complete,
+          "DataLoad metadata polling cannot cancel or supersede point work");
 
   std::atomic<bool> first_started{false};
   std::atomic<bool> first_cancelled{false};
@@ -315,6 +522,58 @@ void TestGuiUtilities() {
                   *latest_generation,
           "same-agent supersession cancels stale work and publishes only latest");
 
+  std::atomic<bool> epoch_old_started{false};
+  std::atomic<bool> epoch_old_cancelled{false};
+  std::atomic<bool> epoch_new_completed{false};
+  std::atomic<unsigned> epoch_pending_calls{0};
+  open_lmm::VisualizationSnapshotWorker epoch_worker(
+      [&](const open_lmm::VisualizationQuery& query) {
+        const auto cancellation = open_lmm::CurrentCancellationToken();
+        if (query.agent == Id("A")) {
+          epoch_old_started.store(true, std::memory_order_release);
+          while (!cancellation->IsCancellationRequested()) {
+            std::this_thread::yield();
+          }
+          epoch_old_cancelled.store(true, std::memory_order_release);
+          return open_lmm::Result<open_lmm::VisualizationSnapshot>::Failure(
+              open_lmm::Error::Cancelled("retired visualization epoch"));
+        }
+        if (query.agent == Id("B")) {
+          epoch_pending_calls.fetch_add(1, std::memory_order_relaxed);
+        }
+        open_lmm::VisualizationSnapshot result;
+        result.agent = query.agent;
+        if (query.agent == Id("C")) {
+          epoch_new_completed.store(true, std::memory_order_release);
+        }
+        return open_lmm::Result<open_lmm::VisualizationSnapshot>::Ok(
+            std::move(result));
+      });
+  (void)epoch_worker.Request({Id("A"), true});
+  while (!epoch_old_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  (void)epoch_worker.Request({Id("B"), true});
+  epoch_worker.ResetEpoch();
+  const auto epoch_generation = epoch_worker.Request({Id("C"), false});
+  while (!epoch_new_completed.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::vector<open_lmm::VisualizationSnapshotResult> epoch_results;
+  while (epoch_results.empty()) {
+    epoch_results = epoch_worker.Drain();
+    if (epoch_results.empty()) std::this_thread::yield();
+  }
+  epoch_worker.Stop();
+  epoch_worker.Join();
+  Require(epoch_generation &&
+              epoch_old_cancelled.load(std::memory_order_acquire) &&
+              epoch_pending_calls.load(std::memory_order_acquire) == 0 &&
+              epoch_results.size() == 1 &&
+              epoch_results.front().query.agent == Id("C") &&
+              epoch_results.front().request_generation == *epoch_generation,
+          "worker epoch reset cancels active work, drops pending work, and publishes only the new epoch");
+
   open_lmm::GuiModel progress_model;
   open_lmm::ExecutionEvent started;
   started.sequence = 1;
@@ -361,8 +620,48 @@ void TestGuiUtilities() {
       1, 12};
   Require(data_load_model.Apply(phase) &&
               data_load_model.Stage(open_lmm::StageId::kDataLoad)
-                      .latest_progress_agent == Id("B"),
-          "DataLoad selects only the most recently updated scan stream");
+                      .agent_progress.size() == 2,
+          "DataLoad retains every concurrently active agent stream");
+  phase.sequence = 4;
+  phase.agent = Id("A");
+  phase.algorithm_progress = open_lmm::AlgorithmProgress{
+      Id("A"), "data_load", open_lmm::AlgorithmProgressPhase::kBuildPreview,
+      1, 1};
+  Require(data_load_model.Apply(phase) &&
+              data_load_model.Stage(open_lmm::StageId::kDataLoad)
+                      .agent_progress.size() == 1 &&
+              data_load_model.Stage(open_lmm::StageId::kDataLoad)
+                  .agent_progress.contains(Id("B")),
+          "completed DataLoad agent disappears while active peers remain");
+  phase.sequence = 5;
+  phase.agent = Id("C");
+  phase.algorithm_progress = open_lmm::AlgorithmProgress{
+      Id("C"), "load", open_lmm::AlgorithmProgressPhase::kReadAndFilter,
+      1, 8};
+  Require(data_load_model.Apply(phase) &&
+              data_load_model.Stage(open_lmm::StageId::kDataLoad)
+                      .agent_progress.size() == 2,
+          "a newly admitted DataLoad agent adds one active stream");
+  phase.sequence = 6;
+  phase.agent = Id("B");
+  phase.algorithm_progress = open_lmm::AlgorithmProgress{
+      Id("B"), "data_load", open_lmm::AlgorithmProgressPhase::kBuildPreview,
+      1, 1};
+  Require(data_load_model.Apply(phase) &&
+              data_load_model.Stage(open_lmm::StageId::kDataLoad)
+                      .agent_progress.size() == 1 &&
+              data_load_model.Stage(open_lmm::StageId::kDataLoad)
+                  .agent_progress.contains(Id("C")),
+          "DataLoad active stream count follows task completion");
+  phase.sequence = 7;
+  phase.agent = Id("C");
+  phase.algorithm_progress = open_lmm::AlgorithmProgress{
+      Id("C"), "data_load", open_lmm::AlgorithmProgressPhase::kBuildPreview,
+      1, 1};
+  Require(data_load_model.Apply(phase) &&
+              data_load_model.Stage(open_lmm::StageId::kDataLoad)
+                  .agent_progress.empty(),
+          "DataLoad removes the final bar immediately at agent completion");
 
   open_lmm::ExecutionEvent completed;
   completed.sequence = 3;
@@ -388,12 +687,24 @@ void TestGuiUtilities() {
   phase.agent = Id("B");
   phase.algorithm_progress = open_lmm::AlgorithmProgress{
       Id("B"), "loop_detect",
-      open_lmm::AlgorithmProgressPhase::kDetectLoops, 0, 1};
+      open_lmm::AlgorithmProgressPhase::kWaitAlignmentReview, 0,
+      std::nullopt};
   Require(alignment_model.Apply(phase) &&
               open_lmm::FormatAlgorithmProgressStatus(
                   alignment_model.Stage(open_lmm::StageId::kAlignment)
-                      .agent_progress.at(Id("B"))) == "detect loops 0/1",
-          "GUI exposes Alignment loop detection progress");
+                      .agent_progress.at(Id("B"))) ==
+                  "wait for alignment review (in progress; total unavailable)",
+          "GUI preserves Alignment review as an indeterminate phase");
+  phase.sequence = 3;
+  phase.algorithm_progress = open_lmm::AlgorithmProgress{
+      Id("B"), "loop_detect",
+      open_lmm::AlgorithmProgressPhase::kDetectIntraLoops, 4, 10};
+  Require(alignment_model.Apply(phase) &&
+              open_lmm::FormatAlgorithmProgressStatus(
+                  alignment_model.Stage(open_lmm::StageId::kAlignment)
+                      .agent_progress.at(Id("B"))) ==
+                  "detect intra loops 4/10",
+          "GUI replaces the review state with the latest determinate phase");
 
   auto loop_snapshot = std::make_shared<open_lmm::VisualizationSnapshot>();
   loop_snapshot->agent = Id("A");
@@ -416,6 +727,21 @@ void TestGuiUtilities() {
   enriched->points.push_back({1.0F, 2.0F, 3.0F, 0.0F});
   Require(repository.Commit(enriched).changed,
           "lazy point payload enriches matching revision and phase");
+  auto map_update_snapshot =
+      std::make_shared<open_lmm::VisualizationSnapshot>(*enriched);
+  map_update_snapshot->revision = 2;
+  map_update_snapshot->phase = open_lmm::VisualizationPhase::kMapUpdate;
+  Require(repository.Commit(map_update_snapshot).changed,
+          "MapUpdate visualization revision commits without clearing repository state");
+  auto alignment_reentry =
+      std::make_shared<open_lmm::VisualizationSnapshot>(*enriched);
+  alignment_reentry->revision = 3;
+  alignment_reentry->phase = open_lmm::VisualizationPhase::kLoopDetection;
+  const auto alignment_reentry_update = repository.Commit(alignment_reentry);
+  Require(alignment_reentry_update.changed &&
+              repository.Latest(Id("A"))->phase ==
+                  open_lmm::VisualizationPhase::kLoopDetection,
+          "newer Alignment revision replaces MapUpdate metadata even though its phase rank is lower");
 }
 
 void TestSessionFreeBridgeAndModelReplacement() {

@@ -27,7 +27,14 @@ void Check(bool condition, const char* message) {
 
 class FakeRunner final : public test::RuntimePortFixture {
  public:
-  enum class ReceiptFault { kNone, kBase, kCommitted, kNoMutation };
+  enum class ReceiptFault {
+    kNone,
+    kBase,
+    kCommitted,
+    kNoMutation,
+    kRecoveryMissing
+  };
+  enum class PostCommitFault { kNone, kFailure, kThrow };
   enum class ConfigReceiptFault {
     kNone, kBaseSession, kCommittedSession, kPreviousConfig, kCommittedConfig
   };
@@ -192,15 +199,38 @@ class FakeRunner final : public test::RuntimePortFixture {
       case ReceiptFault::kNoMutation:
         receipt.committed_revision = receipt.base_revision;
         break;
+      case ReceiptFault::kRecoveryMissing:
+        receipt.recovery_required.reset();
+        break;
     }
+    if (emit_excluded_receipt) receipt.excluded_agents = {Id("B")};
     return receipt;
   }
-  Result<ConfigApplyReceipt> ApplyConfig(
+  std::optional<Error> RecoveryAfterCommit() const override {
+    if (!emit_recovery) return std::nullopt;
+    return Error::IoError("fixture recovery manifest")
+        .WithExecution("file_transaction", "recovery_required");
+  }
+  Result<void> AfterCommitFixture(
+      const ExecutionCommand&, const ExecutionContext&,
+      const ExecutionReceipt&) override {
+    switch (post_commit_fault) {
+      case PostCommitFault::kNone: return Result<void>::Ok();
+      case PostCommitFault::kFailure:
+        return Result<void>::Failure(
+            Error::InvalidArgument("fixture failed after commit"));
+      case PostCommitFault::kThrow:
+        throw std::runtime_error("fixture threw after commit");
+    }
+    return Result<void>::Ok();
+  }
+  Result<ConfigCommandReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context) override {
     auto applied = RuntimePortFixture::ApplyConfig(candidate, expected, context);
     if (!applied) return applied;
-    auto receipt = std::move(applied).Value();
+    auto command_receipt = std::move(applied).Value();
+    auto& receipt = command_receipt.receipt;
     switch (config_receipt_fault) {
       case ConfigReceiptFault::kNone: break;
       case ConfigReceiptFault::kBaseSession:
@@ -216,7 +246,7 @@ class FakeRunner final : public test::RuntimePortFixture {
         ++receipt.config_revision;
         break;
     }
-    return Result<ConfigApplyReceipt>::Ok(std::move(receipt));
+    return Result<ConfigCommandReceipt>::Ok(std::move(command_receipt));
   }
   mutable std::mutex mutex;
   std::vector<StageId> calls;
@@ -225,6 +255,9 @@ class FakeRunner final : public test::RuntimePortFixture {
   bool replay_fails = false;
   bool fail_reconfigure = false;
   ReceiptFault receipt_fault = ReceiptFault::kNone;
+  PostCommitFault post_commit_fault = PostCommitFault::kNone;
+  bool emit_excluded_receipt = false;
+  bool emit_recovery = false;
   ConfigReceiptFault config_receipt_fault = ConfigReceiptFault::kNone;
   std::optional<ConfigDomain> reconfigured_domain;
   bool block_node_until_cancel = false;
@@ -337,6 +370,25 @@ void TestAlgorithmProgressEventBridge() {
         "progress bridge must preserve stage, agent, phase, and exact N/N");
 }
 
+void TestAlignmentExclusionIsPublishedAfterCommit() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->emit_excluded_receipt = true;
+  PipelineController controller(runner, runner);
+  auto job = controller.SubmitStage(StageId::kAlignment);
+  Check(job && controller.Wait(job.Value()),
+        "Alignment with an excluded follower still completes");
+  const auto snapshot = controller.Snapshot();
+  const auto event = std::find_if(
+      snapshot.recent_events.begin(), snapshot.recent_events.end(),
+      [](const ExecutionEvent& item) {
+        return item.type == EventType::kAlignmentAgentExcluded &&
+               item.agent == Id("B");
+      });
+  Check(event != snapshot.recent_events.end() &&
+            event->affected_agents == std::vector<AgentId>{Id("B")},
+        "post-commit event reports the exact excluded follower");
+}
+
 void TestParallelAgentProgressStreamsRemainMonotonic() {
   auto runner = std::make_shared<FakeRunner>();
   runner->emit_parallel_progress = true;
@@ -386,6 +438,141 @@ void TestMalformedExecutionReceiptsCannotPublishSuccess() {
               rejected.GetError().severity == Error::Severity::kFatalRuntime,
           "receipt protocol failure rejects later commands as fatal");
   }
+}
+
+void TestRecoveryReceiptMustMatchQueryAuthority() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->emit_recovery = true;
+  runner->receipt_fault = FakeRunner::ReceiptFault::kRecoveryMissing;
+  PipelineController controller(runner);
+  const auto submitted = controller.SubmitStage(StageId::kDataLoad);
+  Check(submitted && !controller.Wait(submitted.Value()),
+        "missing receipt recovery health fails the job");
+  const auto authoritative = runner->Snapshot();
+  const auto snapshot = controller.Snapshot();
+  const auto fatal = controller.FatalRuntimeError();
+  const auto exposes_both_causes = [](const Error& error) {
+    return error.Message().find("fixture recovery manifest") !=
+               std::string::npos &&
+           error.Message().find("receipt recovery health does not match") !=
+               std::string::npos;
+  };
+  Check(authoritative.recovery_required && fatal &&
+            snapshot.runtime_revision == authoritative.revision &&
+            fatal->code == Error::Code::kIoError &&
+            fatal->severity == Error::Severity::kFatalRuntime &&
+            exposes_both_causes(*fatal),
+        "recovery mismatch imports authority and poisons later mutations");
+  Check(std::any_of(snapshot.recent_events.begin(), snapshot.recent_events.end(),
+                    [&](const ExecutionEvent& event) {
+                      return event.error && exposes_both_causes(*event.error);
+                    }),
+        "recovery mismatch event preserves manifest and protocol failure");
+  runner->receipt_fault = FakeRunner::ReceiptFault::kNone;
+  const auto rejected = controller.SubmitStage(StageId::kDataLoad);
+  Check(!rejected && rejected.GetError().code == Error::Code::kIoError &&
+            exposes_both_causes(rejected.GetError()),
+        "compound fatal health gates retry without hiding recovery");
+}
+
+void TestRunAllStopsAfterCommittedRecovery() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->emit_recovery = true;
+  PipelineController controller(runner);
+  const auto submitted = controller.SubmitRunAll();
+  Check(submitted && !controller.Wait(submitted.Value()),
+        "RunAll reports incomplete pipeline after committed recovery");
+  const auto authoritative = runner->Snapshot();
+  const auto snapshot = controller.Snapshot();
+  Check(runner->calls == std::vector<StageId>{StageId::kDataLoad} &&
+            authoritative.revision == 2 &&
+            snapshot.runtime_revision == authoritative.revision &&
+            controller.FatalRuntimeError(),
+        "RunAll preserves the committed stage and skips later stages");
+}
+
+void TestAdvancedAuthorityWithoutReceiptPoisonsController() {
+  for (const auto fault : {FakeRunner::PostCommitFault::kFailure,
+                           FakeRunner::PostCommitFault::kThrow}) {
+    auto runner = std::make_shared<FakeRunner>();
+    runner->post_commit_fault = fault;
+    PipelineController controller(runner);
+    const auto submitted = controller.SubmitStage(StageId::kDataLoad);
+    Check(submitted && !controller.Wait(submitted.Value()),
+          "post-commit fault must fail the job");
+    const auto authoritative = runner->Snapshot();
+    const auto snapshot = controller.Snapshot();
+    Check(snapshot.runtime_revision == authoritative.revision &&
+              snapshot.runtime_revision == 2 && snapshot.job &&
+              snapshot.job->state == JobState::kFailed,
+          "post-commit fault must import authoritative runtime state");
+    const auto failed_event = std::find_if(
+        snapshot.recent_events.rbegin(), snapshot.recent_events.rend(),
+        [](const ExecutionEvent& event) {
+          return event.type == EventType::kStageFailed;
+        });
+    Check(failed_event != snapshot.recent_events.rend() &&
+              failed_event->error &&
+              failed_event->error->severity == Error::Severity::kFatalRuntime,
+          "advanced authority without a receipt must be fatal");
+    runner->post_commit_fault = FakeRunner::PostCommitFault::kNone;
+    const auto rejected = controller.SubmitStage(StageId::kDataLoad);
+    Check(!rejected &&
+              rejected.GetError().severity == Error::Severity::kFatalRuntime &&
+              runner->Snapshot().revision == authoritative.revision,
+          "protocol failure must reject later mutations before port entry");
+  }
+}
+
+void TestAdvancedRecoveryWithoutReceiptPreservesBothCauses() {
+  for (const auto fault : {FakeRunner::PostCommitFault::kFailure,
+                           FakeRunner::PostCommitFault::kThrow}) {
+    auto runner = std::make_shared<FakeRunner>();
+    runner->emit_recovery = true;
+    runner->post_commit_fault = fault;
+    PipelineController controller(runner);
+    const auto submitted = controller.SubmitStage(StageId::kDataLoad);
+    Check(submitted && !controller.Wait(submitted.Value()),
+          "post-commit recovery fault must fail the job");
+    const auto snapshot = controller.Snapshot();
+    const auto fatal = controller.FatalRuntimeError();
+    const auto exposes_both_causes = [](const Error& error) {
+      return error.Message().find("fixture recovery manifest") !=
+                 std::string::npos &&
+             error.Message().find(
+                 "execution reported failure after authoritative runtime advanced") !=
+                 std::string::npos;
+    };
+    Check(fatal && fatal->code == Error::Code::kIoError &&
+              fatal->severity == Error::Severity::kFatalRuntime &&
+              snapshot.runtime_revision == runner->Snapshot().revision &&
+              exposes_both_causes(*fatal),
+          "advanced recovery preserves manifest and protocol failure");
+    Check(std::any_of(snapshot.recent_events.begin(), snapshot.recent_events.end(),
+                      [&](const ExecutionEvent& event) {
+                        return event.error && exposes_both_causes(*event.error);
+                      }),
+          "post-commit recovery failure event preserves both causes");
+  }
+}
+
+void TestAdvancedLegacyReconfigureFailurePoisonsController() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->post_commit_fault = FakeRunner::PostCommitFault::kFailure;
+  PipelineController controller(runner);
+  auto applied = controller.ApplyConfig(ConfigDomain::kDataLoader, 2);
+  Check(!applied &&
+            applied.GetError().severity == Error::Severity::kFatalRuntime,
+        "post-commit legacy reconfigure failure must be fatal");
+  const auto snapshot = controller.Snapshot();
+  Check(snapshot.runtime_revision == runner->Snapshot().revision &&
+            snapshot.runtime_revision == 2 &&
+            snapshot.config_revision == 2,
+        "legacy reconfigure failure imports authoritative revisions");
+  runner->post_commit_fault = FakeRunner::PostCommitFault::kNone;
+  Check(!controller.ApplyConfig(ConfigDomain::kOptimizer, 3) &&
+            runner->Snapshot().revision == 2,
+        "legacy protocol failure rejects later config mutation");
 }
 
 void TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession() {
@@ -452,6 +639,40 @@ void TestMalformedConfigCandidateReceiptsPoisonCommittedSession() {
     Check(!controller.ApplyConfig(candidate, {2, 2}),
           "protocol-poisoned controller rejects later config candidates");
   }
+}
+
+void TestConfigReceiptProtocolFailurePreservesRecovery() {
+  auto runner = std::make_shared<FakeRunner>();
+  runner->config_receipt_fault =
+      FakeRunner::ConfigReceiptFault::kCommittedConfig;
+  PipelineController controller(runner);
+  Error recovery = Error::IoError("fixture recovery manifest");
+  recovery.WithExecution("file_transaction", "recovery_required")
+      .MarkFatalRuntime()
+      .WithRuntimeRevision(2);
+  // The controller is intentionally still healthy until ApplyConfig imports
+  // this newly committed query authority and validates the malformed receipt.
+  runner->RecordRecoveryRequired(
+      std::make_shared<const Error>(std::move(recovery)));
+  ConfigCandidate candidate;
+  candidate.domain = ConfigDomain::kMapSave;
+  candidate.document_json = "{}";
+  const auto applied = controller.ApplyConfig(candidate, {1, 1});
+  const auto fatal = controller.FatalRuntimeError();
+  const auto exposes_both_causes = [](const Error& error) {
+    return error.Message().find("fixture recovery manifest") !=
+               std::string::npos &&
+           error.Message().find(
+               "config transaction receipt does not match committed runtime") !=
+               std::string::npos;
+  };
+  Check(!applied && fatal && applied.GetError().code == Error::Code::kIoError &&
+            exposes_both_causes(applied.GetError()) &&
+            exposes_both_causes(*fatal),
+        "config protocol failure keeps committed recovery actionable");
+  Check(!controller.ApplyConfig(candidate, {2, 2}) &&
+            runner->Snapshot().revision == 2,
+        "compound config health rejects retry before another mutation");
 }
 
 void TestConcurrentSubmissionsAreSerialized() {
@@ -685,6 +906,9 @@ void TestNodeCancellationRollsBackArtifacts() {
   }
   Check(!emitted_authoritative_change,
         "cancelled node emits no authoritative artifact event");
+  Check(after.runtime_revision == before.runtime_revision &&
+            runner->Snapshot().revision == before.runtime_revision,
+        "pre-commit cancellation preserves controller and query revisions");
 }
 
 void TestCancellationTelemetryAndJoinOrdering() {
@@ -696,8 +920,8 @@ void TestCancellationTelemetryAndJoinOrdering() {
   auto initial = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
   Check(initial && controller.Wait(initial.Value()),
         "initial non-cooperative fixture commit");
-  const auto committed = controller.Snapshot().artifacts;
-
+  Check(controller.WaitForEventCallbacks().IsOk(),
+        "initial callbacks drain before observing the cancellation run");
   runner->node_entered = false;
   runner->node_exited = false;
   runner->release_non_cooperative = false;
@@ -705,7 +929,7 @@ void TestCancellationTelemetryAndJoinOrdering() {
   std::atomic<bool> terminal_after_worker_exit{false};
   auto subscription = controller.SubscribeEvents(
       [&](const ExecutionEvent& event) {
-        if (event.type != EventType::kJobCancelled) return;
+        if (event.type != EventType::kJobCompleted) return;
         ++terminal_events;
         terminal_after_worker_exit = runner->node_exited.load();
         Check(event.cancellation &&
@@ -736,34 +960,22 @@ void TestCancellationTelemetryAndJoinOrdering() {
         "terminal event emitted while worker remains blocked");
 
   runner->release_non_cooperative = true;
-  Check(!controller.Wait(job.Value()),
-        "post-operation safe point reports cancellation");
+  Check(controller.Wait(job.Value()).IsOk(),
+        "valid committed receipt wins after a non-cooperative operation");
   const auto completed = controller.Snapshot();
   const auto& telemetry = completed.job->cancellation;
-  Check(telemetry.cancel_requested_at_unix_ns &&
-            telemetry.cancel_observed_at_unix_ns &&
+  Check(completed.job->state == JobState::kSucceeded &&
+            telemetry.cancel_requested_at_unix_ns &&
             telemetry.cancel_completed_at_unix_ns &&
             *telemetry.cancel_requested_at_unix_ns <=
-                *telemetry.cancel_observed_at_unix_ns &&
-            *telemetry.cancel_observed_at_unix_ns <=
                 *telemetry.cancel_completed_at_unix_ns,
-        "cancellation timestamps are complete and ordered");
+        "late cancellation telemetry is retained on committed success");
   Check(controller.WaitForEventCallbacks().IsOk(),
         "cancellation callbacks drain before subscriber inspection");
   Check(terminal_events.load() == 1 && terminal_after_worker_exit.load(),
-        "terminal cancellation is emitted once after worker join");
-  bool artifacts_preserved = completed.artifacts.size() == committed.size();
-  for (std::size_t index = 0;
-       artifacts_preserved && index < committed.size(); ++index) {
-    const auto& before = committed[index];
-    const auto& after = completed.artifacts[index];
-    artifacts_preserved = before.key == after.key &&
-                          before.state == after.state &&
-                          before.revision == after.revision &&
-                          before.external_path == after.external_path;
-  }
-  Check(artifacts_preserved,
-        "cancelled non-cooperative job preserves committed artifacts");
+        "terminal committed success is emitted once after worker join");
+  Check(completed.runtime_revision == runner->Snapshot().revision,
+        "committed non-cooperative result reconciles query authority");
 }
 
 void TestManagedSessionMetadataIsAuthoritative() {
@@ -1237,10 +1449,17 @@ void TestControllerCoordinatorFatalProposerIntegration() {
 int main() {
   TestRunAllAndArtifacts();
   TestAlgorithmProgressEventBridge();
+  TestAlignmentExclusionIsPublishedAfterCommit();
   TestParallelAgentProgressStreamsRemainMonotonic();
   TestMalformedExecutionReceiptsCannotPublishSuccess();
+  TestRecoveryReceiptMustMatchQueryAuthority();
+  TestRunAllStopsAfterCommittedRecovery();
+  TestAdvancedAuthorityWithoutReceiptPoisonsController();
+  TestAdvancedRecoveryWithoutReceiptPreservesBothCauses();
+  TestAdvancedLegacyReconfigureFailurePoisonsController();
   TestMalformedReconfigureReceiptResynchronizesAndPoisonsSession();
   TestMalformedConfigCandidateReceiptsPoisonCommittedSession();
+  TestConfigReceiptProtocolFailurePreservesRecovery();
   TestConcurrentSubmissionsAreSerialized();
   TestRerunInvalidatesDownstream();
   TestFailureStopsPipeline();

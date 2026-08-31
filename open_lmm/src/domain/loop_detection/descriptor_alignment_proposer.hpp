@@ -1,10 +1,12 @@
 #pragma once
 
-#include <runtime/state/shared_data.hpp>
+#include <open_lmm/common/agent_data.hpp>
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace open_lmm {
 

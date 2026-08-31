@@ -1,6 +1,6 @@
 #pragma once
 
-#include <runtime/execution/stage_runner.hpp>
+#include <runtime/model/execution_spec.hpp>
 
 #include <cstdint>
 #include <map>

@@ -20,6 +20,7 @@ struct Error {
     kOptimizationFailed,
     kIoError,
     kCancelled,
+    kAgentExcluded,
   };
 
   enum class Severity : uint8_t { kRecoverable, kFatalRuntime };
@@ -132,6 +133,10 @@ struct Error {
   }
   static Error Cancelled(std::string_view detail) {
     return {Code::kCancelled, "Cancelled: " + std::string(detail)};
+  }
+  static Error AgentExcluded(std::string_view detail) {
+    return {Code::kAgentExcluded,
+            "Agent excluded: " + std::string(detail)};
   }
 };
 

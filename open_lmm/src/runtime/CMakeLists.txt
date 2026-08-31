@@ -1,3 +1,4 @@
+add_subdirectory(model)
 add_subdirectory(state)
 add_subdirectory(resources)
 add_subdirectory(execution)

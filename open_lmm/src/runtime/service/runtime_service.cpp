@@ -1,6 +1,6 @@
 #include "runtime_service.hpp"
 
-#include <adapters/batch/compat/map_server.hpp>
+#include <runtime/composition/map_server.hpp>
 #include <storage/transactions/output_repository.hpp>
 #include <foundation/logging/logging.hpp>
 
@@ -33,6 +33,22 @@ ResourceBudget SingleRuntimeBudget(std::size_t max_agent_tasks) {
   budget.max_cpu_threads = std::max<std::size_t>(1, max_agent_tasks);
   return budget;
 }
+
+struct UnpublishedOutputRollback {
+  const fs::path* path = nullptr;
+  bool published = false;
+
+  ~UnpublishedOutputRollback() { RollbackNow(); }
+
+  void RollbackNow() noexcept {
+    if (published || !path) return;
+    std::error_code ignored;
+    fs::remove_all(*path, ignored);
+    path = nullptr;
+  }
+
+  void Publish() noexcept { published = true; }
+};
 
 }  // namespace
 
@@ -139,8 +155,10 @@ bool RuntimeService::IsActive(JobState state) {
 }
 
 RuntimeStatus RuntimeService::DeriveState(
-    const RuntimeInstance& instance, const PipelineSnapshot& pipeline) {
+    const RuntimeInstance& instance, const PipelineSnapshot& pipeline,
+    const std::optional<Error>& fatal_runtime_error) {
   if (instance.closing) return RuntimeStatus::kClosing;
+  if (fatal_runtime_error) return RuntimeStatus::kFailedFatal;
   if (!pipeline.job) return RuntimeStatus::kReady;
   switch (pipeline.job->state) {
     case JobState::kQueued:
@@ -262,10 +280,14 @@ Result<RuntimeService::OperationLease> RuntimeService::AcquireOperation(
         Error::InvalidArgument("runtime changed while acquiring operation"));
   }
   const auto pipeline = instance->controller->Snapshot();
-  instance->state = DeriveState(*instance, pipeline);
+  const auto fatal_runtime_error = instance->controller->FatalRuntimeError();
+  instance->state = DeriveState(*instance, pipeline, fatal_runtime_error);
   if (instance->closing ||
       (require_ready && instance->state != RuntimeStatus::kReady &&
        instance->state != RuntimeStatus::kFailedRecoverable)) {
+    if (fatal_runtime_error) {
+      return Result<OperationLease>::Failure(*fatal_runtime_error);
+    }
     return Result<OperationLease>::Failure(
         Error::InvalidArgument("runtime is not ready for this operation"));
   }
@@ -322,19 +344,40 @@ Result<void> RuntimeService::Open(const BootstrapRequest& request) {
   }();
   auto built = BuildInstance(request, std::move(loaded).Value(), next_epoch);
   if (!built) return fail(built.GetError());
-  auto attached = AttachEventSource(built.Value());
-  if (!attached) return fail(attached.GetError());
+  const auto candidate = built.Value();
+  // shared_ptr copy and pointer guard construction are noexcept. BuildInstance
+  // can therefore hand off its inner rollback owner without an allocation gap.
+  UnpublishedOutputRollback candidate_output{&candidate->output_directory};
+  const auto fail_candidate = [&](const Error& error) {
+    candidate->event_source.Reset();
+    candidate_output.RollbackNow();
+    return fail(error);
+  };
+  auto attached = AttachEventSource(candidate);
+  if (!attached) return fail_candidate(attached.GetError());
   std::unique_lock lock(mutex_);
   if (transition_generation_ != generation || lifecycle_ != LifecycleState::kOpening ||
       cancellation->IsCancellationRequested() || active_) {
     lock.unlock();
-    built.Value()->event_source.Reset();
-    return fail(Error::Cancelled("runtime opening was cancelled"));
+    return fail_candidate(Error::Cancelled("runtime opening was cancelled"));
   }
-  active_ = built.Value();
+  active_ = candidate;
   epoch_ = next_epoch;
   recent_public_events_.clear();
+  candidate_output.Publish();
   FinishTransitionLocked(generation, LifecycleState::kReady);
+  const auto published = active_;
+  lock.unlock();
+  try {
+    if (const auto recovery = published->controller->FatalRuntimeError()) {
+      ExecutionEvent event{0, EventType::kArtifactInvalidated, std::nullopt,
+                           recovery->Message()};
+      event.error = recovery;
+      DispatchEvent(published, event);
+    }
+  } catch (...) {
+    LogWarning("runtime open recovery event publication failed");
+  }
   return Result<void>::Ok();
 }
 
@@ -364,22 +407,43 @@ Result<void> RuntimeService::Open(const BootstrapRequest& request,
   }();
   auto built = BuildInstance(request, root_candidate, next_epoch);
   if (!built) return fail(built.GetError());
+  const auto candidate = built.Value();
+  // See the file-backed Open overload: ownership transfer after BuildInstance
+  // contains no fallible path copy.
+  UnpublishedOutputRollback candidate_output{&candidate->output_directory};
+  const auto fail_candidate = [&](const Error& error) {
+    candidate->event_source.Reset();
+    candidate_output.RollbackNow();
+    return fail(error);
+  };
   if (cancellation->IsCancellationRequested()) {
-    return fail(Error::Cancelled("runtime opening was cancelled"));
+    return fail_candidate(Error::Cancelled("runtime opening was cancelled"));
   }
-  auto attached = AttachEventSource(built.Value());
-  if (!attached) return fail(attached.GetError());
+  auto attached = AttachEventSource(candidate);
+  if (!attached) return fail_candidate(attached.GetError());
   std::unique_lock lock(mutex_);
   if (transition_generation_ != generation || lifecycle_ != LifecycleState::kOpening ||
       cancellation->IsCancellationRequested() || active_) {
     lock.unlock();
-    built.Value()->event_source.Reset();
-    return fail(Error::Cancelled("runtime opening was cancelled"));
+    return fail_candidate(Error::Cancelled("runtime opening was cancelled"));
   }
-  active_ = built.Value();
+  active_ = candidate;
   epoch_ = next_epoch;
   recent_public_events_.clear();
+  candidate_output.Publish();
   FinishTransitionLocked(generation, LifecycleState::kReady);
+  const auto published = active_;
+  lock.unlock();
+  try {
+    if (const auto recovery = published->controller->FatalRuntimeError()) {
+      ExecutionEvent event{0, EventType::kArtifactInvalidated, std::nullopt,
+                           recovery->Message()};
+      event.error = recovery;
+      DispatchEvent(published, event);
+    }
+  } catch (...) {
+    LogWarning("runtime open recovery event publication failed");
+  }
   return Result<void>::Ok();
 }
 
@@ -452,54 +516,105 @@ Result<RuntimeReplaceReceipt> RuntimeService::ReplaceRootConfig(
                              expected.config_revision + 1);
   if (!built) return abort(built.GetError());
   const auto candidate = built.Value();
-  struct CandidateOutputRollback {
-    fs::path path;
-    bool committed = false;
-    ~CandidateOutputRollback() {
-      if (committed || path.filename().string().rfind("runtime-", 0) != 0) return;
-      std::error_code ignored;
-      fs::remove_all(path, ignored);
-    }
-  } candidate_output{candidate->output_directory};
+  UnpublishedOutputRollback candidate_output{&candidate->output_directory};
+  const auto abort_candidate = [&](const Error& error) {
+    candidate->event_source.Reset();
+    candidate_output.RollbackNow();
+    return abort(error);
+  };
   if (cancellation->IsCancellationRequested()) {
-    return abort(Error::Cancelled("runtime replacement was cancelled"));
+    return abort_candidate(
+        Error::Cancelled("runtime replacement was cancelled"));
   }
   const auto candidate_snapshot = candidate->controller->Snapshot();
   if (candidate_snapshot.runtime_revision != expected.runtime_revision + 1 ||
       candidate_snapshot.config_revision != expected.config_revision + 1) {
-    return abort(Error::InvalidArgument(
+    return abort_candidate(Error::InvalidArgument(
         "replacement candidate did not preserve monotonic revisions"));
   }
+  std::string previous_recovery_message;
+  std::string previous_recovery_pointer;
+  try {
+    const auto candidate_authority = candidate->port->Snapshot();
+    if (candidate_authority.recovery_required) {
+      previous_recovery_message =
+          candidate_authority.recovery_required->Message();
+      previous_recovery_pointer = "/previous_recovery_required";
+    }
+  } catch (const std::exception& error) {
+    return abort_candidate(Error::InvalidArgument(
+        std::string("replacement candidate query failed before commit: ") +
+        error.what()));
+  } catch (...) {
+    return abort_candidate(Error::InvalidArgument(
+        "replacement candidate query failed before commit"));
+  }
   auto attached = AttachEventSource(candidate);
-  if (!attached) return abort(attached.GetError());
+  if (!attached) return abort_candidate(attached.GetError());
   PendingOutputSet pending;
   auto staged = StageRootConfig(*candidate, pending);
   if (!staged) {
-    candidate->event_source.Reset();
-    return abort(staged.GetError());
+    return abort_candidate(staged.GetError());
   }
+  // Reserve the recovery payload before the file commit. After Commit()
+  // succeeds, health publication and the active pointer swap only move
+  // preallocated shared ownership.
+  auto root_recovery = std::make_shared<Error>(
+      Error::IoError("root config recovery outcome"));
+  std::shared_ptr<const Error> committed_recovery;
   {
     std::unique_lock lock(mutex_);
     if (transition_generation_ != generation || lifecycle_ != LifecycleState::kReplacing ||
         cancellation->IsCancellationRequested() || active_ != previous) {
       lock.unlock();
-      candidate->event_source.Reset();
-      return abort(Error::Cancelled("runtime replacement was cancelled"));
+      return abort_candidate(
+          Error::Cancelled("runtime replacement was cancelled"));
     }
     auto committed = pending.Commit();
     if (!committed) {
       lock.unlock();
-      candidate->event_source.Reset();
-      return abort(committed.GetError());
+      return abort_candidate(committed.GetError());
+    }
+    if (committed.Value().recovery_required) {
+      *root_recovery =
+          std::move(*committed.Value().recovery_required);
+      root_recovery->MarkFatalRuntime().WithRuntimeRevision(
+          expected.runtime_revision + 1);
+      if (!previous_recovery_message.empty()) {
+        // Preserve a bootstrap cleanup fault when the root file-set also
+        // needs recovery. Moving the precomputed message is allocation-free
+        // after the root commit and keeps both manifests in structured Error
+        // data instead of silently overwriting the first outcome.
+        root_recovery->context.actual =
+            std::move(previous_recovery_message);
+        root_recovery->context.json_pointer =
+            std::move(previous_recovery_pointer);
+      }
+      committed_recovery = root_recovery;
+      // The internal hook is noexcept, non-blocking, and callback-free. Keep
+      // the lifecycle lock from file commit through health publication and
+      // active pointer swap so no query can observe new disk with old runtime.
+      candidate->port->RecordRecoveryRequired(committed_recovery);
+      candidate->controller->RecordRecoveryRequired(committed_recovery);
     }
     active_ = candidate;
     epoch_ = next_epoch;
     ClearPublicJobsLocked();
     recent_public_events_.clear();
+    candidate_output.Publish();
     FinishTransitionLocked(generation, LifecycleState::kReady);
   }
   previous->event_source.Reset();
-  candidate_output.committed = true;
+  try {
+    if (const auto recovery = candidate->controller->FatalRuntimeError()) {
+      ExecutionEvent event{0, EventType::kArtifactInvalidated, std::nullopt,
+                           recovery->Message()};
+      event.error = recovery;
+      DispatchEvent(candidate, event);
+    }
+  } catch (...) {
+    LogWarning("root replacement recovery event publication failed");
+  }
   return Result<RuntimeReplaceReceipt>::Ok(
       {expected.runtime_revision, expected.config_revision,
        expected.runtime_revision + 1, expected.config_revision + 1});
@@ -628,9 +743,10 @@ Result<RuntimeSnapshot> RuntimeService::Snapshot() const {
   if (!active) return Result<RuntimeSnapshot>::Failure(active.GetError());
   auto instance = active.Value();
   auto pipeline = instance->controller->Snapshot();
+  const auto fatal_runtime_error = instance->controller->FatalRuntimeError();
   {
     std::lock_guard instance_lock(instance->mutex);
-    instance->state = DeriveState(*instance, pipeline);
+    instance->state = DeriveState(*instance, pipeline, fatal_runtime_error);
   }
   {
     std::lock_guard lock(mutex_);

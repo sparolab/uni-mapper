@@ -179,6 +179,16 @@ int main() {
     ValidateFile(registry, ConfigDocumentKind::kDynamicRemover,
                  config_root / "core/dynamic_remover" / name);
   }
+  auto unsafe_dufomap_depth = registry.ParseAndValidate(
+      ConfigDocumentKind::kDynamicRemover,
+      R"({"dynamic_remover":{"dynamic_remover_type":"online","model":"dufomap","levels":20}})");
+  Expect(!unsafe_dufomap_depth,
+         "DUFOMap depth that overflows its 64-bit Morton code must fail");
+  auto too_shallow_dufomap_depth = registry.ParseAndValidate(
+      ConfigDocumentKind::kDynamicRemover,
+      R"({"dynamic_remover":{"dynamic_remover_type":"online","model":"dufomap","levels":1}})");
+  Expect(!too_shallow_dufomap_depth,
+         "DUFOMap depth below the library minimum must fail");
 
   auto migrated = registry.ParseAndValidate(
       ConfigDocumentKind::kDynamicRemover,

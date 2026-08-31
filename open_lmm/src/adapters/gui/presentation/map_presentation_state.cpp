@@ -64,6 +64,24 @@ std::optional<std::string> MapPresentationState::DiscardVisible(
   return removed;
 }
 
+void MapPresentationState::CancelPending() noexcept {
+  for (auto& [agent, state] : agents_) {
+    (void)agent;
+    state.pending_generation.reset();
+  }
+}
+
+std::vector<std::string> MapPresentationState::DiscardAllVisible() {
+  std::vector<std::string> drawables;
+  for (auto& [agent, state] : agents_) {
+    (void)agent;
+    if (!state.presented) continue;
+    drawables.push_back(std::move(state.presented->drawable));
+    state.presented.reset();
+  }
+  return drawables;
+}
+
 bool MapPresentationState::IsVisible(const AgentId& agent) const {
   const auto found = agents_.find(agent);
   return found == agents_.end() || found->second.visible;
@@ -81,6 +99,18 @@ MapPresentationPhase MapPresentationState::Phase(const AgentId& agent) const {
   if (found->second.pending_generation) return MapPresentationPhase::kPending;
   return found->second.presented ? MapPresentationPhase::kVisible
                                  : MapPresentationPhase::kEmpty;
+}
+
+std::vector<std::string> MapPresentationState::ResetEpoch() {
+  std::vector<std::string> drawables;
+  for (auto& [agent, state] : agents_) {
+    (void)agent;
+    if (state.presented) {
+      drawables.push_back(std::move(state.presented->drawable));
+    }
+  }
+  agents_.clear();
+  return drawables;
 }
 
 }  // namespace open_lmm

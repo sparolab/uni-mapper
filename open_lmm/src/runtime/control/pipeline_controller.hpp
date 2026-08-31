@@ -47,6 +47,11 @@ class PipelineController {
   Result<void> WaitForEventCallbacks();
   [[nodiscard]] bool IsInEventCallback() const noexcept;
   [[nodiscard]] PipelineSnapshot Snapshot() const;
+  [[nodiscard]] std::optional<Error> FatalRuntimeError() const;
+  // Internal composition hook for a file commit that occurs outside the
+  // command port (root replacement). The committed operation remains success.
+  void RecordRecoveryRequired(
+      std::shared_ptr<const Error> recovery_required) noexcept;
   [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
       const AgentId& agent) const;
   [[nodiscard]] Result<VisualizationSnapshot> GetVisualizationSnapshot(
@@ -77,6 +82,13 @@ class PipelineController {
   Result<void> acceptExecutionReceipt(
       const ExecutionReceipt& receipt, uint64_t sent_base_revision,
       const std::shared_ptr<RuntimeQueryPort>& query_port);
+  Error reconcileExecutionFailure(
+      Error error, uint64_t sent_base_revision,
+      const std::shared_ptr<RuntimeQueryPort>& query_port);
+  [[nodiscard]] std::optional<Error> effectiveFatalRuntimeErrorLocked() const;
+  Result<ExecutionReceipt> executeCommand(
+      const std::shared_ptr<StageCommandPort>& command_port,
+      const ExecutionCommand& command, const ExecutionContext& context);
 
   std::shared_ptr<StageCommandPort> command_port_;
   std::shared_ptr<RuntimeQueryPort> query_port_;

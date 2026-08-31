@@ -25,6 +25,7 @@ enum class AlignmentDecision : uint8_t {
   kTryKissMatcher,
   kTryDescriptor,
   kManual,
+  kExcludeAgent,
   kCancel,
 };
 

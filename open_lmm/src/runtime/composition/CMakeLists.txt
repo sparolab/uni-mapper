@@ -1,4 +1,5 @@
 add_library(open_lmm_runtime_composition_objects OBJECT
+  map_server.cpp
   runtime_bootstrapper.cpp
 )
 target_link_libraries(open_lmm_runtime_composition_objects PRIVATE

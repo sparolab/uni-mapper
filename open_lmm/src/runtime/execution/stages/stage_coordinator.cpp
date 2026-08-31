@@ -66,11 +66,25 @@ Result<void> ValidateInvocation(const std::shared_ptr<const RuntimeState>& base,
   return Result<void>::Ok();
 }
 
-Result<void> CommitPending(PendingOutputSet* pending) {
-  if (!pending) return Result<void>::Ok();
+Result<RuntimeCommitOutcome> CommitPending(PendingOutputSet* pending,
+                                           uint64_t committed_revision) {
+  if (!pending) return Result<RuntimeCommitOutcome>::Ok({});
+  // Allocate the health holder before the file-set commit. Once the final
+  // files are installed, moving the recovery payload into this holder and
+  // publishing the candidate must not introduce a new allocation failure.
+  auto recovery = std::make_shared<Error>(
+      Error::IoError("pending file-set recovery outcome"));
   auto outcome = pending->Commit();
-  return outcome ? Result<void>::Ok()
-                 : Result<void>::Failure(outcome.GetError());
+  if (!outcome) {
+    return Result<RuntimeCommitOutcome>::Failure(outcome.GetError());
+  }
+  auto committed = std::move(outcome).Value();
+  if (!committed.recovery_required) {
+    return Result<RuntimeCommitOutcome>::Ok({});
+  }
+  *recovery = std::move(*committed.recovery_required);
+  recovery->MarkFatalRuntime().WithRuntimeRevision(committed_revision);
+  return Result<RuntimeCommitOutcome>::Ok({std::move(recovery)});
 }
 
 Error OptimizerFactoryError(const Error& source, const RuntimeState& state,
@@ -94,13 +108,14 @@ StageCoordinator::StageCoordinator(
     RuntimeStateStore& runtime_states, OutputRepository& outputs,
     std::shared_ptr<ResourceGovernor> governor,
     std::shared_ptr<const AlgorithmProvider> algorithms,
-    DataLoadPreviewCallback data_load_preview)
+    DataLoadPreviewCallback data_load_preview,
+    AlignmentPreviewCallback alignment_preview)
     : runtime_state_store_(runtime_states),
       outputs_(outputs),
       governor_(std::move(governor)),
       algorithms_(std::move(algorithms)),
       data_load_preview_(std::move(data_load_preview)),
-      alignment_(algorithms_),
+      alignment_(algorithms_, std::move(alignment_preview)),
       optimize_(algorithms_),
       reconfigurer_(algorithms_) {}
 
@@ -129,9 +144,14 @@ Result<void> StageCoordinator::CommitCandidate(
   transaction.Working().artifacts = artifacts->Snapshot();
   auto finalized = std::move(transaction).Finalize(context.cancellation);
   if (!finalized) return Result<void>::Failure(finalized.GetError());
-  return runtime_state_store_.CommitWithBarrier(
-      base, std::move(finalized).Value(),
-      [pending] { return CommitPending(pending); });
+  auto finalized_state = std::move(finalized).Value();
+  const uint64_t committed_revision = finalized_state->revision;
+  auto committed = runtime_state_store_.CommitWithBarrier(
+      base, std::move(finalized_state), [pending, committed_revision] {
+        return CommitPending(pending, committed_revision);
+      });
+  return committed ? Result<void>::Ok()
+                   : Result<void>::Failure(committed.GetError());
 }
 
 Result<void> StageCoordinator::RecordMapOutputs(
@@ -183,12 +203,14 @@ Result<void> StageCoordinator::ExecuteStage(
         {base, std::move(contexts), std::move(database), governor_,
          context.cancellation, context.progress,
          std::move(optimizer).Value(), algorithms_,
+         static_cast<float>(base->config->root.save_voxel_size),
          base->config->root.parallel_data_load,
          base->config->root.max_parallel_agents,
          [this, candidate_revision = base->revision](
-             const AgentId& agent, const AgentRawDataHandle& raw) {
+             const AgentId& agent, const AgentRawDataHandle& raw,
+             const VisualizationPointPreviewHandle& preview) {
            if (data_load_preview_) {
-             data_load_preview_(candidate_revision, agent, raw);
+             data_load_preview_(candidate_revision, agent, raw, preview);
            }
          }});
     if (!candidate) return Result<void>::Failure(candidate.GetError());
@@ -204,13 +226,25 @@ Result<void> StageCoordinator::ExecuteStage(
   if (stage == StageId::kAlignment) {
     auto candidate = alignment_.ExecuteStage(base, context);
     if (!candidate) return Result<void>::Failure(candidate.GetError());
+    const auto completed_agents = candidate.Value().execution_agents;
+    const auto excluded_agents = candidate.Value().excluded_agents;
     auto pending = outputs_.Begin();
     return CommitCandidate(
         std::move(base), std::move(candidate).Value(), context, &pending,
-        [](RuntimeState& working, ArtifactRepository& artifacts,
-           PendingOutputSet* files) {
+        [completed_agents, excluded_agents](
+            RuntimeState& working, ArtifactRepository& artifacts,
+            PendingOutputSet* files) {
           artifacts.BeginStage(StageId::kAlignment);
-          artifacts.CompleteStage(StageId::kAlignment);
+          // Per-agent failures remain explicit while the shared descriptor and
+          // optimizer artifacts finish ready through at least the anchor.
+          if (!excluded_agents.empty()) {
+            constexpr const char* detail =
+                "excluded from alignment by explicit user decision";
+            artifacts.FailNode(NodeId::kLoopDetect, excluded_agents, detail);
+            artifacts.FailNode(NodeId::kOptimize, excluded_agents, detail);
+          }
+          artifacts.CompleteNode(NodeId::kLoopDetect, completed_agents);
+          artifacts.CompleteNode(NodeId::kOptimize, completed_agents);
           auto store = AlignmentArtifactStore::FromCommitted(working);
           if (!store) return Result<void>::Failure(store.GetError());
           return store.Value().Prepare(
@@ -275,12 +309,15 @@ Result<void> StageCoordinator::ExecuteNode(
     }
     auto candidate = data_load_.ExecuteAgent(
         {base, {}, {}, governor_, context.cancellation, context.progress,
-         std::move(optimizer).Value(), algorithms_, false,
+         std::move(optimizer).Value(), algorithms_,
+         static_cast<float>(base->config->root.save_voxel_size), false,
          base->config->root.max_parallel_agents,
          [this, candidate_revision = base->revision](
-             const AgentId& loaded_agent, const AgentRawDataHandle& raw) {
+             const AgentId& loaded_agent, const AgentRawDataHandle& raw,
+             const VisualizationPointPreviewHandle& preview) {
            if (data_load_preview_) {
-             data_load_preview_(candidate_revision, loaded_agent, raw);
+             data_load_preview_(candidate_revision, loaded_agent, raw,
+                                preview);
            }
          }},
         *agent);
@@ -446,7 +483,10 @@ Result<ConfigApplyReceipt> StageCoordinator::ApplyConfig(
       committed_state->revision, committed_state->config->revision,
       committed_state->ordered_agents, committed_state->artifacts};
   auto committed = runtime_state_store_.CommitWithBarrier(
-      base, committed_state, [&pending] { return CommitPending(&pending); });
+      base, committed_state, [&pending, committed_revision =
+                                 committed_state->revision] {
+        return CommitPending(&pending, committed_revision);
+      });
   if (!committed)
     return Result<ConfigApplyReceipt>::Failure(committed.GetError());
   return Result<ConfigApplyReceipt>::Ok(
@@ -469,9 +509,14 @@ Result<void> StageCoordinator::CommitSave(
   transaction.Working().artifacts = artifacts->Snapshot();
   auto finalized = std::move(transaction).Finalize(context.cancellation);
   if (!finalized) return Result<void>::Failure(finalized.GetError());
-  return runtime_state_store_.CommitWithBarrier(
-      base, std::move(finalized).Value(),
-      [&pending] { return CommitPending(&pending); });
+  auto finalized_state = std::move(finalized).Value();
+  const uint64_t committed_revision = finalized_state->revision;
+  auto committed = runtime_state_store_.CommitWithBarrier(
+      base, std::move(finalized_state), [&pending, committed_revision] {
+        return CommitPending(&pending, committed_revision);
+      });
+  return committed ? Result<void>::Ok()
+                   : Result<void>::Failure(committed.GetError());
 }
 
 }  // namespace open_lmm

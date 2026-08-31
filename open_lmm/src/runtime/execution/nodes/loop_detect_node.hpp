@@ -1,7 +1,7 @@
 #pragma once
 #include <functional>
 #include <memory>
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <runtime/execution/pipeline.hpp>
 #include <domain/loop_detection/loop_detector_base.hpp>
 #include <config/document/config.hpp>
 
@@ -14,12 +14,16 @@ class LoopDetectNode : public PipelineNodeBase {
   using DetectorFactory =
       std::function<Result<std::unique_ptr<LoopDetectorBase>>() >;
 
-  explicit LoopDetectNode(DetectorFactory factory)
-      : factory_(std::move(factory)) {}
-  LoopDetectNode(DetectorFactory factory,
-                 AlgorithmExecutionContext algorithm_context)
+  explicit LoopDetectNode(DetectorFactory factory,
+                          std::size_t min_intra_loop_frame_gap = 0)
       : factory_(std::move(factory)),
-        algorithm_context_(std::move(algorithm_context)) {}
+        min_intra_loop_frame_gap_(min_intra_loop_frame_gap) {}
+  LoopDetectNode(DetectorFactory factory,
+                 AlgorithmExecutionContext algorithm_context,
+                 std::size_t min_intra_loop_frame_gap = 0)
+      : factory_(std::move(factory)),
+        algorithm_context_(std::move(algorithm_context)),
+        min_intra_loop_frame_gap_(min_intra_loop_frame_gap) {}
 
   Result<ControlFlow> Process(AgentPipelineCtx& ctx,
                                SharedDatabase&   db) override {
@@ -55,9 +59,14 @@ class LoopDetectNode : public PipelineNodeBase {
         .stored_alignment = stored == db.stored_alignments.end()
                                 ? nullptr
                                 : &stored->second,
+        .min_intra_loop_frame_gap = min_intra_loop_frame_gap_,
     };
     auto processed = detector->Process(algorithm_context, input);
     if (!processed) {
+      if (processed.GetError().code == Error::Code::kAgentExcluded) {
+        ctx.loop_output.reset();
+        return Result<ControlFlow>::Ok(ControlFlow::kSkip);
+      }
       return Result<ControlFlow>::Failure(processed.GetError());
     }
     auto output = std::move(processed).Value();
@@ -91,6 +100,7 @@ class LoopDetectNode : public PipelineNodeBase {
  private:
   DetectorFactory factory_;
   AlgorithmExecutionContext algorithm_context_;
+  std::size_t min_intra_loop_frame_gap_ = 0;
 };
 
 }  // namespace open_lmm

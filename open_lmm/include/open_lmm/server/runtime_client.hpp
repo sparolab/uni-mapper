@@ -17,7 +17,7 @@ namespace open_lmm {
 // Stable PImpl façade for the one active runtime in this process.
 class RuntimeClient {
  public:
-  explicit RuntimeClient(std::size_t max_agent_tasks = 2);
+  explicit RuntimeClient(std::size_t max_agent_tasks = 4);
   ~RuntimeClient();
   RuntimeClient(RuntimeClient&&) noexcept;
   RuntimeClient& operator=(RuntimeClient&&) noexcept;

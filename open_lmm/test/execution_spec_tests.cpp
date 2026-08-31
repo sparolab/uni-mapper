@@ -1,6 +1,6 @@
 #include <open_lmm/common/agent_data.hpp>
 #include <runtime/state/artifact_repository.hpp>
-#include <runtime/execution/stage_runner.hpp>
+#include <runtime/model/execution_spec.hpp>
 
 #include <algorithm>
 #include <cstdlib>
@@ -90,7 +90,24 @@ void TestExecutionSpecIsSingleOrderedSource() {
   Check(std::find(optimize.invalidates.begin(), optimize.invalidates.end(),
                   ArtifactType::kLoopCandidates) != optimize.invalidates.end(),
         "optimizer replay invalidates follower loop outputs");
-  Check(ProgressTotal(NodeId::kLoopDetect, {Id("A"), Id("B"), Id("C")}, Id("B")) == 2,
+  const auto optimizer_config_artifacts =
+      AffectedArtifacts(ConfigDomain::kOptimizer);
+  Check(std::find(optimizer_config_artifacts.begin(),
+                  optimizer_config_artifacts.end(),
+                  ArtifactType::kLoopCandidates) !=
+                optimizer_config_artifacts.end() &&
+            std::find(optimizer_config_artifacts.begin(),
+                      optimizer_config_artifacts.end(),
+                      ArtifactType::kDescriptorState) ==
+                optimizer_config_artifacts.end() &&
+            std::find(optimizer_config_artifacts.begin(),
+                      optimizer_config_artifacts.end(),
+                      ArtifactType::kMapAlignment) ==
+                optimizer_config_artifacts.end(),
+        "optimizer config invalidates loop candidates without staling "
+        "descriptor or map-alignment state");
+  Check(ProgressTotal(NodeId::kLoopDetect, {Id("A"), Id("B"), Id("C")},
+                      Id("B")) == 2,
         "ordered progress total uses replay prefix");
   const auto& pose_save = ExecutionSpecFor(NodeId::kPoseSave);
   Check(pose_save.scope == ExecutionScope::kRuntime,

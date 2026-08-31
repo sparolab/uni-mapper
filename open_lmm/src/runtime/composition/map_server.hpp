@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -12,7 +13,7 @@ namespace open_lmm {
 class StageExecutor;
 class ResourceGovernor;
 
-// Public runtime façade. Runtime ownership, transaction commits, algorithm
+// Concrete runtime port. Runtime ownership, transaction commits, algorithm
 // assembly, output persistence and visualization snapshots live in the
 // internal StageExecutor component.
 class MapServer final : public StageRuntimePort {
@@ -20,7 +21,8 @@ class MapServer final : public StageRuntimePort {
   explicit MapServer(
       BootstrapConfigSnapshot bootstrap_config,
       std::optional<std::filesystem::path> output_directory = std::nullopt,
-      std::shared_ptr<ResourceGovernor> resource_governor = {});
+      std::shared_ptr<ResourceGovernor> resource_governor = {},
+      std::function<void()> before_presentation_publish = {});
   ~MapServer() override;
 
   MapServer(const MapServer&) = delete;
@@ -31,7 +33,7 @@ class MapServer final : public StageRuntimePort {
   Result<ExecutionReceipt> Execute(
       const ExecutionCommand& command,
       const ExecutionContext& context) override;
-  Result<ConfigApplyReceipt> ApplyConfig(
+  Result<ConfigCommandReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context) override;
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const override;
@@ -41,6 +43,8 @@ class MapServer final : public StageRuntimePort {
       const VisualizationQuery& query) const override;
   Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
                                           uint64_t config_revision) override;
+  void RecordRecoveryRequired(
+      std::shared_ptr<const Error> recovery_required) noexcept override;
   Result<void> ValidateReady();
 
  private:

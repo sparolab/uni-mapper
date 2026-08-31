@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace open_lmm {
 
@@ -40,10 +41,19 @@ class MapPresentationState {
                                                        bool visible);
   [[nodiscard]] std::optional<std::string> DiscardVisible(
       const AgentId& agent);
+  // Retires asynchronous work from the previous stage while preserving every
+  // drawable that is currently visible.
+  void CancelPending() noexcept;
+  // Called only after a replacement presentation has been installed. The
+  // returned drawable names remain owned by the viewer.
+  [[nodiscard]] std::vector<std::string> DiscardAllVisible();
   [[nodiscard]] bool IsVisible(const AgentId& agent) const;
   [[nodiscard]] std::optional<VisibleMapPresentation> Visible(
       const AgentId& agent) const;
   [[nodiscard]] MapPresentationPhase Phase(const AgentId& agent) const;
+  // Starts a new dataset epoch. Returned drawable names remain owned by the
+  // viewer and must be removed by the caller.
+  [[nodiscard]] std::vector<std::string> ResetEpoch();
  private:
   struct AgentState {
     bool visible = true;

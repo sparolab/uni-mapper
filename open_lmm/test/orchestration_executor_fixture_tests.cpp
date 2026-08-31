@@ -2,6 +2,7 @@
 #include <runtime/execution/stages/alignment_artifact_store.hpp>
 #include <runtime/execution/stages/optimize_executor.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <set>
@@ -95,6 +96,7 @@ auto OptimizerFactory() {
 void TestAlignmentStageUsesCommandContextWithoutCommit() {
   auto state = State();
   std::vector<std::string> calls;
+  std::vector<std::size_t> preview_optimized_counts;
   auto cancellation = std::make_shared<CancellationToken>();
   auto feedback = std::make_shared<AlignmentFeedbackBroker>();
   AlignmentExecutor executor(
@@ -110,10 +112,21 @@ void TestAlignmentStageUsesCommandContextWithoutCommit() {
         context.loop_output = std::move(output);
         return Result<void>::Ok();
       },
-      [&](AgentPipelineCtx& context, SharedDatabase&,
+      [&](AgentPipelineCtx& context, SharedDatabase& database,
           const std::shared_ptr<BackendOptimizerBase>&) {
         calls.push_back("O" + context.agent.id.Value());
+        auto optimized = std::make_shared<AgentOptimizedData>();
+        optimized->optimized_poses.emplace_back(
+            0, Eigen::Isometry3d::Identity());
+        database.optimized_data[context.agent.id] = std::move(optimized);
         return Result<void>::Ok();
+      },
+      [&](uint64_t revision,
+          const std::vector<AgentPipelineCtx>& contexts,
+          const SharedDatabase& database) {
+        Check(revision == state->revision && contexts.size() == 3,
+              "Alignment preview is bound to the working base snapshot");
+        preview_optimized_counts.push_back(database.optimized_data.size());
       });
   auto result = executor.ExecuteStage(
       state, {.cancellation = cancellation,
@@ -123,6 +136,8 @@ void TestAlignmentStageUsesCommandContextWithoutCommit() {
         "candidate preserves base revision without committing it");
   Check(calls == std::vector<std::string>({"LA", "OA", "LB", "OB", "LC", "OC"}),
         "alignment preserves ordered per-agent node execution");
+  Check(preview_optimized_counts == std::vector<std::size_t>({1, 2, 3}),
+        "each optimizer completion publishes the cumulative candidate read model");
   Check(result.Value().payload->resident_memory_reservations ==
             state->payload->resident_memory_reservations,
         "alignment candidate retains resident reservation owners");
@@ -152,6 +167,43 @@ void TestLoopReplayStopsAfterTargetLoop() {
         "loop replay candidate reports its ordered prefix");
 }
 
+void TestAlignmentStageSkipsExplicitlyExcludedFollower() {
+  auto state = State();
+  std::vector<std::string> calls;
+  AlignmentExecutor executor(
+      OptimizerFactory(),
+      [&](AgentPipelineCtx& context, SharedDatabase&) {
+        calls.push_back("L" + context.agent.id.Value());
+        if (context.agent.id == Id("B")) {
+          return Result<void>::Failure(
+              Error::AgentExcluded("B was excluded by user"));
+        }
+        auto output = std::make_shared<LoopDetectorOutput>();
+        output->agent_descriptors = std::make_shared<EmptyIndex>();
+        context.loop_output = std::move(output);
+        return Result<void>::Ok();
+      },
+      [&](AgentPipelineCtx& context, SharedDatabase&,
+          const std::shared_ptr<BackendOptimizerBase>&) {
+        calls.push_back("O" + context.agent.id.Value());
+        return Result<void>::Ok();
+      });
+  auto result = executor.ExecuteStage(
+      state, {.cancellation = std::make_shared<CancellationToken>(),
+              .base_revision = state->revision});
+  Check(result &&
+            calls == std::vector<std::string>({"LA", "OA", "LB", "LC", "OC"}),
+        "excluded follower skips optimization while later followers continue");
+  Check(result.Value().execution_agents ==
+            std::vector<AgentId>({Id("A"), Id("C")}) &&
+            result.Value().excluded_agents ==
+                std::vector<AgentId>({Id("B")}) &&
+            result.Value().payload->contexts[1].raw_data &&
+            !result.Value().payload->contexts[1].loop_output &&
+            result.Value().payload->contexts[1].flow == ControlFlow::kSkip,
+        "candidate retains excluded input and reports disjoint successful/excluded sets");
+}
+
 void TestOptimizeReplayClearsSuffixAndHonorsCancellation() {
   auto state = State();
   std::vector<AgentId> optimized;
@@ -179,6 +231,45 @@ void TestOptimizeReplayClearsSuffixAndHonorsCancellation() {
   Check(!cancelled &&
             cancelled.GetError().code == Error::Code::kCancelled,
         "optimizer candidate is not published after cancellation");
+}
+
+void TestExcludedArtifactsSelectOnlySuccessfulDownstreamAgents() {
+  ArtifactRepository artifacts;
+  const std::vector<AgentId> agents{Id("A"), Id("B"), Id("C")};
+  const std::vector<AgentId> successful{Id("A"), Id("C")};
+  const std::vector<AgentId> excluded_agents{Id("B")};
+  artifacts.Reset(agents);
+  artifacts.BeginStage(StageId::kDataLoad);
+  artifacts.CompleteStage(StageId::kDataLoad);
+  artifacts.BeginStage(StageId::kAlignment);
+  artifacts.FailNode(NodeId::kLoopDetect, excluded_agents,
+                     "excluded from alignment by explicit user decision");
+  artifacts.FailNode(NodeId::kOptimize, excluded_agents,
+                     "excluded from alignment by explicit user decision");
+  artifacts.CompleteNode(NodeId::kLoopDetect, successful);
+  artifacts.CompleteNode(NodeId::kOptimize, successful);
+
+  const auto map_update_a =
+      artifacts.ExecutionAgents(NodeId::kMapUpdate, Id("A"));
+  const auto map_update_b =
+      artifacts.ExecutionAgents(NodeId::kMapUpdate, Id("B"));
+  const auto map_update_c =
+      artifacts.ExecutionAgents(NodeId::kMapUpdate, Id("C"));
+  const auto save = artifacts.ExecutionAgents(NodeId::kPoseSave, std::nullopt);
+  Check(map_update_a && !map_update_b && map_update_c && save &&
+            save.Value() == std::vector<AgentId>({Id("A"), Id("C")}),
+        "MapUpdate and Save consume only successfully aligned agents");
+  const auto snapshot = artifacts.Snapshot();
+  const auto excluded = std::find_if(
+      snapshot.begin(), snapshot.end(), [](const ArtifactMetadata& item) {
+        return item.key.type == ArtifactType::kOptimizedPoses &&
+               item.key.agent == Id("B");
+      });
+  Check(excluded != snapshot.end() &&
+            excluded->state == ArtifactState::kFailed &&
+            excluded->detail.find("excluded from alignment") !=
+                std::string::npos,
+        "excluded follower remains diagnostic rather than ready downstream data");
 }
 
 void TestArtifactStoreRehydratesOnlyFromCommittedAuthority() {
@@ -213,7 +304,9 @@ void TestArtifactStoreRehydratesOnlyFromCommittedAuthority() {
 int main() {
   open_lmm::TestAlignmentStageUsesCommandContextWithoutCommit();
   open_lmm::TestLoopReplayStopsAfterTargetLoop();
+  open_lmm::TestAlignmentStageSkipsExplicitlyExcludedFollower();
   open_lmm::TestOptimizeReplayClearsSuffixAndHonorsCancellation();
+  open_lmm::TestExcludedArtifactsSelectOnlySuccessfulDownstreamAgents();
   open_lmm::TestArtifactStoreRehydratesOnlyFromCommittedAuthority();
   std::cout << "orchestration executor fixture tests passed\n";
   return 0;

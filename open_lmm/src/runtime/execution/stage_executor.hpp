@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -22,17 +23,20 @@ class StageExecutor {
   StageExecutor(
       BootstrapConfigSnapshot bootstrap_config,
       std::optional<std::filesystem::path> output_directory = std::nullopt,
-      std::shared_ptr<ResourceGovernor> resource_governor = {});
+      std::shared_ptr<ResourceGovernor> resource_governor = {},
+      std::function<void()> before_presentation_publish = {});
   ~StageExecutor();
 
   [[nodiscard]] CancellationCapability CancellationMetadata() const;
   Result<ExecutionReceipt> Execute(const ExecutionCommand& command,
                                    const ExecutionContext& context);
-  Result<ConfigApplyReceipt> ApplyConfig(
+  Result<ConfigCommandReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context);
   Result<void> InitializeRuntimeRevisions(uint64_t runtime_revision,
                                           uint64_t config_revision);
+  void RecordRecoveryRequired(
+      std::shared_ptr<const Error> recovery_required) noexcept;
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const;
   [[nodiscard]] Result<VisualizationSnapshot> Visualization(
       const VisualizationQuery& query) const;
@@ -40,7 +44,11 @@ class StageExecutor {
 
  private:
   Result<void> EnsureReady();
+  Result<void> EnsureMutationAllowed();
   void PublishVisualization(VisualizationPhase phase, bool include_maps);
+  void PublishVisualizationBestEffort(VisualizationPhase phase,
+                                      bool include_maps,
+                                      uint64_t base_revision) noexcept;
   void PublishEmptyVisualization();
   [[nodiscard]] std::shared_ptr<const RuntimeState> CommittedState() const;
 
@@ -50,6 +58,7 @@ class StageExecutor {
   OutputRepository output_repository_;
   std::unique_ptr<StageCoordinator> coordinator_;
   VisualizationProjector visualization_projector_;
+  std::function<void()> before_presentation_publish_;
   std::atomic_flag execution_active_ = ATOMIC_FLAG_INIT;
 };
 

@@ -5,7 +5,7 @@
 #include <open_lmm/common/cancellation.hpp>
 #include <open_lmm/common/result.hpp>
 #include <open_lmm/common/visualization_snapshot.hpp>
-#include <runtime/execution/stage_runner.hpp>
+#include <runtime/model/execution_spec.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -74,6 +74,13 @@ struct ExecutionReceipt {
   uint64_t base_revision = 0;
   uint64_t committed_revision = 0;
   std::vector<AgentId> affected_agents;
+  std::vector<AgentId> excluded_agents;
+  std::shared_ptr<const Error> recovery_required;
+};
+
+struct ConfigCommandReceipt {
+  ConfigApplyReceipt receipt;
+  std::shared_ptr<const Error> recovery_required;
 };
 
 class StageCommandPort {
@@ -85,10 +92,10 @@ class StageCommandPort {
   virtual Result<ExecutionReceipt> Execute(
       const ExecutionCommand& command,
       const ExecutionContext& context) = 0;
-  virtual Result<ConfigApplyReceipt> ApplyConfig(
+  virtual Result<ConfigCommandReceipt> ApplyConfig(
       const ConfigCandidate&, const ExpectedRevision&,
       const ExecutionContext&) {
-    return Result<ConfigApplyReceipt>::Failure(
+    return Result<ConfigCommandReceipt>::Failure(
         Error::InvalidArgument("config transactions are not supported"));
   }
 };
@@ -111,6 +118,11 @@ class StageRuntimePort : public StageCommandPort, public RuntimeQueryPort {
   virtual Result<void> InitializeRuntimeRevisions(uint64_t, uint64_t) {
     return Result<void>::Ok();
   }
+  // Internal composition hook used inside the root-publication critical
+  // section. Implementations must only latch the shared health pointer: no
+  // callbacks, service re-entry, blocking work, or allocation.
+  virtual void RecordRecoveryRequired(
+      std::shared_ptr<const Error>) noexcept = 0;
 };
 
 }  // namespace open_lmm

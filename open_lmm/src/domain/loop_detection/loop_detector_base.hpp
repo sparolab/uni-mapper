@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Geometry>
+#include <cstddef>
 #include <filesystem>
 #include <map>
 #include <open_lmm/common/agent_context.hpp>
@@ -11,7 +12,6 @@
 #include <open_lmm/common/descriptor_index.hpp>
 
 #include <config/domain/algorithm_config.hpp>
-#include <plugins/host/load_module.hpp>
 
 namespace open_lmm {
 
@@ -21,6 +21,7 @@ struct LoopDetectorProcessInput {
   const AgentRawDataMap& all_raw_data;
   const AgentOptimizedDataMap& all_optimized;
   const StoredAlignment* stored_alignment = nullptr;
+  std::size_t min_intra_loop_frame_gap = 0;
 };
 
 class LoopDetectorBase {
@@ -31,7 +32,5 @@ class LoopDetectorBase {
       const AlgorithmExecutionContext& context,
       const LoopDetectorProcessInput& input) = 0;
 };
-
-Result<void> InspectDescriptorPlugin(const LoopDetectorConfig& config);
 
 }  // namespace open_lmm

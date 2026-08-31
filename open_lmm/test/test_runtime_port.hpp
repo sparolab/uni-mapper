@@ -45,41 +45,54 @@ class RuntimePortFixture : public StageRuntimePort {
       return Result<ExecutionReceipt>::Failure(result.GetError());
     }
 
-    std::lock_guard lock(mutex_);
-    artifacts_.Restore(snapshot_.artifacts);
-    switch (command.kind) {
-      case ExecutionCommandKind::kStage:
-        artifacts_.BeginStage(*command.stage);
-        artifacts_.CompleteStage(*command.stage);
-        break;
-      case ExecutionCommandKind::kNode:
-        artifacts_.BeginNode(*command.node, affected.Value());
-        artifacts_.CompleteNode(*command.node, affected.Value());
-        break;
-      case ExecutionCommandKind::kOptimizeThrough:
-        artifacts_.CompleteOptimizeThrough(*command.agent, agents_);
-        break;
-      case ExecutionCommandKind::kReconfigure:
-        artifacts_.ApplyConfig(*command.config_domain,
-                               command.config_revision);
-        snapshot_.config_revision = command.config_revision;
-        break;
+    ExecutionReceipt receipt;
+    {
+      std::lock_guard lock(mutex_);
+      artifacts_.Restore(snapshot_.artifacts);
+      switch (command.kind) {
+        case ExecutionCommandKind::kStage:
+          artifacts_.BeginStage(*command.stage);
+          artifacts_.CompleteStage(*command.stage);
+          break;
+        case ExecutionCommandKind::kNode:
+          artifacts_.BeginNode(*command.node, affected.Value());
+          artifacts_.CompleteNode(*command.node, affected.Value());
+          break;
+        case ExecutionCommandKind::kOptimizeThrough:
+          artifacts_.CompleteOptimizeThrough(*command.agent, agents_);
+          break;
+        case ExecutionCommandKind::kReconfigure:
+          artifacts_.ApplyConfig(*command.config_domain,
+                                 command.config_revision);
+          snapshot_.config_revision = command.config_revision;
+          break;
+      }
+      ++snapshot_.revision;
+      snapshot_.artifacts = artifacts_.Snapshot();
+      if (auto recovery = RecoveryAfterCommit()) {
+        recovery->MarkFatalRuntime().WithRuntimeRevision(snapshot_.revision);
+        snapshot_.recovery_required =
+            std::make_shared<const Error>(std::move(*recovery));
+      }
+      receipt = AdjustReceipt(
+          {before.revision, snapshot_.revision,
+           std::move(affected).Value(), {}, snapshot_.recovery_required});
     }
-    ++snapshot_.revision;
-    snapshot_.artifacts = artifacts_.Snapshot();
-    return Result<ExecutionReceipt>::Ok(AdjustReceipt(
-        {before.revision, snapshot_.revision,
-         std::move(affected).Value()}));
+    auto after_commit = AfterCommitFixture(command, context, receipt);
+    if (!after_commit) {
+      return Result<ExecutionReceipt>::Failure(after_commit.GetError());
+    }
+    return Result<ExecutionReceipt>::Ok(std::move(receipt));
   }
 
-  Result<ConfigApplyReceipt> ApplyConfig(
+  Result<ConfigCommandReceipt> ApplyConfig(
       const ConfigCandidate& candidate, const ExpectedRevision& expected,
       const ExecutionContext& context) override {
     std::lock_guard lock(mutex_);
     if (context.base_revision != snapshot_.revision ||
         expected.runtime_revision != snapshot_.revision ||
         expected.config_revision != snapshot_.config_revision) {
-      return Result<ConfigApplyReceipt>::Failure(
+      return Result<ConfigCommandReceipt>::Failure(
           Error::InvalidArgument("fixture config revision mismatch"));
     }
     const uint64_t previous_config = snapshot_.config_revision;
@@ -89,9 +102,9 @@ class RuntimePortFixture : public StageRuntimePort {
     ++snapshot_.config_revision;
     ++snapshot_.revision;
     snapshot_.artifacts = artifacts_.Snapshot();
-    return Result<ConfigApplyReceipt>::Ok(
-        {previous_config, snapshot_.config_revision, base_session,
-         snapshot_.revision, agents_});
+    return Result<ConfigCommandReceipt>::Ok(
+        {{previous_config, snapshot_.config_revision, base_session,
+          snapshot_.revision, agents_}, snapshot_.recovery_required});
   }
 
   [[nodiscard]] CommittedRuntimeSnapshot Snapshot() const override {
@@ -116,6 +129,12 @@ class RuntimePortFixture : public StageRuntimePort {
     return Result<void>::Ok();
   }
 
+  void RecordRecoveryRequired(
+      std::shared_ptr<const Error> recovery_required) noexcept override {
+    std::lock_guard lock(mutex_);
+    snapshot_.recovery_required = std::move(recovery_required);
+  }
+
  protected:
   virtual Result<void> ExecuteFixture(const ExecutionCommand& command,
                                       const ExecutionContext& context) = 0;
@@ -126,6 +145,14 @@ class RuntimePortFixture : public StageRuntimePort {
   }
   virtual ExecutionReceipt AdjustReceipt(ExecutionReceipt receipt) const {
     return receipt;
+  }
+  virtual std::optional<Error> RecoveryAfterCommit() const {
+    return std::nullopt;
+  }
+  virtual Result<void> AfterCommitFixture(
+      const ExecutionCommand&, const ExecutionContext&,
+      const ExecutionReceipt&) {
+    return Result<void>::Ok();
   }
 
  private:

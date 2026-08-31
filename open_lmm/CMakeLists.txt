@@ -42,7 +42,6 @@ add_subdirectory(src/plugins/host)
 add_subdirectory(src/storage)
 add_subdirectory(src/runtime)
 add_subdirectory(src/visualization)
-add_subdirectory(src/adapters/batch/compat)
 
 add_library(open_lmm_client SHARED
   $<TARGET_OBJECTS:open_lmm_runtime_client_objects>)

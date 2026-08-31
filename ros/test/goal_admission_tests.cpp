@@ -1,4 +1,4 @@
-#include "../ros2/open_lmm_ros/goal_admission.hpp"
+#include "../ros2/open_lmm_ros/runtime_adapter/goal_admission.hpp"
 
 #include <atomic>
 #include <cstdlib>

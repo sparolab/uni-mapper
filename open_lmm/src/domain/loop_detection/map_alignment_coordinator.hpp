@@ -1,6 +1,7 @@
 #pragma once
 
 #include <open_lmm/common/alignment_feedback.hpp>
+#include <open_lmm/common/algorithm_progress.hpp>
 
 #include <chrono>
 #include <functional>
@@ -38,6 +39,7 @@ struct MapAlignmentCoordinatorInput {
   std::vector<AlignmentVisualizationPoint> target_points;
   std::vector<AlignmentVisualizationPoint> source_points;
   std::shared_ptr<AlignmentVisualizationData> visualization;
+  AlgorithmProgressCallback progress;
   std::function<Result<AlignmentProposalAttempt>()> kiss_proposer;
   std::function<Result<AlignmentProposalAttempt>()> descriptor_proposer;
   std::function<Result<AlignmentProposalValidation>(

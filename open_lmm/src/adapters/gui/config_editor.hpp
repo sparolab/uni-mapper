@@ -30,6 +30,7 @@ struct AlignmentConfigValues {
 
 [[nodiscard]] Result<std::vector<std::string>> DiscoverDatasetDirectories(
     const std::filesystem::path& root);
+void ClearDatasetSelection(std::vector<std::string>& selected) noexcept;
 [[nodiscard]] Result<AlignmentConfigValues> LoadAlignmentConfig(
     const std::filesystem::path& path);
 [[nodiscard]] Result<std::string> BuildAlignmentConfigCandidate(

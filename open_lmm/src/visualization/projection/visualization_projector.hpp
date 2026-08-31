@@ -15,14 +15,20 @@ namespace open_lmm {
 // DataLoad candidate that can be discarded without mutating that state.
 class VisualizationProjector {
  public:
-  void Clear(uint64_t runtime_revision);
+  void Clear(uint64_t runtime_revision, float preview_voxel_size_m = 0.0F);
   void Publish(VisualizationSource source, VisualizationPhase phase,
                bool include_maps);
+  // Publishes the latest optimizer-owned read model without committing the
+  // runtime. The first update retains the committed projector state so a
+  // failed or cancelled Alignment can restore it exactly.
+  void PublishAlignmentCandidate(VisualizationSource source);
+  void RollbackAlignmentCandidate(uint64_t base_revision);
   // Publishes an uncommitted DataLoad read model at the base revision. It is
   // intentionally isolated from RuntimeStateStore and replaced on commit or
   // rollback by Publish().
   void PublishDataLoadCandidate(uint64_t base_revision, const AgentId& agent,
-                                const AgentRawDataHandle& raw);
+                                const AgentRawDataHandle& raw,
+                                VisualizationPointPreviewHandle preview = {});
   void RollbackDataLoadCandidate(uint64_t base_revision);
   [[nodiscard]] Result<VisualizationSnapshot> Project(
       const VisualizationQuery& query) const;
@@ -33,10 +39,12 @@ class VisualizationProjector {
   struct State {
     uint64_t revision = 0;
     VisualizationPhase phase = VisualizationPhase::kDataLoad;
+    float preview_voxel_size_m = 0.0F;
     std::map<AgentId, VisualizationSnapshot> agents;
     std::map<AgentId, std::filesystem::path> map_paths;
     std::map<AgentId, AgentRawDataHandle> raw_data;
     std::map<AgentId, std::vector<Eigen::Isometry3d>> point_poses;
+    std::map<AgentId, VisualizationPointPreviewHandle> data_load_previews;
   };
 
   struct PointCacheKey {
@@ -44,24 +52,17 @@ class VisualizationProjector {
     VisualizationPhase phase = VisualizationPhase::kDataLoad;
     AgentId agent;
     uint32_t voxel_millimeters = 0;
-    std::size_t maximum_points = 0;
 
     friend bool operator<(const PointCacheKey& left,
                           const PointCacheKey& right) {
       return std::tie(left.revision, left.phase, left.agent,
-                      left.voxel_millimeters, left.maximum_points) <
+                      left.voxel_millimeters) <
              std::tie(right.revision, right.phase, right.agent,
-                      right.voxel_millimeters, right.maximum_points);
+                      right.voxel_millimeters);
     }
   };
 
-  struct PointCacheEntry {
-    std::vector<VisualizationPoint> points;
-    Eigen::Vector3f min_bound = Eigen::Vector3f::Zero();
-    Eigen::Vector3f max_bound = Eigen::Vector3f::Zero();
-    bool has_bounds = false;
-    std::size_t source_point_count = 0;
-  };
+  using PointCacheEntry = VisualizationPointPreview;
 
   struct CachedPointEntry {
     std::shared_ptr<const PointCacheEntry> entry;
@@ -70,8 +71,11 @@ class VisualizationProjector {
   };
 
   static constexpr std::size_t kMaximumPointCacheEntries = 16;
-  static constexpr std::size_t kMaximumPointCacheBytes = 128U * 1024U * 1024U;
+  static std::shared_ptr<State> MakeState(VisualizationSource source,
+                                          VisualizationPhase phase,
+                                          bool include_maps);
   void ClearPointCacheLocked() const;
+  void ClearPointCacheForAgentLocked(const AgentId& agent) const;
 
   mutable std::mutex mutex_;
   std::shared_ptr<const State> state_ = std::make_shared<State>();

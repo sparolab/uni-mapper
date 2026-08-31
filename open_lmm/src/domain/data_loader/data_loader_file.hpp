@@ -40,7 +40,7 @@ class DataLoaderFile : public DataLoaderBase {
   Result<PoseVec> loadPoseData(const AlgorithmExecutionContext& context,
                                fs::path data_dir_path);
   Result<AgentRawData> Load(const AlgorithmExecutionContext& context,
-                            const fs::path& data_directory);
+                            const DataLoaderInput& input);
   DataLoaderFileParam param_;
   std::optional<Error> initialization_error_;
 };

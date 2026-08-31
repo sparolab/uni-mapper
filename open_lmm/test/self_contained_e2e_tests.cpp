@@ -9,15 +9,17 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 #include <unistd.h>
 
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
-#include <adapters/batch/compat/map_server.hpp>
+#include <runtime/execution/pipeline.hpp>
+#include <runtime/composition/map_server.hpp>
 #include <runtime/resources/resource_governor.hpp>
+#include <runtime/service/runtime_service.hpp>
 #include <config/document/config.hpp>
 
 namespace fs = std::filesystem;
@@ -147,6 +149,15 @@ void WriteAgent(const fs::path& root, const std::string& name) {
   }
 }
 
+void WriteIgnoredSparseFile(const fs::path& path, uint64_t bytes) {
+  std::ofstream output(path, std::ios::binary);
+  Require(static_cast<bool>(output), "create ignored sparse fixture");
+  output.close();
+  std::error_code error;
+  fs::resize_file(path, bytes, error);
+  Require(!error, "resize ignored sparse fixture");
+}
+
 void WriteConfiguration(const fs::path& config, const fs::path& data,
                         const fs::path& output,
                         bool parallel_data_load = false) {
@@ -233,18 +244,6 @@ fs::path FindNamedFile(const fs::path& root, const std::string& name) {
   return {};
 }
 
-uint64_t EstimatedAgentBytes(const fs::path& directory) {
-  uint64_t bytes = 1;
-  for (const auto& entry : fs::recursive_directory_iterator(directory)) {
-    if (!entry.is_regular_file()) continue;
-    const uint64_t size = entry.file_size();
-    bytes = size > (std::numeric_limits<uint64_t>::max() - bytes) / 2
-                ? std::numeric_limits<uint64_t>::max()
-                : bytes + size * 2;
-  }
-  return bytes;
-}
-
 std::vector<double> ReadNumbers(const fs::path& path) {
   std::ifstream input(path);
   Require(static_cast<bool>(input), "open numeric artifact " + path.string());
@@ -284,10 +283,118 @@ int main() {
   const fs::path output = fixture.path() / "output";
   WriteAgent(data, "agent1");
   WriteAgent(data, "agent2");
+  WriteIgnoredSparseFile(data / "agent1/ignored.payload", 128ULL << 20);
   WriteConfiguration(config, data, output);
+
+  {
+    open_lmm::RuntimeService production_runtime(1);
+    auto opened = production_runtime.Open({config, "default-production-port"});
+    Require(opened.IsOk(),
+            "default RuntimeService factory opens the production port");
+    Require(production_runtime.Close().IsOk(),
+            "default RuntimeService production port closes cleanly");
+  }
+
+  const fs::path presentation_config =
+      fixture.path() / "presentation-fault-config";
+  const fs::path presentation_output =
+      fixture.path() / "presentation-fault-output";
+  WriteConfiguration(presentation_config, data, presentation_output);
+  bool fail_next_presentation = true;
+  open_lmm::MapServer presentation_server(
+      Bootstrap(presentation_config), std::nullopt, {},
+      [&fail_next_presentation] {
+        if (!fail_next_presentation) return;
+        fail_next_presentation = false;
+        throw std::runtime_error("injected presentation failure");
+      });
+  const auto presentation_base = presentation_server.Snapshot().revision;
+  auto presentation_load = Execute(
+      presentation_server,
+      open_lmm::ExecutionCommand::Stage(open_lmm::StageId::kDataLoad));
+  Require(presentation_load &&
+              presentation_load.Value().base_revision == presentation_base &&
+              presentation_load.Value().committed_revision ==
+                  presentation_base + 1 &&
+              presentation_server.Snapshot().revision ==
+                  presentation_load.Value().committed_revision,
+          "post-commit presentation failure retains the valid receipt");
+  Require(!presentation_server.Visualization(Id("agent1")),
+          "failed committed presentation rolls back its candidate preview");
+  auto presentation_alignment = Execute(
+      presentation_server,
+      open_lmm::ExecutionCommand::Stage(open_lmm::StageId::kAlignment));
+  Require(presentation_alignment &&
+              presentation_server.Snapshot().revision ==
+                  presentation_alignment.Value().committed_revision &&
+              presentation_server.Visualization(Id("agent1")),
+          "a later presentation recovers after the committed fault");
 
   auto configured = open_lmm::LoadBootstrapConfig(config);
   Require(configured.IsOk(), "load self-contained configuration");
+
+  const fs::path recovery_config = fixture.path() / "recovery-config";
+  const fs::path recovery_output = fixture.path() / "recovery-output";
+  WriteConfiguration(recovery_config, data, recovery_output);
+  fs::create_directories(recovery_output / "agent_manifest.json/retained");
+  std::ofstream(recovery_output / "agent_manifest.json/retained/entry")
+      << "force committed manifest cleanup fault\n";
+  auto recovery_bootstrap = open_lmm::LoadBootstrapConfig(recovery_config);
+  Require(recovery_bootstrap.IsOk(), "load recovery configuration");
+  open_lmm::MapServer recovery_server(
+      std::move(recovery_bootstrap).Value(), recovery_output);
+  const auto recovery_snapshot = recovery_server.Snapshot();
+  Require(recovery_server.ValidateReady() &&
+              recovery_snapshot.recovery_required &&
+              recovery_snapshot.recovery_required->severity ==
+                  open_lmm::Error::Severity::kFatalRuntime &&
+              recovery_snapshot.recovery_required->context.runtime_revision ==
+                  recovery_snapshot.revision,
+          "bootstrap recovery keeps runtime structurally queryable and degraded");
+  auto recovery_mutation = Execute(
+      recovery_server,
+      open_lmm::ExecutionCommand::Stage(open_lmm::StageId::kDataLoad));
+  Require(!recovery_mutation &&
+              recovery_mutation.GetError().severity ==
+                  open_lmm::Error::Severity::kFatalRuntime &&
+              recovery_server.Snapshot().revision == recovery_snapshot.revision,
+          "bootstrap recovery rejects mutation before authority advances");
+
+  const fs::path stage_recovery_config =
+      fixture.path() / "stage-recovery-config";
+  const fs::path stage_recovery_output =
+      fixture.path() / "stage-recovery-output";
+  WriteConfiguration(stage_recovery_config, data, stage_recovery_output);
+  open_lmm::MapServer stage_recovery_server(
+      Bootstrap(stage_recovery_config), stage_recovery_output);
+  Require(stage_recovery_server.process().IsOk(),
+          "prepare committed artifacts for stage recovery fault");
+  const fs::path pose_destination =
+      stage_recovery_output / "optimized_poses_agent1.txt";
+  fs::remove(pose_destination);
+  fs::create_directories(pose_destination / "retained-child");
+  std::ofstream(pose_destination / "retained-child/entry") << "retain\n";
+  const auto stage_recovery_before = stage_recovery_server.Snapshot();
+  auto stage_recovery = Execute(
+      stage_recovery_server,
+      open_lmm::ExecutionCommand::Node(open_lmm::NodeId::kPoseSave));
+  const auto stage_recovery_after = stage_recovery_server.Snapshot();
+  Require(stage_recovery && stage_recovery.Value().recovery_required &&
+              stage_recovery_after.revision ==
+                  stage_recovery_before.revision + 1 &&
+              stage_recovery_after.recovery_required &&
+              fs::is_regular_file(pose_destination) &&
+              fs::is_directory(pose_destination.string() +
+                               ".open_lmm_backup"),
+          "real Save commit preserves files, state, receipt, and recovery health");
+  auto stage_recovery_rejected = Execute(
+      stage_recovery_server,
+      open_lmm::ExecutionCommand::Node(open_lmm::NodeId::kPoseSave));
+  Require(!stage_recovery_rejected &&
+              stage_recovery_rejected.GetError().severity ==
+                  open_lmm::Error::Severity::kFatalRuntime &&
+              stage_recovery_server.Visualization(Id("agent1")),
+          "recovery health blocks later Save while preserving read-only queries");
 
   open_lmm::MapServer server(std::move(configured).Value());
   const uint64_t batch_base_revision = server.Snapshot().revision;
@@ -466,7 +573,7 @@ int main() {
       std::cerr << parallel_completed.GetError().Message() << '\n';
     }
     Require(parallel_completed.IsOk(),
-            "complete two-agent pipeline with parallel DataLoad");
+            "parallel DataLoad ignores unrelated large files for admission");
     const auto parallel_snapshot = parallel_server.Snapshot();
     Require(parallel_snapshot.ordered_agents == snapshot.ordered_agents &&
                 parallel_snapshot.descriptor_count ==
@@ -482,15 +589,15 @@ int main() {
               CountNamedFiles(parallel_output, "global_map_", ".pcd") == 2,
           "parallel DataLoad preserves deterministic output set");
 
-  const uint64_t estimated_agent_bytes = EstimatedAgentBytes(data / "agent1");
-  const uint64_t actual_agent_bytes = calibrated_resident_bytes / 2;
-  const uint64_t pressure_budget = std::max(
-      calibrated_resident_bytes, actual_agent_bytes + estimated_agent_bytes);
-  Require(pressure_budget <
-              calibrated_resident_bytes + estimated_agent_bytes,
+  const uint64_t pressure_budget =
+      calibrated_resident_bytes +
+      std::max<uint64_t>(calibrated_resident_bytes / 4, 1);
+  Require(pressure_budget > calibrated_resident_bytes &&
+              pressure_budget < calibrated_resident_bytes * 2,
           "construct a budget that admits exactly one resident session");
   const fs::path pressure_config = fixture.path() / "pressure-config";
-  WriteConfiguration(pressure_config, data, fixture.path() / "pressure-output");
+  WriteConfiguration(pressure_config, data, fixture.path() / "pressure-output",
+                     true);
   auto pressure_governor = std::make_shared<open_lmm::ResourceGovernor>(
       open_lmm::ResourceBudget{2, 2, pressure_budget});
   {
@@ -499,6 +606,14 @@ int main() {
     Require(Execute(first_session, open_lmm::ExecutionCommand::Stage(
                                        open_lmm::StageId::kDataLoad)).IsOk(),
             "first session is admitted under resident budget");
+    const uint64_t initial_resident_bytes =
+        pressure_governor->ReservedMemoryBytes();
+    Require(Execute(first_session, open_lmm::ExecutionCommand::Node(
+                                       open_lmm::NodeId::kDataLoad,
+                                       Id("agent1"))).IsOk() &&
+                pressure_governor->ReservedMemoryBytes() ==
+                    initial_resident_bytes,
+            "agent DataLoad replacement uses retiring resident ownership");
     auto data_load_visualization = first_session.Visualization(
         open_lmm::VisualizationQuery{Id("agent1"), false});
     Require(data_load_visualization &&
@@ -518,8 +633,13 @@ int main() {
         Bootstrap(pressure_config), std::nullopt, pressure_governor);
     auto rejected = Execute(second_session, open_lmm::ExecutionCommand::Stage(
                                                 open_lmm::StageId::kDataLoad));
-    Require(!rejected,
-            "second session fails admission before exceeding resident budget");
+    Require(!rejected &&
+                rejected.GetError().Message().find(
+                    "memory admission rejected: class=resident_payload") !=
+                    std::string::npos &&
+                rejected.GetError().context.stage == "data_load" &&
+                rejected.GetError().context.agent.has_value(),
+            "actual filtered resident overflow is rejected with agent context");
     const auto first_after = first_session.Snapshot();
     Require(first_after.revision == first_before.revision &&
                 pressure_governor->ReservedMemoryBytes() == first_reserved &&

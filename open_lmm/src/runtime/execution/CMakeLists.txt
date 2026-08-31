@@ -1,7 +1,6 @@
 add_library(open_lmm_runtime_execution_objects OBJECT
-  legacy_pipeline/pipeline.cpp
+  pipeline.cpp
   stage_executor.cpp
-  stage_runner.cpp
   stages/alignment_artifact_store.cpp
   stages/alignment_executor.cpp
   stages/data_load_executor.cpp

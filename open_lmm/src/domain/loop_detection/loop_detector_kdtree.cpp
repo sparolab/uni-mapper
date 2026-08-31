@@ -1,6 +1,7 @@
 #include "loop_detector_kdtree.hpp"
 #include "alignment_map_builder.hpp"
 #include "descriptor_alignment_proposer.hpp"
+#include "intra_loop_temporal_gate.hpp"
 #include "kiss_alignment_proposer.hpp"
 #include "map_alignment_coordinator.hpp"
 
@@ -114,13 +115,23 @@ LoopPair LoopDetectorKdtree::createLoopPair(
 
 Result<std::vector<LoopPair>> LoopDetectorKdtree::detectIntraLoops(
     const AlgorithmExecutionContext& context, const ScanVec& scans,
-    const AgentContext& agent_ctx) {
+    const AgentContext& agent_ctx, std::size_t min_frame_gap) {
   OPEN_LMM_ZONE_N("LoopDetector.IntraQuery");
   std::vector<LoopPair> intra_loop_pairs;
+  IntraLoopTemporalGate temporal_gate(min_frame_gap);
+  const auto insert_descriptor = [&](std::size_t frame_index,
+                                     DescriptorArtifact descriptor) {
+    database_->insertArtifact(agent_ctx.id, frame_index,
+                              std::move(descriptor));
+  };
   int total_scans = scans.size();
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kDetectIntraLoops,
+                          0, scans.size());
   auto T = tq::trange(0, total_scans);
   T.set_prefix("Intra Loop Detector");
   for (auto idx : T) {
+    temporal_gate.PromoteEligible(static_cast<std::size_t>(idx),
+                                  insert_descriptor);
     auto scan = scans[idx];
     if (!scan) {
       return Result<std::vector<LoopPair>>::Failure(WithAlgorithmContext(
@@ -143,9 +154,13 @@ Result<std::vector<LoopPair>> LoopDetectorKdtree::detectIntraLoops(
           createLoopPair(agent_ctx.id, idx, intra_loop_candidates.value()));
     }
 
-    database_->insertArtifact(agent_ctx.id, idx,
-                              std::move(descriptor).Value());
+    temporal_gate.Defer(static_cast<std::size_t>(idx),
+                        std::move(descriptor).Value());
+    ReportAlgorithmProgress(context,
+                            AlgorithmProgressPhase::kDetectIntraLoops,
+                            static_cast<uint64_t>(idx) + 1, scans.size());
   }
+  temporal_gate.Flush(insert_descriptor);
   T.finish();
   return Result<std::vector<LoopPair>>::Ok(std::move(intra_loop_pairs));
 }
@@ -171,11 +186,18 @@ Result<std::vector<LoopPair>> LoopDetectorKdtree::detectInterLoops(
   }
 
   int total_scans = scans.size();
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kDetectInterLoops,
+                          0, scans.size());
   auto T = tq::trange(0, total_scans);
   T.set_prefix("Inter Loop Detector");
   for (auto idx : T) {
     auto scan = scans[idx];
-    if (!scan || !artifact_index) continue;
+    if (!scan || !artifact_index) {
+      ReportAlgorithmProgress(context,
+                              AlgorithmProgressPhase::kDetectInterLoops,
+                              static_cast<uint64_t>(idx) + 1, scans.size());
+      continue;
+    }
     auto descriptor = descriptor_engine_->Make(
         context, DescriptorPointView{std::span<const pcl::PointXYZI>(
                      scan->points.data(), scan->points.size())});
@@ -192,6 +214,9 @@ Result<std::vector<LoopPair>> LoopDetectorKdtree::detectInterLoops(
       inter_loop_pairs.push_back(
           createLoopPair(agent_ctx.id, idx, inter_loop_candidates.value()));
     }
+    ReportAlgorithmProgress(context,
+                            AlgorithmProgressPhase::kDetectInterLoops,
+                            static_cast<uint64_t>(idx) + 1, scans.size());
   }
   T.finish();
   return Result<std::vector<LoopPair>>::Ok(std::move(inter_loop_pairs));
@@ -207,10 +232,15 @@ std::optional<MapAlignmentProposal> LoopDetectorKdtree::proposeKissAlignment(
   const AgentId target_agent = input.all_optimized.empty()
                                 ? AgentId{}
                                 : input.all_optimized.begin()->first;
-  return KissAlignmentProposer().Propose(
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunKissMatcher,
+                          0);
+  auto proposal = KissAlignmentProposer().Propose(
       input.descriptor_store.merged_map, current_map.points,
       target_agent, context.agent.id, params_.kiss_voxel_size,
       params_.kiss_use_quatro);
+  ReportAlgorithmProgress(context, AlgorithmProgressPhase::kRunKissMatcher,
+                          1, 1);
+  return proposal;
 }
 
 namespace {
@@ -327,7 +357,8 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
     }
 
     auto intra_result = detectIntraLoops(
-        context, input.current.filtered_scans, context.agent);
+        context, input.current.filtered_scans, context.agent,
+        input.min_intra_loop_frame_gap);
     if (!intra_result) {
       return Result<LoopDetectorOutput>::Failure(intra_result.GetError());
     }
@@ -369,10 +400,16 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
             detected.GetError());
       }
       descriptor_loops = std::move(detected).Value();
-      return Result<std::optional<MapAlignmentProposal>>::Ok(
+      ReportAlgorithmProgress(
+          context, AlgorithmProgressPhase::kBuildDescriptorConsensus, 0);
+      auto proposal =
           DescriptorAlignmentProposer(DescriptorOptions(params_)).Propose(
               target_agent, context.agent.id, input.current.odom_poses,
-              input.all_optimized, descriptor_loops));
+              input.all_optimized, descriptor_loops);
+      ReportAlgorithmProgress(
+          context, AlgorithmProgressPhase::kBuildDescriptorConsensus, 1, 1);
+      return Result<std::optional<MapAlignmentProposal>>::Ok(
+          std::move(proposal));
     });
 
     const auto build_constraints = [&](const StoredAlignment& accepted,
@@ -442,6 +479,7 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
       coordinator_input.source_points =
           AlignmentPoints(current_map.points);
       coordinator_input.visualization = alignment_visualization;
+      coordinator_input.progress = context.progress;
       coordinator_input.target_agent = target_agent;
       coordinator_input.source_agent = context.agent.id;
       coordinator_input.kiss_proposer = [&]()
@@ -475,10 +513,14 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
               detected.GetError());
         }
         descriptor_loops = std::move(detected).Value();
+        ReportAlgorithmProgress(
+            context, AlgorithmProgressPhase::kBuildDescriptorConsensus, 0);
         descriptor_proposal = DescriptorAlignmentProposer(
             DescriptorOptions(params_)).Propose(
             target_agent, context.agent.id, input.current.odom_poses,
             input.all_optimized, descriptor_loops, &diagnostics);
+        ReportAlgorithmProgress(
+            context, AlgorithmProgressPhase::kBuildDescriptorConsensus, 1, 1);
         if (descriptor_proposal) {
           *alignment_visualization = DescriptorVisualization(
               context, input, descriptor_loops, diagnostics,
@@ -608,12 +650,6 @@ Result<LoopDetectorOutput> LoopDetectorKdtree::Process(
     return Result<LoopDetectorOutput>::Failure(WithAlgorithmContext(
         Error::InvalidArgument("unknown loop detector exception"), context));
   }
-}
-
-Result<std::shared_ptr<IDescriptorKdtree>> LoopDetectorKdtree::loadModule(
-    const std::string& so_name, const std::string& config_json) {
-  return load_plugin_v1<IDescriptorKdtree>(
-      so_name, "descriptor", config_json);
 }
 
 }  // namespace open_lmm

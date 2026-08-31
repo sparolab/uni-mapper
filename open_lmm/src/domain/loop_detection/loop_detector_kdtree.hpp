@@ -28,16 +28,13 @@ class LoopDetectorKdtree : public LoopDetectorBase {
       const AlgorithmExecutionContext& context,
       const LoopDetectorProcessInput& input) override;
 
-  static Result<std::shared_ptr<IDescriptorKdtree>> loadModule(
-      const std::string& so_name, const std::string& config_json);
-
  private:
   LoopPair createLoopPair(AgentId agent_id, size_t current_idx,
                           const LoopCandidateInfo& candidate_info);
 
   Result<std::vector<LoopPair>> detectIntraLoops(
       const AlgorithmExecutionContext& context, const ScanVec& scans,
-      const AgentContext& agent_ctx);
+      const AgentContext& agent_ctx, std::size_t min_frame_gap);
 
   Result<std::vector<LoopPair>> detectInterLoops(
       const AlgorithmExecutionContext& context, const ScanVec& scans,

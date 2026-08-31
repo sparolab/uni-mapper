@@ -1,16 +1,18 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
-#include <iostream>
 #include <fstream>
+#include <iostream>
+#include <limits>
 #include <memory>
 #include <random>
-#include <limits>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <open_lmm/common/agent_context.hpp>
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <runtime/execution/pipeline.hpp>
 #include <domain/support/pointcloud_utils.hpp>
 #include <open_lmm/common/rigid_transform.hpp>
 #include <domain/data_loader/data_loader_file.hpp>
@@ -524,15 +526,45 @@ void TestOptimizerLifecycle() {
   context.agent = anchor;
   context.cancellation = std::make_shared<open_lmm::CancellationToken>();
   context.operation = "optimizer.lifecycle";
+  std::vector<open_lmm::AlgorithmProgress> optimizer_progress;
+  context.progress = [&](const open_lmm::AlgorithmProgress& update) {
+    optimizer_progress.push_back(update);
+  };
+  open_lmm::LoopPair intra_loop{
+      .to = {Id("A"), 0},
+      .from = {Id("A"), 0},
+      .init_rel_pose = Eigen::Isometry3d::Identity()};
+  open_lmm::LoopPairVec intra_loops{intra_loop};
   open_lmm::LoopPairVec no_intra;
   open_lmm::LoopPairVec no_inter;
   open_lmm::AgentRawDataMap no_other_raw;
   auto first = optimizer.Process(
-      context, {raw_a, no_intra, no_inter, no_other_raw});
+      context, {raw_a, intra_loops, no_inter, no_other_raw});
   Expect(first.IsOk(), "successful optimizer call must return Result success");
   Expect(optimizer.ProcessedAgentCount() == 1 &&
              optimizer.HasProcessedAgent(Id("A")),
          "successful optimizer call must commit its agent");
+  const auto has_progress = [&](open_lmm::AlgorithmProgressPhase phase,
+                                uint64_t current,
+                                std::optional<uint64_t> total) {
+    return std::any_of(
+        optimizer_progress.begin(), optimizer_progress.end(),
+        [&](const open_lmm::AlgorithmProgress& update) {
+          return update.phase == phase && update.current == current &&
+                 update.total == total;
+        });
+  };
+  Expect(has_progress(open_lmm::AlgorithmProgressPhase::kRegisterIntraLoops,
+                      0, 1) &&
+             has_progress(
+                 open_lmm::AlgorithmProgressPhase::kRegisterIntraLoops, 1,
+                 1),
+         "optimizer must report exact intra-loop registration progress");
+  Expect(has_progress(open_lmm::AlgorithmProgressPhase::kSolveGraph, 0,
+                      std::nullopt) &&
+             has_progress(open_lmm::AlgorithmProgressPhase::kSolveGraph, 1,
+                          1),
+         "graph solve must remain indeterminate until it completes");
 
   auto duplicate = optimizer.Process(
       context, {raw_a, no_intra, no_inter, no_other_raw});
@@ -980,6 +1012,8 @@ void TestDataLoaderSinglePassProgress() {
                    .order = 0};
   bool process_returned = false;
   bool first_frame_before_return = false;
+  std::vector<std::size_t> observed_frames;
+  std::vector<double> observed_world_x;
   std::vector<open_lmm::AlgorithmProgress> progress;
   context.progress = [&](const open_lmm::AlgorithmProgress& update) {
     progress.push_back(update);
@@ -988,12 +1022,26 @@ void TestDataLoaderSinglePassProgress() {
       first_frame_before_return = !process_returned;
     }
   };
-  auto loaded = loader.Process(context, {root});
+  auto loaded = loader.Process(
+      context,
+      {.data_directory = root,
+       .observe_filtered_scan =
+           [&](std::size_t frame, const Eigen::Isometry3d& pose,
+               const pcl::PointCloud<pcl::PointXYZI>& scan) {
+             observed_frames.push_back(frame);
+             observed_world_x.push_back(
+                 (pose * Eigen::Vector3d(scan.front().x, scan.front().y,
+                                         scan.front().z))
+                     .x());
+           }});
   process_returned = true;
   Expect(loaded.IsOk() && reads == 2,
          "DataLoader must read and filter each file exactly once");
   Expect(first_frame_before_return,
          "first scan progress must arrive before DataLoad completes");
+  Expect(observed_frames == std::vector<std::size_t>({0, 1}) &&
+             observed_world_x == std::vector<double>({1.0, 3.0}),
+         "DataLoader must publish each filtered scan with its matching pose");
   const auto read_updates = std::count_if(
       progress.begin(), progress.end(), [](const auto& update) {
         return update.phase ==
@@ -1014,6 +1062,44 @@ void TestDataLoaderSinglePassProgress() {
          "scan/pose mismatch must fail after enumeration and before reads");
   std::error_code ignored;
   fs::remove_all(root, ignored);
+}
+
+void TestIncrementalVoxelAccumulatorMatchesBatchDownsampling() {
+  auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  cloud->push_back({0.10F, 0.10F, 0.10F, 1.0F});
+  cloud->push_back({0.20F, 0.20F, 0.20F, 3.0F});
+  cloud->push_back({-0.10F, -0.10F, -0.10F, 5.0F});
+  cloud->push_back({0.90F, 0.00F, 0.00F, 7.0F});
+
+  auto batch = open_lmm::downsampleWithRangeFilter(cloud, 0.4F, 0.0F, 0.0F,
+                                                    false);
+  open_lmm::IncrementalVoxelAccumulator incremental(0.4F);
+  for (const auto& point : *cloud) incremental.Add(point);
+  std::vector<pcl::PointXYZI> streamed;
+  streamed.reserve(incremental.Size());
+  std::move(incremental).ConsumeAverages(
+      [&streamed](float x, float y, float z, float intensity) {
+        streamed.emplace_back(x, y, z, intensity);
+      });
+
+  const auto order = [](const pcl::PointXYZI& left,
+                        const pcl::PointXYZI& right) {
+    return std::tie(left.x, left.y, left.z, left.intensity) <
+           std::tie(right.x, right.y, right.z, right.intensity);
+  };
+  std::sort(batch->begin(), batch->end(), order);
+  std::sort(streamed.begin(), streamed.end(), order);
+  bool equal = batch->size() == streamed.size();
+  for (std::size_t index = 0; equal && index < streamed.size(); ++index) {
+    const auto& left = (*batch)[index];
+    const auto& right = streamed[index];
+    equal = std::abs(left.x - right.x) <= 1e-6F &&
+            std::abs(left.y - right.y) <= 1e-6F &&
+            std::abs(left.z - right.z) <= 1e-6F &&
+            std::abs(left.intensity - right.intensity) <= 1e-6F;
+  }
+  Expect(equal,
+         "incremental and batch voxel downsampling must produce equal centroids");
 }
 
 void TestRemoverStreamingProgressBoundaries() {
@@ -1039,9 +1125,17 @@ void TestRemoverStreamingProgressBoundaries() {
       };
   open_lmm::AlgorithmExecutionContext online_context;
   online_context.operation = "test.online_stream";
+  int online_heavy_calls = 0;
   auto online_result = online.ProcessStreaming(
-      online_context, {online_source, poses, {}});
-  Expect(online_result.IsOk() && source_returned && ran_before_source_return,
+      online_context,
+      {online_source, poses,
+       [&]() -> Result<std::shared_ptr<void>> {
+         ++online_heavy_calls;
+         return Result<std::shared_ptr<void>>::Ok(
+             std::make_shared<int>(0));
+       }});
+  Expect(online_result.IsOk() && source_returned && ran_before_source_return &&
+             online_heavy_calls == 0,
          "online remover must run each frame directly from the source");
 
   std::vector<std::string> trace;
@@ -1057,6 +1151,8 @@ void TestRemoverStreamingProgressBoundaries() {
     trace.push_back(std::move(item));
   };
   bool offline_ran_while_source_active = false;
+  int offline_heavy_calls = 0;
+  int offline_heavy_releases = 0;
   open_lmm::DynamicRemoverBase::RawScanSource offline_source =
       [&](const open_lmm::DynamicRemoverBase::RawScanVisitor& visitor) {
         for (std::size_t index = 0; index < 2; ++index) {
@@ -1070,8 +1166,43 @@ void TestRemoverStreamingProgressBoundaries() {
         return Result<std::size_t>::Ok(2);
       };
   auto offline_result = offline.ProcessStreaming(
-      offline_context, {offline_source, poses, {}});
+      offline_context,
+      {offline_source, poses,
+       [&]() -> Result<std::shared_ptr<void>> {
+         ++offline_heavy_calls;
+         return Result<std::shared_ptr<void>>::Ok(std::shared_ptr<void>(
+             new int(0), [&offline_heavy_releases](void* value) {
+               delete static_cast<int*>(value);
+               ++offline_heavy_releases;
+             }));
+       }});
   Expect(offline_result.IsOk(), "offline progress fixture must complete");
+  Expect(offline_heavy_calls == 1 && offline_heavy_releases == 1,
+         "raw-map offline remover acquires and releases one heavy phase");
+  int no_raw_map_heavy_calls = 0;
+  auto no_raw_map_plugin = std::make_shared<RecordingOfflineRemover>();
+  open_lmm::DynamicRemoverOffline no_raw_map_offline(config,
+                                                      no_raw_map_plugin);
+  open_lmm::DynamicRemoverBase::RawScanSource no_raw_map_source =
+      [](const open_lmm::DynamicRemoverBase::RawScanVisitor& visitor) {
+        for (std::size_t index = 0; index < 2; ++index) {
+          auto visited = visitor(index, OnePointScan());
+          if (!visited) {
+            return Result<std::size_t>::Failure(visited.GetError());
+          }
+        }
+        return Result<std::size_t>::Ok(2);
+      };
+  auto no_raw_map_result = no_raw_map_offline.ProcessStreaming(
+      offline_context,
+      {no_raw_map_source, poses,
+       [&]() -> Result<std::shared_ptr<void>> {
+         ++no_raw_map_heavy_calls;
+         return Result<std::shared_ptr<void>>::Ok(
+             std::make_shared<int>(0));
+       }});
+  Expect(no_raw_map_result.IsOk() && no_raw_map_heavy_calls == 0,
+         "offline remover without raw-map workspace skips heavy admission");
   Expect(!offline_ran_while_source_active,
          "offline remover must not invoke the plugin until all input frames "
          "have been visited");
@@ -1150,6 +1281,7 @@ int main() {
   TestAlgorithmInvariants();
   TestRemoverFrameIdentityAndDownsample();
   TestOfflineStreamingFrameIdentity();
+  TestIncrementalVoxelAccumulatorMatchesBatchDownsampling();
   TestDataLoaderSinglePassProgress();
   TestRemoverStreamingProgressBoundaries();
   if (failures != 0) {

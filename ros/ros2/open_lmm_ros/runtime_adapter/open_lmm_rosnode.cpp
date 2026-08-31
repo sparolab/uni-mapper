@@ -1,7 +1,7 @@
 #include <iostream>
 #include <rclcpp/rclcpp.hpp>
 #ifdef OPEN_LMM_ROS_GUI_COMPOSITION
-#include "open_lmm_ros_gui.hpp"
+#include "../gui_composition/open_lmm_ros_gui.hpp"
 #else
 #include "open_lmm_ros.hpp"
 #endif

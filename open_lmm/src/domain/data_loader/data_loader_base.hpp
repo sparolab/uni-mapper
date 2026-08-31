@@ -17,7 +17,18 @@ namespace fs = std::filesystem;
 namespace open_lmm {
 
 struct DataLoaderInput {
+  // Absolute retained filtered-payload bytes. Decode/filter workspaces are
+  // transient and intentionally outside this resident admission callback.
+  using ResidentAdmission = std::function<Result<void>(uint64_t)>;
+  using FilteredScanObserver = std::function<void(
+      std::size_t, const Eigen::Isometry3d&,
+      const pcl::PointCloud<pcl::PointXYZI>&)>;
+
   fs::path data_directory;
+  ResidentAdmission admit_resident_bytes;
+  // Optional candidate-only observer. Failures are observational and may not
+  // change DataLoader success or committed runtime state.
+  FilteredScanObserver observe_filtered_scan;
 };
 
 class DataLoaderBase {

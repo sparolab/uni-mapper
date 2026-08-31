@@ -288,7 +288,8 @@ void TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow() {
   auto file_failure = manager.CommitWithBarrier(
       base, std::move(rejected_candidate).Value(), [&] {
         installed = true;
-        return Result<void>::Failure(Error::IoError("injected file failure"));
+        return Result<RuntimeCommitOutcome>::Failure(
+            Error::IoError("injected file failure"));
       });
   Check(!file_failure && installed && manager.Snapshot().get() == base.get(),
         "file barrier failure preserves the committed session state");
@@ -303,7 +304,7 @@ void TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow() {
   auto conflict = manager.CommitWithBarrier(
       base, std::move(stale_candidate).Value(), [&] {
         installed = true;
-        return Result<void>::Ok();
+        return Result<RuntimeCommitOutcome>::Ok({});
       });
   Check(!conflict && !installed,
         "revision conflict is rejected before file installation");
@@ -374,6 +375,45 @@ void TestRejectedReconfigurePreservesCommittedResidentOwnership() {
   }
 }
 
+void TestRecoveryRequiredPublishesStateAndBlocksAnotherCommit() {
+  auto base = DataLoadedState();
+  RuntimeStateStore store(base);
+  RuntimeTransaction first(base);
+  auto first_candidate = std::move(first).Finalize(nullptr);
+  Check(first_candidate.IsOk(), "recovery candidate finalizes");
+  Error recovery = Error::IoError(
+      "manual recovery manifest: /tmp/open_lmm_recovery.json");
+  recovery.WithExecution("file_transaction", "recovery_required")
+      .MarkFatalRuntime()
+      .WithRuntimeRevision(base->revision + 1);
+  auto recovery_health = std::make_shared<const Error>(recovery);
+  auto committed = store.CommitWithBarrier(
+      base, std::move(first_candidate).Value(), [recovery_health] {
+        return Result<RuntimeCommitOutcome>::Ok({recovery_health});
+      });
+  const auto authority = store.AuthoritySnapshot();
+  Check(committed.IsOk() && authority.state &&
+            authority.state->revision == base->revision + 1 &&
+            authority.recovery_required &&
+            authority.recovery_required->severity ==
+                Error::Severity::kFatalRuntime &&
+            authority.recovery_required->context.runtime_revision ==
+                authority.state->revision,
+        "committed state and recovery health publish atomically");
+
+  RuntimeTransaction second(authority.state);
+  auto second_candidate = std::move(second).Finalize(nullptr);
+  bool side_effect_ran = false;
+  auto rejected = store.CommitWithBarrier(
+      authority.state, std::move(second_candidate).Value(), [&] {
+        side_effect_ran = true;
+        return Result<RuntimeCommitOutcome>::Ok({});
+      });
+  Check(!rejected && !side_effect_ran &&
+            rejected.GetError().severity == Error::Severity::kFatalRuntime,
+        "recovery health rejects later mutation before side effects");
+}
+
 }  // namespace
 }  // namespace open_lmm
 
@@ -387,6 +427,7 @@ int main() {
   open_lmm::TestSessionCommitBarrierKeepsFilesAndStateInOneConflictWindow();
   open_lmm::TestPayloadBuilderKeepsRawAndReservationLifetimeCoupled();
   open_lmm::TestRejectedReconfigurePreservesCommittedResidentOwnership();
+  open_lmm::TestRecoveryRequiredPublishesStateAndBlocksAnotherCommit();
   std::cout << "session transaction tests passed\n";
   return 0;
 }

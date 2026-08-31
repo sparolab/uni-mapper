@@ -22,9 +22,6 @@ class DynamicRemoverOnline : public DynamicRemoverBase {
     return DynamicRemoverStreamingMode::kDirect;
   }
 
-  static Result<std::shared_ptr<IOnlineRemoverPlugin>> loadModule(
-      const std::string& so_name, const std::string& config_json);
-
  private:
   Result<PointCloud::Ptr> ProcessImpl(
       const AlgorithmExecutionContext& context,

@@ -203,6 +203,12 @@ class AlignmentFeedbackBroker {
       return Result<void>::Failure(Error::InvalidArgument(
           "only a manual alignment response may include a transform"));
     }
+    if (response.decision == AlignmentDecision::kExcludeAgent &&
+        active_->attempt_status.state !=
+            AlignmentAttemptState::kFailedRecoverable) {
+      return Result<void>::Failure(Error::InvalidArgument(
+          "an agent may be excluded only after a recoverable alignment failure"));
+    }
     response_ = std::move(response);
     accepting_response_ = false;
     condition_.notify_all();

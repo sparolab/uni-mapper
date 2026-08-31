@@ -1,52 +1,97 @@
 #include "data_load_executor.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <optional>
 
 #include <domain/data_loader/data_loader_base.hpp>
+#include <domain/support/pointcloud_utils.hpp>
+#include <domain/data_loader/resident_memory.hpp>
 #include <plugins/host/algorithm_provider.hpp>
+#include <runtime/model/execution_spec.hpp>
 #include <runtime/execution/stages/algorithm_context.hpp>
-#include <runtime/execution/stage_runner.hpp>
 #include <runtime/state/runtime_payload_builder.hpp>
 
 namespace open_lmm {
 namespace {
 
-uint64_t EstimateAgentMemory(const std::filesystem::path& directory) {
-  uint64_t bytes = 1;
-  std::error_code error;
-  std::filesystem::recursive_directory_iterator iterator(
-      directory, std::filesystem::directory_options::skip_permission_denied,
-      error);
-  const std::filesystem::recursive_directory_iterator end;
-  while (!error && iterator != end) {
-    if (iterator->is_regular_file(error)) {
-      const uint64_t size = iterator->file_size(error);
-      if (!error) {
-        if (size > (std::numeric_limits<uint64_t>::max() - bytes) / 2) {
-          return std::numeric_limits<uint64_t>::max();
-        }
-        bytes += size * 2;
+class DataLoadPreviewBuilder {
+ public:
+  explicit DataLoadPreviewBuilder(float voxel_size_m)
+      : voxel_millimeters_(static_cast<uint32_t>(std::clamp(
+            std::llround(static_cast<double>(voxel_size_m) * 1000.0), 1LL,
+            static_cast<long long>(std::numeric_limits<uint32_t>::max())))),
+        voxels_(voxel_size_m, 0.0F, 0.0F, false) {}
+
+  void Add(const Eigen::Isometry3d& world_T_scan,
+           const pcl::PointCloud<pcl::PointXYZI>& scan) noexcept {
+    if (failed_) return;
+    try {
+      for (const auto& point : scan) {
+        const Eigen::Vector3d transformed =
+            world_T_scan * Eigen::Vector3d(point.x, point.y, point.z);
+        if (!transformed.allFinite()) continue;
+        const Eigen::Vector3f transformed_float = transformed.cast<float>();
+        if (!transformed_float.allFinite()) continue;
+        pcl::PointXYZI output;
+        output.x = transformed_float.x();
+        output.y = transformed_float.y();
+        output.z = transformed_float.z();
+        output.intensity = point.intensity;
+        voxels_.Add(output);
       }
+    } catch (...) {
+      failed_ = true;
     }
-    iterator.increment(error);
   }
-  return bytes;
+
+  VisualizationPointPreviewHandle Finish() noexcept {
+    if (failed_) return {};
+    try {
+      auto preview = std::make_shared<VisualizationPointPreview>();
+      preview->voxel_millimeters = voxel_millimeters_;
+      preview->source_point_count = voxels_.SourcePointCount();
+      preview->points.reserve(voxels_.Size());
+      std::move(voxels_).ConsumeAverages(
+          [&preview](float x, float y, float z, float intensity) {
+            preview->points.push_back({x, y, z, intensity});
+            const Eigen::Vector3f position(x, y, z);
+            if (!preview->has_bounds) {
+              preview->min_bound = preview->max_bound = position;
+              preview->has_bounds = true;
+            } else {
+              preview->min_bound = preview->min_bound.cwiseMin(position);
+              preview->max_bound = preview->max_bound.cwiseMax(position);
+            }
+          });
+      return preview;
+    } catch (...) {
+      failed_ = true;
+      return {};
+    }
+  }
+
+ private:
+  uint32_t voxel_millimeters_ = 0;
+  IncrementalVoxelAccumulator voxels_;
+  bool failed_ = false;
+};
+
+std::unique_ptr<DataLoadPreviewBuilder> MakeDataLoadPreviewBuilder(
+    bool enabled, float voxel_size_m) noexcept {
+  if (!enabled) return {};
+  try {
+    return std::make_unique<DataLoadPreviewBuilder>(voxel_size_m);
+  } catch (...) {
+    return {};
+  }
 }
 
-uint64_t ResidentRawDataBytes(const AgentRawData& raw) {
-  uint64_t bytes = sizeof(AgentRawData) + raw.agent_id.Value().capacity();
-  const auto add = [&bytes](uint64_t value) {
-    bytes = value > std::numeric_limits<uint64_t>::max() - bytes
-                ? std::numeric_limits<uint64_t>::max()
-                : bytes + value;
-  };
-  add(raw.odom_poses.capacity() * sizeof(Eigen::Isometry3d));
-  add(raw.filtered_scans.capacity() * sizeof(ScanVec::value_type));
-  for (const auto& scan : raw.filtered_scans) {
-    if (scan) add(scan->points.capacity() * sizeof(pcl::PointXYZI));
-  }
-  return std::max<uint64_t>(bytes, 1);
+Error DataLoadMemoryError(Error error,
+                          const AlgorithmExecutionContext& context) {
+  error.context.stage = "data_load";
+  return WithAlgorithmContext(std::move(error), context);
 }
 
 }  // namespace
@@ -76,17 +121,6 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
   std::vector<AgentRawDataHandle> loaded(input.contexts.size());
   std::vector<std::shared_ptr<MemoryReservation>> reserved(
       input.contexts.size());
-  std::vector<uint64_t> estimates;
-  estimates.reserve(input.contexts.size());
-  uint64_t total_estimate = 0;
-  for (const auto& context : input.contexts) {
-    const uint64_t estimate = EstimateAgentMemory(context.data_dir);
-    estimates.push_back(estimate);
-    total_estimate =
-        estimate > std::numeric_limits<uint64_t>::max() - total_estimate
-            ? std::numeric_limits<uint64_t>::max()
-            : total_estimate + estimate;
-  }
   uint64_t replacement_credit = 0;
   for (const auto& [agent, reservation] :
        input.committed->payload->resident_memory_reservations) {
@@ -101,15 +135,6 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
   const auto load_one = [&](std::size_t index,
                             bool hide_progress) -> Result<void> {
     const auto& item = input.contexts[index];
-    auto admitted = replacement_credit == 0
-                        ? input.governor->ReserveMemory(
-                              estimates[index],
-                              MemoryClass::kResidentPayload,
-                              input.cancellation)
-                        : input.governor->ReserveReplacementMemory(
-                              estimates[index], replacement_credit,
-                              total_estimate, input.cancellation);
-    if (!admitted) return Result<void>::Failure(admitted.GetError());
     DataLoaderConfig config = *input.committed->config->data_loader;
     if (hide_progress) config.show_progress = false;
     if (!input.committed->config->documents) {
@@ -122,33 +147,74 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
         *input.committed, command, item.agent,
         input.committed->config->documents->data_loader,
         "open_lmm.data_loader", "data_load", config.type);
+    auto admitted = replacement_credit == 0
+                        ? input.governor->ReserveMemory(
+                              1, MemoryClass::kResidentPayload,
+                              input.cancellation)
+                        : input.governor->ReserveReplacementMemory(
+                              1, replacement_credit, 0,
+                              input.cancellation);
+    if (!admitted) {
+      return Result<void>::Failure(
+          DataLoadMemoryError(admitted.GetError(), algorithm_context));
+    }
+    auto memory = std::make_shared<MemoryReservation>(
+        std::move(admitted).Value());
     auto loader = input.algorithms->CreateDataLoader(config);
     if (!loader) {
       return Result<void>::Failure(
           WithAlgorithmContext(loader.GetError(), algorithm_context));
     }
-    auto raw = loader.Value()->Process(
-        algorithm_context, DataLoaderInput{item.data_dir});
+    auto preview_builder = MakeDataLoadPreviewBuilder(
+        static_cast<bool>(input.on_agent_loaded), input.preview_voxel_size_m);
+    DataLoaderInput loader_input{
+        .data_directory = item.data_dir,
+        .admit_resident_bytes = [memory, algorithm_context](uint64_t bytes) {
+          auto resized = memory->Resize(std::max<uint64_t>(bytes, 1));
+          if (!resized) {
+            return Result<void>::Failure(DataLoadMemoryError(
+                resized.GetError(), algorithm_context));
+          }
+          return Result<void>::Ok();
+        },
+        .observe_filtered_scan =
+            preview_builder
+                ? DataLoaderInput::FilteredScanObserver(
+                      [builder = preview_builder.get()](
+                          std::size_t, const Eigen::Isometry3d& pose,
+                          const pcl::PointCloud<pcl::PointXYZI>& scan) {
+                        builder->Add(pose, scan);
+                      })
+                : DataLoaderInput::FilteredScanObserver{}};
+    auto raw = loader.Value()->Process(algorithm_context, loader_input);
     if (!raw) return Result<void>::Failure(raw.GetError());
     if (input.cancellation &&
         input.cancellation->IsCancellationRequested()) {
       return Result<void>::Failure(
           Error::Cancelled("before DataLoad result publication"));
     }
+    ReportAlgorithmProgress(algorithm_context,
+                            AlgorithmProgressPhase::kBuildPreview, 0, 1);
     auto owned = std::make_shared<const AgentRawData>(std::move(raw).Value());
-    auto memory = std::make_shared<MemoryReservation>(
-        std::move(admitted).Value());
-    auto resized = memory->Resize(ResidentRawDataBytes(*owned));
-    if (!resized) return resized;
+    auto resized = memory->Resize(
+        data_loader_memory::ResidentRawDataBytes(*owned));
+    if (!resized) {
+      return Result<void>::Failure(
+          DataLoadMemoryError(resized.GetError(), algorithm_context));
+    }
     loaded[index] = std::move(owned);
     reserved[index] = std::move(memory);
+    auto preview = preview_builder ? preview_builder->Finish()
+                                   : VisualizationPointPreviewHandle{};
     if (input.on_agent_loaded) {
       try {
-        input.on_agent_loaded(item.agent.id, loaded[index]);
+        input.on_agent_loaded(item.agent.id, loaded[index], preview);
       } catch (...) {
         // A best-effort read model must not affect candidate correctness.
       }
     }
+    ReportAlgorithmProgress(algorithm_context,
+                            AlgorithmProgressPhase::kBuildPreview, 1, 1);
     return Result<void>::Ok();
   };
 
@@ -176,12 +242,13 @@ Result<ExecutionCandidate> DataLoadExecutor::Execute(
         }
         tasks.push_back(std::move(submitted).Value());
       }
+      std::optional<Error> batch_error;
       for (const auto& task : tasks) {
         auto completed = task.Wait();
-        if (!completed) {
-          return Result<ExecutionCandidate>::Failure(
-              completed.GetError());
-        }
+        if (!completed && !batch_error) batch_error = completed.GetError();
+      }
+      if (batch_error) {
+        return Result<ExecutionCandidate>::Failure(*batch_error);
       }
     }
   } else {
@@ -267,18 +334,6 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
               !old_reservation->second
           ? 0
           : old_reservation->second->Bytes();
-  const uint64_t estimate = EstimateAgentMemory(selected->data_dir);
-  auto admitted = replacement_credit == 0
-                      ? input.governor->ReserveMemory(
-                            estimate,
-                            MemoryClass::kResidentPayload,
-                            input.cancellation)
-                      : input.governor->ReserveReplacementMemory(
-                            estimate, replacement_credit, estimate,
-                            input.cancellation);
-  if (!admitted) {
-    return Result<ExecutionCandidate>::Failure(admitted.GetError());
-  }
   if (!input.committed->config->documents) {
     return Result<ExecutionCandidate>::Failure(
         Error::InvalidArgument("DataLoad config document is unavailable"));
@@ -290,25 +345,60 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
       input.committed->config->documents->data_loader,
       "open_lmm.data_loader", "data_load",
       input.committed->config->data_loader->type);
+  auto admitted = replacement_credit == 0
+                      ? input.governor->ReserveMemory(
+                            1, MemoryClass::kResidentPayload,
+                            input.cancellation)
+                      : input.governor->ReserveReplacementMemory(
+                            1, replacement_credit, 0,
+                            input.cancellation);
+  if (!admitted) {
+    return Result<ExecutionCandidate>::Failure(
+        DataLoadMemoryError(admitted.GetError(), algorithm_context));
+  }
+  auto reservation = std::make_shared<MemoryReservation>(
+      std::move(admitted).Value());
   auto loader = input.algorithms->CreateDataLoader(
       *input.committed->config->data_loader);
   if (!loader) {
     return Result<ExecutionCandidate>::Failure(
         WithAlgorithmContext(loader.GetError(), algorithm_context));
   }
-  auto raw = loader.Value()->Process(
-      algorithm_context, DataLoaderInput{selected->data_dir});
+  auto preview_builder = MakeDataLoadPreviewBuilder(
+      static_cast<bool>(input.on_agent_loaded), input.preview_voxel_size_m);
+  DataLoaderInput loader_input{
+      .data_directory = selected->data_dir,
+      .admit_resident_bytes = [reservation, algorithm_context](uint64_t bytes) {
+        auto resized = reservation->Resize(std::max<uint64_t>(bytes, 1));
+        if (!resized) {
+          return Result<void>::Failure(DataLoadMemoryError(
+              resized.GetError(), algorithm_context));
+        }
+        return Result<void>::Ok();
+      },
+      .observe_filtered_scan =
+          preview_builder
+              ? DataLoaderInput::FilteredScanObserver(
+                    [builder = preview_builder.get()](
+                        std::size_t, const Eigen::Isometry3d& pose,
+                        const pcl::PointCloud<pcl::PointXYZI>& scan) {
+                      builder->Add(pose, scan);
+                    })
+              : DataLoaderInput::FilteredScanObserver{}};
+  auto raw = loader.Value()->Process(algorithm_context, loader_input);
   if (!raw) return Result<ExecutionCandidate>::Failure(raw.GetError());
   if (input.cancellation && input.cancellation->IsCancellationRequested()) {
     return Result<ExecutionCandidate>::Failure(
         Error::Cancelled("before agent DataLoad candidate publication"));
   }
+  ReportAlgorithmProgress(algorithm_context,
+                          AlgorithmProgressPhase::kBuildPreview, 0, 1);
   auto owned = std::make_shared<const AgentRawData>(std::move(raw).Value());
-  auto reservation = std::make_shared<MemoryReservation>(
-      std::move(admitted).Value());
-  auto resized = reservation->Resize(ResidentRawDataBytes(*owned));
+  auto resized = reservation->Resize(
+      data_loader_memory::ResidentRawDataBytes(*owned));
   if (!resized) {
-    return Result<ExecutionCandidate>::Failure(resized.GetError());
+    return Result<ExecutionCandidate>::Failure(
+        DataLoadMemoryError(resized.GetError(), algorithm_context));
   }
   if (replacement_credit != 0) {
     auto replacement_valid =
@@ -320,7 +410,10 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
   }
   if (input.on_agent_loaded) {
     try {
-      input.on_agent_loaded(agent, owned);
+      input.on_agent_loaded(
+          agent, owned,
+          preview_builder ? preview_builder->Finish()
+                          : VisualizationPointPreviewHandle{});
     } catch (...) {
       // A best-effort read model must not affect candidate correctness.
     }
@@ -348,6 +441,8 @@ Result<ExecutionCandidate> DataLoadExecutor::ExecuteAgent(
   if (!built) {
     return Result<ExecutionCandidate>::Failure(built.GetError());
   }
+  ReportAlgorithmProgress(algorithm_context,
+                          AlgorithmProgressPhase::kBuildPreview, 1, 1);
   return Result<ExecutionCandidate>::Ok(
       {input.committed->revision, std::move(built).Value(), {agent},
        ArtifactCompletionKind::kDataLoadAgent, agent});

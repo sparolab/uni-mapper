@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -51,6 +52,23 @@ void TestConfiguredResolutionBuildsDistinctArtifacts() {
         "0.5m alignment map must retain two occupied voxels");
   Check(coarse.Value().points.size() == 1,
         "2m alignment map must merge the fixture into one occupied voxel");
+}
+
+void TestAlignmentMapReportsFrameProgress() {
+  auto context = Context();
+  std::vector<AlgorithmProgress> progress;
+  context.progress = [&](const AlgorithmProgress& update) {
+    progress.push_back(update);
+  };
+  auto built = BuildAlignmentMap(context, Raw(), 0.5F);
+  Check(built.IsOk(), "progress fixture alignment map must build");
+  Check(progress.size() == 2,
+        "alignment map must report start and every completed frame");
+  Check(progress.front().phase ==
+            AlgorithmProgressPhase::kBuildAlignmentMap &&
+            progress.front().current == 0 && progress.front().total == 1 &&
+            progress.back().current == 1 && progress.back().total == 1,
+        "alignment map progress must expose exact 0/N through N/N");
 }
 
 void TestKissRunnerReceivesSelectedResolutionAndArtifact() {
@@ -113,6 +131,7 @@ void TestCancellationPreventsMapPublication() {
 
 int main() {
   TestConfiguredResolutionBuildsDistinctArtifacts();
+  TestAlignmentMapReportsFrameProgress();
   TestKissRunnerReceivesSelectedResolutionAndArtifact();
   TestDescriptorStoreRejectsMixedMapResolutions();
   TestCancellationPreventsMapPublication();

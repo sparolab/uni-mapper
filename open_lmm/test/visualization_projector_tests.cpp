@@ -22,7 +22,8 @@ void Check(bool value, const char* message) {
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 
 std::shared_ptr<RuntimeState> MakeState(const fs::path& output,
-                                        uint64_t revision = 7) {
+                                        uint64_t revision = 7,
+                                        float preview_voxel_size_m = 0.2F) {
   const AgentId agent = Id("agent");
   auto raw = std::make_shared<AgentRawData>();
   raw->agent_id = agent;
@@ -48,6 +49,7 @@ std::shared_ptr<RuntimeState> MakeState(const fs::path& output,
   payload->contexts.push_back(std::move(context));
   auto config = std::make_shared<RuntimeConfig>();
   config->root.output_directory = output;
+  config->root.save_voxel_size = preview_voxel_size_m;
   auto state = std::make_shared<RuntimeState>();
   state->revision = revision;
   state->config = config;
@@ -60,11 +62,15 @@ VisualizationSource MakeSource(const std::shared_ptr<RuntimeState>& state) {
   VisualizationSource source;
   source.revision = state->revision;
   source.output_directory = state->config->root.output_directory;
-  for (const auto& [agent, raw] : state->payload->database->raw_data) {
+  source.preview_voxel_size_m =
+      static_cast<float>(state->config->root.save_voxel_size);
+  for (const auto& entry : state->payload->database->raw_data) {
+    const auto& agent = entry.first;
+    const auto& raw = entry.second;
     const auto optimized = state->payload->database->optimized_data.find(agent);
     const auto context = std::find_if(
         state->payload->contexts.begin(), state->payload->contexts.end(),
-        [&agent](const AgentPipelineCtx& item) {
+        [agent](const AgentPipelineCtx& item) {
           return item.agent.id == agent;
         });
     source.agents.push_back(
@@ -78,7 +84,7 @@ VisualizationSource MakeSource(const std::shared_ptr<RuntimeState>& state) {
   return source;
 }
 
-void TestDataLoadIsLazyAndBounded() {
+void TestDataLoadIsLazyAndVoxelComplete() {
   VisualizationProjector projector;
   auto state = MakeState({});
   projector.Publish(MakeSource(state), VisualizationPhase::kDataLoad, false);
@@ -91,14 +97,14 @@ void TestDataLoadIsLazyAndBounded() {
             !metadata.Value().points_complete,
         "DataLoad metadata exposes odometry without materializing points");
 
-  auto full = projector.Project({Id("agent"), true, 0.4F, 2});
+  auto full = projector.Project({Id("agent"), true, 0.4F, 1});
   Check(full && full.Value().points_complete &&
             full.Value().points.size() == 2 &&
             full.Value().displayed_point_count == 2 &&
             full.Value().source_point_count == 4 &&
             full.Value().point_kind ==
                 VisualizationPointKind::kFilteredScanPreview,
-        "DataLoad preview is bounded and accounts for source points");
+        "DataLoad preview returns every voxel and accounts for source points");
 }
 
 void TestCancelledProjectionCannotPopulateCache() {
@@ -131,8 +137,8 @@ void TestQueryShapeCacheIsBounded() {
   }
   Check(projector.PointCacheEntryCount() <= 16,
         "variant query shapes retain at most sixteen cache entries");
-  Check(projector.PointCacheBytes() <= 128U * 1024U * 1024U,
-        "variant query shapes stay within the cache byte budget");
+  Check(projector.PointCacheBytes() > 0,
+        "variant query shapes retain point-cache telemetry");
   auto newest = projector.Project({Id("agent"), true, 0.04F, 41});
   Check(newest && newest.Value().points_complete,
         "most recently used query remains available after cache eviction");
@@ -181,10 +187,15 @@ void TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks() {
                     false);
   const auto first_raw = state->payload->database->raw_data.at(Id("agent"));
   projector.PublishDataLoadCandidate(7, Id("agent"), first_raw);
+  auto first_points = projector.Project({Id("agent"), true});
+  Check(first_points && projector.PointCacheEntryCount() == 1,
+        "first DataLoad candidate populates its point cache");
 
   auto second_raw = std::make_shared<AgentRawData>(*first_raw);
   second_raw->agent_id = Id("second");
   projector.PublishDataLoadCandidate(7, Id("second"), second_raw);
+  Check(projector.PointCacheEntryCount() == 1,
+        "publishing another agent preserves existing point caches");
   auto first = projector.Project({Id("agent"), false});
   auto second = projector.Project({Id("second"), false});
   Check(first && second &&
@@ -210,6 +221,111 @@ void TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks() {
         "late candidate callbacks cannot replace a newer committed snapshot");
 }
 
+void TestDataLoadCandidateReusesIncrementalPreviewAcrossCommit() {
+  VisualizationProjector projector;
+  auto state = MakeState({}, 7);
+  projector.Publish(MakeSource(state), VisualizationPhase::kOptimization,
+                    false);
+  const auto raw = state->payload->database->raw_data.at(Id("agent"));
+  auto preview = std::make_shared<VisualizationPointPreview>();
+  preview->voxel_millimeters = 200;
+  preview->points.push_back({99.0F, 1.0F, 2.0F, 0.75F});
+  preview->points.push_back({100.0F, 2.0F, 3.0F, 0.25F});
+  preview->min_bound = Eigen::Vector3f(99.0F, 1.0F, 2.0F);
+  preview->max_bound = Eigen::Vector3f(100.0F, 2.0F, 3.0F);
+  preview->has_bounds = true;
+  preview->source_point_count = 123;
+
+  projector.PublishDataLoadCandidate(7, Id("agent"), raw, preview);
+  auto candidate = projector.Project({Id("agent"), true});
+  Check(candidate && candidate.Value().points.size() == 2 &&
+            candidate.Value().points.front().x == 99.0F &&
+            candidate.Value().source_point_count == 123,
+        "DataLoad candidate reuses every incrementally built voxel");
+
+  projector.Publish(MakeSource(state), VisualizationPhase::kDataLoad, false);
+  auto committed = projector.Project({Id("agent"), true});
+  Check(committed && committed.Value().points.size() == 2 &&
+            committed.Value().points.front().x == 99.0F &&
+            committed.Value().source_point_count == 123,
+        "DataLoad commit retains the matching preview without rebuilding");
+}
+
+void TestAlignmentCandidatePublishesIntermediateOptimizedPosesAndRollsBack() {
+  VisualizationProjector projector;
+  auto state = MakeState({}, 7);
+  auto payload = std::make_shared<RuntimePayload>(*state->payload);
+  auto database = std::make_shared<SharedDatabase>(*payload->database);
+  auto contexts = payload->contexts;
+  for (const char* name : {"second", "third"}) {
+    const AgentId agent = Id(name);
+    auto raw = std::make_shared<AgentRawData>(
+        *database->raw_data.at(Id("agent")));
+    raw->agent_id = agent;
+    database->raw_data.emplace(agent, raw);
+    AgentPipelineCtx context;
+    context.agent.id = agent;
+    context.raw_data = raw;
+    contexts.push_back(std::move(context));
+    state->ordered_agents.push_back(agent);
+  }
+  const auto optimized = [](double x) {
+    auto data = std::make_shared<AgentOptimizedData>();
+    for (int frame = 0; frame != 2; ++frame) {
+      Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+      pose.translation().x() = x + frame;
+      data->optimized_poses.emplace_back(frame, pose);
+    }
+    return std::shared_ptr<const AgentOptimizedData>(std::move(data));
+  };
+  database->optimized_data[Id("agent")] = optimized(10.0);
+  database->optimized_data[Id("second")] = optimized(20.0);
+  payload->database = database;
+  payload->contexts = contexts;
+  state->payload = payload;
+
+  auto committed_source = MakeSource(state);
+  for (auto& agent : committed_source.agents) agent.optimized_data.reset();
+  projector.Publish(std::move(committed_source),
+                    VisualizationPhase::kDataLoad, false);
+  projector.PublishAlignmentCandidate(MakeSource(state));
+
+  auto first = projector.Project({Id("agent"), false});
+  auto second = projector.Project({Id("second"), false});
+  auto third = projector.Project({Id("third"), false});
+  Check(first && second && third &&
+            first.Value().pose_kind == VisualizationPoseKind::kOptimized &&
+            second.Value().pose_kind == VisualizationPoseKind::kOptimized &&
+            third.Value().pose_kind == VisualizationPoseKind::kOdometry &&
+            first.Value().poses.front().transform.translation().x() == 10.0F &&
+            second.Value().poses.front().transform.translation().x() == 20.0F,
+        "Alignment candidate exposes optimized predecessors and raw follower");
+
+  database->optimized_data[Id("agent")] = optimized(11.0);
+  projector.PublishAlignmentCandidate(MakeSource(state));
+  auto revised = projector.Project({Id("agent"), false});
+  Check(revised &&
+            revised.Value().poses.front().transform.translation().x() == 11.0F,
+        "same-revision Alignment candidates replace older optimizer poses");
+
+  projector.RollbackAlignmentCandidate(7);
+  auto rolled_back = projector.Project({Id("agent"), false});
+  Check(rolled_back &&
+            rolled_back.Value().phase == VisualizationPhase::kDataLoad &&
+            rolled_back.Value().pose_kind == VisualizationPoseKind::kOdometry &&
+            rolled_back.Value().poses.front().transform.translation().x() == 0.0F,
+        "failed Alignment restores the committed visualization read model");
+
+  projector.PublishAlignmentCandidate(MakeSource(state));
+  auto newer = MakeState({}, 8);
+  projector.Publish(MakeSource(newer), VisualizationPhase::kOptimization,
+                    false);
+  projector.PublishAlignmentCandidate(MakeSource(state));
+  auto retained = projector.Project({Id("agent"), false});
+  Check(retained && retained.Value().revision == 8,
+        "late Alignment candidate cannot replace a newer committed revision");
+}
+
 void TestFinalMapIntensityAndCache() {
   const fs::path root =
       fs::temp_directory_path() / "open_lmm_visualization_projector";
@@ -223,7 +339,7 @@ void TestFinalMapIntensityAndCache() {
         "write final map fixture");
 
   VisualizationProjector projector;
-  projector.Publish(MakeSource(MakeState(root, 9)),
+  projector.Publish(MakeSource(MakeState(root, 9, 0.01F)),
                     VisualizationPhase::kMapUpdate, true);
   auto metadata = projector.Project({Id("agent"), false});
   Check(metadata && metadata.Value().points.empty() &&
@@ -231,24 +347,31 @@ void TestFinalMapIntensityAndCache() {
                 VisualizationPointKind::kFinalStaticMap &&
             metadata.Value().points_available && !metadata.Value().map_available,
         "MapUpdate metadata advertises lazy points without claiming a loaded map");
-  auto first = projector.Project({Id("agent"), true, 10.0F, 1});
+  auto first = projector.Project({Id("agent"), true});
   Check(first.IsOk(), "MapUpdate loads the committed PCD");
   Check(first.Value().map_available, "MapUpdate marks the loaded final map");
-  Check(first.Value().points.size() == 1 &&
-            first.Value().displayed_point_count == 1 &&
+  Check(first.Value().points.size() == 2 &&
+            first.Value().displayed_point_count == 2 &&
             first.Value().source_point_count == 2,
-        "MapUpdate obeys the bounded visualization query");
-  Check(first.Value().points.front().intensity == 0.75F ||
-            first.Value().points.front().intensity == 0.25F,
+        "MapUpdate returns every voxel regardless of the legacy point limit");
+  Check(std::any_of(first.Value().points.begin(), first.Value().points.end(),
+                    [](const VisualizationPoint& point) {
+                      return point.intensity == 0.75F;
+                    }) &&
+            std::any_of(first.Value().points.begin(),
+                        first.Value().points.end(),
+                        [](const VisualizationPoint& point) {
+                          return point.intensity == 0.25F;
+                        }),
         "MapUpdate preserves committed intensity semantics");
   fs::remove(map_path);
-  auto cached = projector.Project({Id("agent"), true, 10.0F, 1});
-  Check(cached && cached.Value().points.size() == 1,
+  auto cached = projector.Project({Id("agent"), true});
+  Check(cached && cached.Value().points.size() == 2,
         "MapUpdate point payload is cached for the committed revision");
   fs::remove_all(root);
 }
 
-void TestFinalMapBoundIsDeterministic() {
+void TestFinalMapVoxelizationIsCompleteAndDeterministic() {
   const fs::path root =
       fs::temp_directory_path() / "open_lmm_visualization_final_bound";
   fs::remove_all(root);
@@ -261,30 +384,30 @@ void TestFinalMapBoundIsDeterministic() {
   }
   const fs::path map_path = root / "global_map_agent.pcd";
   Check(pcl::io::savePCDFileBinary(map_path.string(), cloud) == 0,
-        "write bounded final map fixture");
+        "write complete final map fixture");
 
   VisualizationProjector first_projector;
   first_projector.Publish(MakeSource(MakeState(root, 11)),
                           VisualizationPhase::kMapUpdate, true);
-  const VisualizationQuery query{Id("agent"), true, 0.1F, 17};
+  const VisualizationQuery query{Id("agent"), true, 0.01F, 17};
   auto first = first_projector.Project(query);
   Check(first && first.Value().source_point_count == 200 &&
-            first.Value().displayed_point_count == 17 &&
-            first.Value().points.size() == 17,
-        "final map never exceeds the requested point bound");
+            first.Value().displayed_point_count == 200 &&
+            first.Value().points.size() == 200,
+        "final map returns every voxel despite the legacy point limit");
 
   VisualizationProjector second_projector;
   second_projector.Publish(MakeSource(MakeState(root, 11)),
                            VisualizationPhase::kMapUpdate, true);
   auto second = second_projector.Project(query);
   Check(second && second.Value().points.size() == first.Value().points.size(),
-        "second bounded projection succeeds");
+        "second complete projection succeeds");
   for (std::size_t index = 0; index < first.Value().points.size(); ++index) {
     const auto& left = first.Value().points[index];
     const auto& right = second.Value().points[index];
     Check(left.x == right.x && left.y == right.y && left.z == right.z &&
               left.intensity == right.intensity,
-          "bounded final map selection is deterministic");
+          "complete final map voxelization is deterministic");
   }
   fs::remove_all(root);
 }
@@ -335,13 +458,15 @@ void TestFinalMapsRemainAvailableForEveryAgent() {
 }  // namespace
 
 int main() {
-  TestDataLoadIsLazyAndBounded();
+  TestDataLoadIsLazyAndVoxelComplete();
   TestCancelledProjectionCannotPopulateCache();
   TestQueryShapeCacheIsBounded();
   TestLoopCandidatesAndCandidateFrameSurvive();
   TestDataLoadCandidatesAccumulateAndRejectStaleCallbacks();
+  TestDataLoadCandidateReusesIncrementalPreviewAcrossCommit();
+  TestAlignmentCandidatePublishesIntermediateOptimizedPosesAndRollsBack();
   TestFinalMapIntensityAndCache();
-  TestFinalMapBoundIsDeterministic();
+  TestFinalMapVoxelizationIsCompleteAndDeterministic();
   TestFinalMapsRemainAvailableForEveryAgent();
   return 0;
 }

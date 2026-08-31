@@ -7,10 +7,13 @@
 #include <tbb/parallel_sort.h>
 
 #include <Eigen/Dense>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <open_lmm/common/data_types.hpp>
-#include <runtime/state/shared_data.hpp>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #define HASH_X 73856093
@@ -45,6 +48,43 @@ struct std::hash<VOXEL_LOC> {
 };
 
 namespace open_lmm {
+
+// Reusable one-pass voxel reducer. Callers may feed points from a complete
+// cloud or incrementally as scans become available; both paths therefore use
+// exactly the same voxel-key and centroid semantics.
+class IncrementalVoxelAccumulator {
+ public:
+  IncrementalVoxelAccumulator(float voxel_size, float min_range = 0.0F,
+                              float max_range = 0.0F,
+                              bool use_range_filter = false);
+
+  void Add(const pcl::PointXYZI& point);
+  [[nodiscard]] std::size_t Size() const noexcept { return voxels_.size(); }
+  [[nodiscard]] std::size_t SourcePointCount() const noexcept {
+    return source_point_count_;
+  }
+
+  template <typename Consumer>
+  void ConsumeAverages(Consumer&& consumer) && {
+    for (const auto& [voxel, accumulated] : voxels_) {
+      (void)voxel;
+      const float inverse_count = 1.0F / accumulated.count;
+      consumer(accumulated.xyz[0] * inverse_count,
+               accumulated.xyz[1] * inverse_count,
+               accumulated.xyz[2] * inverse_count,
+               accumulated.intensity * inverse_count);
+    }
+    voxels_.clear();
+  }
+
+ private:
+  float inverse_voxel_size_ = 1.0F;
+  float minimum_range_squared_ = 0.0F;
+  float maximum_range_squared_ = 0.0F;
+  bool use_range_filter_ = false;
+  std::size_t source_point_count_ = 0;
+  std::unordered_map<VOXEL_LOC, M_POINT> voxels_;
+};
 
 // Helper methods for transformations
 std::vector<Eigen::Isometry3f> transformEigenPoses(

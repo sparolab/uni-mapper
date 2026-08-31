@@ -7,6 +7,10 @@
 
 namespace open_lmm {
 
+void ClearDatasetSelection(std::vector<std::string>& selected) noexcept {
+  selected.clear();
+}
+
 Result<std::vector<std::string>> DiscoverDatasetDirectories(
     const std::filesystem::path& root) {
   std::error_code error;

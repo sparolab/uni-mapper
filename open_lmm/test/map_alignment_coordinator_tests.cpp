@@ -2,12 +2,14 @@
 #include <domain/loop_detection/descriptor_alignment_proposer.hpp>
 #include <domain/loop_detection/map_alignment_refiner.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
+#include <vector>
 
 using namespace open_lmm;
 
@@ -89,6 +91,10 @@ void TestKissAcceptDoesNotComputeDescriptor() {
   auto input = Input(broker);
   std::atomic<int> kiss_calls{0};
   std::atomic<int> descriptor_calls{0};
+  std::vector<AlgorithmProgress> progress;
+  input.progress = [&](const AlgorithmProgress& update) {
+    progress.push_back(update);
+  };
   input.kiss_proposer = [&] {
     ++kiss_calls;
     return Proposed(Proposal(AlignmentMethod::kKissMatcher, 1));
@@ -126,6 +132,53 @@ void TestKissAcceptDoesNotComputeDescriptor() {
   Check(result && result.Value().method == AlignmentMethod::kKissMatcher,
         "KISS result accepted");
   Check(descriptor_calls == 0, "Descriptor remains lazy after KISS accept");
+  const auto wait_updates = std::count_if(
+      progress.begin(), progress.end(), [](const AlgorithmProgress& update) {
+        return update.phase ==
+               AlgorithmProgressPhase::kWaitAlignmentReview;
+      });
+  Check(wait_updates >= 2 &&
+            std::all_of(progress.begin(), progress.end(),
+                        [](const AlgorithmProgress& update) {
+                          return update.phase !=
+                                     AlgorithmProgressPhase::kWaitAlignmentReview ||
+                                 !update.total;
+                        }),
+        "initial and post-proposal review waits must remain indeterminate");
+}
+
+void TestRecoverableFailureAllowsExplicitFollowerExclusion() {
+  auto broker = std::make_shared<AlignmentFeedbackBroker>();
+  broker->SetEnabled(true);
+  auto input = Input(broker);
+  input.kiss_proposer = [] {
+    return Result<AlignmentProposalAttempt>::Ok(
+        {.proposal = std::nullopt,
+         .failure = AlignmentAttemptFailure::kInsufficientInliers,
+         .message = "not enough inliers"});
+  };
+  Result<MapAlignmentProposal> result =
+      Result<MapAlignmentProposal>::Failure(Error::Cancelled("not run"));
+  std::thread worker([&] { result = MapAlignmentCoordinator().Align(input); });
+  auto snapshot = WaitForSnapshot(broker);
+  Check(!broker->Respond(Response(snapshot,
+                                 AlignmentDecision::kExcludeAgent)),
+        "agent exclusion is rejected before a recoverable failure");
+  Check(broker->Respond(
+            Response(snapshot, AlignmentDecision::kTryKissMatcher))
+            .IsOk(),
+        "failed follower fixture starts KISS proposal");
+  snapshot = WaitForAttempt(broker, snapshot.session_revision,
+                            AlignmentAttemptState::kFailedRecoverable);
+  Check(broker->Respond(
+            Response(snapshot, AlignmentDecision::kExcludeAgent))
+            .IsOk(),
+        "recoverable follower failure accepts explicit exclusion");
+  worker.join();
+  Check(!result &&
+            result.GetError().code == Error::Code::kAgentExcluded &&
+            !broker->Snapshot(),
+        "explicit exclusion ends review without turning the stage into cancellation");
 }
 
 void TestDescriptorFallback() {
@@ -607,6 +660,7 @@ void TestMapRefinementAndQualityMetrics() {
 
 int main() {
   TestKissAcceptDoesNotComputeDescriptor();
+  TestRecoverableFailureAllowsExplicitFollowerExclusion();
   TestDescriptorFallback();
   TestKissFailureRetriesDescriptorInSameSession();
   TestDescriptorFailureRetriesManualInSameSession();

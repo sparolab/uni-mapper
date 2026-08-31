@@ -22,6 +22,9 @@ struct VisualizationAgentSource {
 struct VisualizationSource {
   uint64_t revision = 0;
   std::filesystem::path output_directory;
+  // Resolved by runtime composition from the canonical config. The projector
+  // consumes only this value and never depends on config ownership directly.
+  float preview_voxel_size_m = 0.0F;
   std::vector<VisualizationAgentSource> agents;
 };
 

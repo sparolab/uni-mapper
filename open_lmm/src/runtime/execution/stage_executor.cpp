@@ -60,32 +60,64 @@ VisualizationPhase InferVisualizationPhase(const RuntimeState& state) {
   return VisualizationPhase::kDataLoad;
 }
 
-std::optional<VisualizationSource> BuildVisualizationSource(
-    const std::shared_ptr<const RuntimeState>& state) {
-  if (!state || !state->config || !state->payload ||
-      !state->payload->database) {
-    return std::nullopt;
+std::vector<AgentId> ExcludedAlignmentAgents(
+    const CommittedRuntimeSnapshot& snapshot) {
+  std::vector<AgentId> result;
+  for (const auto& artifact : snapshot.artifacts) {
+    if (artifact.key.type == ArtifactType::kMapAlignment &&
+        artifact.key.agent && artifact.state == ArtifactState::kFailed &&
+        artifact.detail.find("excluded from alignment") != std::string::npos) {
+      result.push_back(*artifact.key.agent);
+    }
   }
+  return result;
+}
+
+VisualizationSource BuildVisualizationSource(
+    uint64_t revision, const RuntimeConfig& config,
+    const std::vector<AgentPipelineCtx>& contexts,
+    const SharedDatabase& database,
+    VisualizationPhase phase) {
   VisualizationSource source;
-  source.revision = state->revision;
-  source.output_directory = state->config->root.output_directory;
-  const auto& database = *state->payload->database;
+  source.revision = revision;
+  source.output_directory = config.root.output_directory;
+  source.preview_voxel_size_m =
+      static_cast<float>(config.root.save_voxel_size);
   source.agents.reserve(database.raw_data.size());
-  for (const auto& [agent, raw] : database.raw_data) {
+  for (const auto& entry : database.raw_data) {
+    const auto& agent = entry.first;
+    const auto& raw = entry.second;
     const auto optimized = database.optimized_data.find(agent);
     const auto context = std::find_if(
-        state->payload->contexts.begin(), state->payload->contexts.end(),
-        [&agent](const AgentPipelineCtx& item) {
+        contexts.begin(), contexts.end(),
+        [agent](const AgentPipelineCtx& item) {
           return item.agent.id == agent;
         });
+    if (context != contexts.end() &&
+        context->flow == ControlFlow::kSkip &&
+        phase != VisualizationPhase::kDataLoad &&
+        phase != VisualizationPhase::kLoopDetection) {
+      continue;
+    }
     source.agents.push_back(
         {agent, raw,
          optimized == database.optimized_data.end() ? nullptr
                                                     : optimized->second,
-         context == state->payload->contexts.end() ? nullptr
-                                                   : context->loop_output});
+         context == contexts.end() ? nullptr : context->loop_output});
   }
   return source;
+}
+
+std::optional<VisualizationSource> BuildVisualizationSource(
+    const std::shared_ptr<const RuntimeState>& state,
+    VisualizationPhase phase) {
+  if (!state || !state->config || !state->payload ||
+      !state->payload->database) {
+    return std::nullopt;
+  }
+  return BuildVisualizationSource(state->revision, *state->config,
+                                  state->payload->contexts,
+                                  *state->payload->database, phase);
 }
 
 }  // namespace
@@ -93,8 +125,10 @@ std::optional<VisualizationSource> BuildVisualizationSource(
 StageExecutor::StageExecutor(
     BootstrapConfigSnapshot bootstrap_config,
     std::optional<std::filesystem::path> output_directory,
-    std::shared_ptr<ResourceGovernor> resource_governor)
-    : resource_governor_(std::move(resource_governor)) {
+    std::shared_ptr<ResourceGovernor> resource_governor,
+    std::function<void()> before_presentation_publish)
+    : resource_governor_(std::move(resource_governor)),
+      before_presentation_publish_(std::move(before_presentation_publish)) {
   InitializeLogging();
   RuntimeBootstrapper bootstrap;
   auto initialized = bootstrap.Bootstrap(
@@ -108,14 +142,29 @@ StageExecutor::StageExecutor(
     resource_governor_ =
         std::make_shared<ResourceGovernor>(result.suggested_resource_budget);
   }
-  runtime_state_store_.Initialize(std::move(result.initial_state));
+  runtime_state_store_.Initialize(std::move(result.initial_state),
+                                  std::move(result.recovery_required));
   coordinator_ = std::make_unique<StageCoordinator>(
       runtime_state_store_, output_repository_, resource_governor_,
       std::move(result.algorithms),
       [this](uint64_t base_revision, const AgentId& agent,
-             const AgentRawDataHandle& raw) {
+             const AgentRawDataHandle& raw,
+             const VisualizationPointPreviewHandle& preview) {
         visualization_projector_.PublishDataLoadCandidate(base_revision,
-                                                          agent, raw);
+                                                          agent, raw, preview);
+      },
+      [this](uint64_t base_revision,
+             const std::vector<AgentPipelineCtx>& contexts,
+             const SharedDatabase& database) {
+        const auto committed = CommittedState();
+        if (!committed || !committed->config ||
+            committed->revision != base_revision) {
+          return;
+        }
+        visualization_projector_.PublishAlignmentCandidate(
+            BuildVisualizationSource(base_revision, *committed->config,
+                                     contexts, database,
+                                     VisualizationPhase::kOptimization));
       });
 }
 
@@ -149,6 +198,15 @@ Result<void> StageExecutor::EnsureReady() {
   return Result<void>::Ok();
 }
 
+Result<void> StageExecutor::EnsureMutationAllowed() {
+  auto ready = EnsureReady();
+  if (!ready) return ready;
+  const auto authority = runtime_state_store_.AuthoritySnapshot();
+  return authority.recovery_required
+             ? Result<void>::Failure(*authority.recovery_required)
+             : Result<void>::Ok();
+}
+
 Result<void> StageExecutor::ValidateReady() {
   ExecutionLease execution(execution_active_);
   if (!execution) {
@@ -170,7 +228,8 @@ CancellationCapability StageExecutor::CancellationMetadata() const {
 }
 
 CommittedRuntimeSnapshot StageExecutor::Snapshot() const {
-  const auto state = CommittedState();
+  const auto authority = runtime_state_store_.AuthoritySnapshot();
+  const auto& state = authority.state;
   if (!state) return {};
   CommittedRuntimeSnapshot snapshot{state->revision,
                                     state->config ? state->config->revision : 0,
@@ -184,23 +243,67 @@ CommittedRuntimeSnapshot StageExecutor::Snapshot() const {
           database ? database->getSize() : 0;
     }
   }
+  snapshot.recovery_required = authority.recovery_required;
   return snapshot;
 }
 
 void StageExecutor::PublishEmptyVisualization() {
   const auto state = CommittedState();
-  visualization_projector_.Clear(state ? state->revision : 0);
+  visualization_projector_.Clear(
+      state ? state->revision : 0,
+      state && state->config
+          ? static_cast<float>(state->config->root.save_voxel_size)
+          : 0.0F);
 }
 
 void StageExecutor::PublishVisualization(VisualizationPhase phase,
                                          bool include_maps) {
   const auto state = CommittedState();
-  auto source = BuildVisualizationSource(state);
+  auto source = BuildVisualizationSource(state, phase);
   if (!source) {
-    visualization_projector_.Clear(state ? state->revision : 0);
+    visualization_projector_.Clear(
+        state ? state->revision : 0,
+        state && state->config
+            ? static_cast<float>(state->config->root.save_voxel_size)
+            : 0.0F);
     return;
   }
   visualization_projector_.Publish(std::move(*source), phase, include_maps);
+}
+
+void StageExecutor::PublishVisualizationBestEffort(
+    VisualizationPhase phase, bool include_maps,
+    uint64_t base_revision) noexcept {
+  try {
+    if (before_presentation_publish_) before_presentation_publish_();
+    PublishVisualization(phase, include_maps);
+  } catch (const std::exception& error) {
+    try {
+      if (phase == VisualizationPhase::kDataLoad) {
+        visualization_projector_.RollbackDataLoadCandidate(base_revision);
+      } else if (phase == VisualizationPhase::kOptimization) {
+        visualization_projector_.RollbackAlignmentCandidate(base_revision);
+      }
+      LogWarning(std::string(
+                     "committed runtime retained after presentation failure: ") +
+                 error.what());
+    } catch (...) {
+      // Presentation and diagnostics are derived output. A secondary failure
+      // must not erase the already committed runtime receipt.
+    }
+  } catch (...) {
+    try {
+      if (phase == VisualizationPhase::kDataLoad) {
+        visualization_projector_.RollbackDataLoadCandidate(base_revision);
+      } else if (phase == VisualizationPhase::kOptimization) {
+        visualization_projector_.RollbackAlignmentCandidate(base_revision);
+      }
+      LogWarning(
+          "committed runtime retained after unknown presentation failure");
+    } catch (...) {
+      // Preserve committed authority even when rollback/logging also fail.
+    }
+  }
 }
 
 Result<VisualizationSnapshot> StageExecutor::Visualization(
@@ -215,7 +318,7 @@ Result<ExecutionReceipt> StageExecutor::Execute(
     return Result<ExecutionReceipt>::Failure(
         Error::InvalidArgument("another MapServer operation is active"));
   }
-  auto ready = EnsureReady();
+  auto ready = EnsureMutationAllowed();
   if (!ready) return Result<ExecutionReceipt>::Failure(ready.GetError());
   if (!context.cancellation) {
     return Result<ExecutionReceipt>::Failure(
@@ -229,6 +332,8 @@ Result<ExecutionReceipt> StageExecutor::Execute(
 
   Result<void> result = Result<void>::Failure(
       Error::InvalidArgument("unknown execution command"));
+  std::optional<VisualizationPhase> presentation_phase;
+  bool presentation_include_maps = false;
   switch (command.kind) {
     case ExecutionCommandKind::kStage:
       if (!command.stage) {
@@ -239,8 +344,11 @@ Result<ExecutionReceipt> StageExecutor::Execute(
       if (!result && *command.stage == StageId::kDataLoad) {
         visualization_projector_.RollbackDataLoadCandidate(base->revision);
       }
+      if (!result && *command.stage == StageId::kAlignment) {
+        visualization_projector_.RollbackAlignmentCandidate(base->revision);
+      }
       if (result) {
-        const VisualizationPhase phase =
+        presentation_phase =
             *command.stage == StageId::kDataLoad
                 ? VisualizationPhase::kDataLoad
             : *command.stage == StageId::kAlignment
@@ -248,8 +356,8 @@ Result<ExecutionReceipt> StageExecutor::Execute(
             : *command.stage == StageId::kMapUpdate
                 ? VisualizationPhase::kMapUpdate
                 : VisualizationPhase::kSave;
-        PublishVisualization(phase, *command.stage == StageId::kMapUpdate ||
-                                        *command.stage == StageId::kSave);
+        presentation_include_maps = *command.stage == StageId::kMapUpdate ||
+                                    *command.stage == StageId::kSave;
       }
       break;
     case ExecutionCommandKind::kNode: {
@@ -267,7 +375,7 @@ Result<ExecutionReceipt> StageExecutor::Execute(
         visualization_projector_.RollbackDataLoadCandidate(base->revision);
       }
       if (result) {
-        const VisualizationPhase phase =
+        presentation_phase =
             *command.node == NodeId::kDataLoad
                 ? VisualizationPhase::kDataLoad
             : *command.node == NodeId::kLoopDetect
@@ -277,9 +385,10 @@ Result<ExecutionReceipt> StageExecutor::Execute(
             : *command.node == NodeId::kMapUpdate
                 ? VisualizationPhase::kMapUpdate
                 : VisualizationPhase::kSave;
-        PublishVisualization(phase, *command.node == NodeId::kMapUpdate ||
-                                        *command.node == NodeId::kPoseSave ||
-                                        *command.node == NodeId::kFallbackMapSave);
+        presentation_include_maps =
+            *command.node == NodeId::kMapUpdate ||
+            *command.node == NodeId::kPoseSave ||
+            *command.node == NodeId::kFallbackMapSave;
       }
       break;
     }
@@ -291,7 +400,7 @@ Result<ExecutionReceipt> StageExecutor::Execute(
       result = coordinator_->ExecuteOptimizeThrough(base, *command.agent,
                                                     context);
       if (result) {
-        PublishVisualization(VisualizationPhase::kOptimization, false);
+        presentation_phase = VisualizationPhase::kOptimization;
       }
       break;
     case ExecutionCommandKind::kReconfigure:
@@ -302,7 +411,7 @@ Result<ExecutionReceipt> StageExecutor::Execute(
       result = coordinator_->ExecuteReconfigure(
           base, *command.config_domain, command.config_revision, context);
       if (result) {
-        PublishVisualization(InferVisualizationPhase(*CommittedState()), false);
+        presentation_phase = InferVisualizationPhase(*CommittedState());
       }
       break;
   }
@@ -316,38 +425,52 @@ Result<ExecutionReceipt> StageExecutor::Execute(
   const CommittedRuntimeSnapshot before{
       base->revision, base->config->revision, base->ordered_agents,
       base->artifacts};
-  return Result<ExecutionReceipt>::Ok(
-      {base->revision, after.revision,
-       ArtifactRevisionAffectedAgents(before, after)});
+  const auto excluded = command.kind == ExecutionCommandKind::kStage &&
+                                command.stage == StageId::kAlignment
+                            ? ExcludedAlignmentAgents(after)
+                            : std::vector<AgentId>{};
+  ExecutionReceipt receipt{
+      base->revision, after.revision,
+      ArtifactRevisionAffectedAgents(before, after), excluded,
+      after.recovery_required};
+  if (presentation_phase) {
+    PublishVisualizationBestEffort(*presentation_phase,
+                                   presentation_include_maps,
+                                   base->revision);
+  }
+  return Result<ExecutionReceipt>::Ok(std::move(receipt));
 }
 
-Result<ConfigApplyReceipt> StageExecutor::ApplyConfig(
+Result<ConfigCommandReceipt> StageExecutor::ApplyConfig(
     const ConfigCandidate& candidate, const ExpectedRevision& expected,
     const ExecutionContext& context) {
   ExecutionLease execution(execution_active_);
   if (!execution) {
-    return Result<ConfigApplyReceipt>::Failure(
+    return Result<ConfigCommandReceipt>::Failure(
         Error::InvalidArgument("another MapServer operation is active"));
   }
-  auto ready = EnsureReady();
+  auto ready = EnsureMutationAllowed();
   if (!ready) {
-    return Result<ConfigApplyReceipt>::Failure(ready.GetError());
+    return Result<ConfigCommandReceipt>::Failure(ready.GetError());
   }
   if (!context.cancellation) {
-    return Result<ConfigApplyReceipt>::Failure(
+    return Result<ConfigCommandReceipt>::Failure(
         Error::InvalidArgument("execution cancellation token is required"));
   }
   const auto base = CommittedState();
   if (context.base_revision != base->revision ||
       expected.runtime_revision != base->revision ||
       !base->config || expected.config_revision != base->config->revision) {
-    return Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+    return Result<ConfigCommandReceipt>::Failure(Error::InvalidArgument(
         "config transaction revision does not match committed runtime"));
   }
   auto applied = coordinator_->ApplyConfig(base, candidate, expected, context);
-  if (!applied) return applied;
-  PublishVisualization(InferVisualizationPhase(*CommittedState()), false);
-  return applied;
+  if (!applied)
+    return Result<ConfigCommandReceipt>::Failure(applied.GetError());
+  PublishVisualizationBestEffort(
+      InferVisualizationPhase(*CommittedState()), false, base->revision);
+  return Result<ConfigCommandReceipt>::Ok(
+      {std::move(applied).Value(), Snapshot().recovery_required});
 }
 
 Result<void> StageExecutor::InitializeRuntimeRevisions(
@@ -366,9 +489,15 @@ Result<void> StageExecutor::InitializeRuntimeRevisions(
   rebased->revision = runtime_revision;
   config->revision = config_revision;
   rebased->config = std::move(config);
-  runtime_state_store_.Initialize(std::move(rebased));
+  const auto recovery = runtime_state_store_.AuthoritySnapshot().recovery_required;
+  runtime_state_store_.Initialize(std::move(rebased), recovery);
   PublishEmptyVisualization();
   return Result<void>::Ok();
+}
+
+void StageExecutor::RecordRecoveryRequired(
+    std::shared_ptr<const Error> recovery_required) noexcept {
+  runtime_state_store_.LatchRecoveryRequired(std::move(recovery_required));
 }
 
 }  // namespace open_lmm

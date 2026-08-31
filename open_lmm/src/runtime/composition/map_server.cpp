@@ -1,4 +1,4 @@
-#include "map_server.hpp"
+#include <runtime/composition/map_server.hpp>
 
 #include <runtime/execution/stage_executor.hpp>
 
@@ -7,10 +7,12 @@ namespace open_lmm {
 MapServer::MapServer(
     BootstrapConfigSnapshot bootstrap_config,
     std::optional<std::filesystem::path> output_directory,
-    std::shared_ptr<ResourceGovernor> resource_governor)
+    std::shared_ptr<ResourceGovernor> resource_governor,
+    std::function<void()> before_presentation_publish)
     : executor_(std::make_unique<StageExecutor>(
           std::move(bootstrap_config), std::move(output_directory),
-          std::move(resource_governor))) {}
+          std::move(resource_governor),
+          std::move(before_presentation_publish))) {}
 MapServer::~MapServer() = default;
 
 Result<void> MapServer::process() {
@@ -34,6 +36,9 @@ Result<void> MapServer::process() {
           std::to_string(receipt.committed_revision) + " query=" +
           std::to_string(query_revision)));
     }
+    if (receipt.recovery_required) {
+      return Result<void>::Failure(*receipt.recovery_required);
+    }
   }
   return Result<void>::Ok();
 }
@@ -47,10 +52,15 @@ Result<ExecutionReceipt> MapServer::Execute(
   return executor_->Execute(command, context);
 }
 
-Result<ConfigApplyReceipt> MapServer::ApplyConfig(
+Result<ConfigCommandReceipt> MapServer::ApplyConfig(
     const ConfigCandidate& candidate, const ExpectedRevision& expected,
     const ExecutionContext& context) {
   return executor_->ApplyConfig(candidate, expected, context);
+}
+
+void MapServer::RecordRecoveryRequired(
+    std::shared_ptr<const Error> recovery_required) noexcept {
+  executor_->RecordRecoveryRequired(std::move(recovery_required));
 }
 
 CommittedRuntimeSnapshot MapServer::Snapshot() const {

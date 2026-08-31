@@ -47,6 +47,31 @@ ExecutionEvent FailureEvent(uint64_t job_id, EventType type, StageId stage,
   return event;
 }
 
+bool SameRecovery(const std::shared_ptr<const Error>& lhs,
+                  const std::shared_ptr<const Error>& rhs) {
+  if (static_cast<bool>(lhs) != static_cast<bool>(rhs)) return false;
+  if (!lhs) return true;
+  return lhs->code == rhs->code && lhs->severity == rhs->severity &&
+         lhs->message == rhs->message &&
+         lhs->context.runtime_revision == rhs->context.runtime_revision &&
+         lhs->context.stage == rhs->context.stage &&
+         lhs->context.node == rhs->context.node &&
+         lhs->context.agent == rhs->context.agent &&
+         lhs->context.plugin == rhs->context.plugin &&
+         lhs->context.config == rhs->context.config &&
+         lhs->context.json_pointer == rhs->context.json_pointer &&
+         lhs->context.expected == rhs->context.expected &&
+         lhs->context.actual == rhs->context.actual &&
+         lhs->context.schema_version == rhs->context.schema_version;
+}
+
+void AttachRecovery(ExecutionEvent& event,
+                    const std::shared_ptr<const Error>& recovery) {
+  if (!recovery) return;
+  event.message = recovery->Message();
+  event.error = *recovery;
+}
+
 }  // namespace
 
 struct ExecutionEventSubscriberSlot {
@@ -145,8 +170,8 @@ Result<void> PipelineController::acceptExecutionReceipt(
     {
       std::lock_guard lock(mutex_);
       protocol_failure_ = error;
+      return Result<void>::Failure(*effectiveFatalRuntimeErrorLocked());
     }
-    return Result<void>::Failure(std::move(error));
   };
   if (!query_port) {
     return fail_protocol(
@@ -173,6 +198,12 @@ Result<void> PipelineController::acceptExecutionReceipt(
     config_revision_ = runtime.config_revision;
     committed_runtime_revision_ = runtime.revision;
   }
+  if (!SameRecovery(receipt.recovery_required,
+                    runtime.recovery_required)) {
+    return fail_protocol(
+        "execution receipt recovery health does not match query authority",
+        runtime.revision);
+  }
   if (receipt.base_revision != sent_base_revision) {
     return fail_protocol(
         "execution receipt base revision does not match the command context",
@@ -189,6 +220,82 @@ Result<void> PipelineController::acceptExecutionReceipt(
         runtime.revision);
   }
   return Result<void>::Ok();
+}
+
+Error PipelineController::reconcileExecutionFailure(
+    Error error, uint64_t sent_base_revision,
+    const std::shared_ptr<RuntimeQueryPort>& query_port) {
+  auto fail_protocol = [this](std::string message,
+                              std::optional<uint64_t> observed_revision =
+                                  std::nullopt) {
+    Error protocol_error = Error::InvalidArgument(std::move(message));
+    protocol_error.MarkFatalRuntime();
+    if (observed_revision) {
+      protocol_error.WithRuntimeRevision(*observed_revision);
+    }
+    {
+      std::lock_guard lock(mutex_);
+      protocol_failure_ = protocol_error;
+      return *effectiveFatalRuntimeErrorLocked();
+    }
+  };
+
+  if (!query_port) {
+    return fail_protocol(
+        "runtime query port is unavailable after failed execution; "
+        "commit authority is unknown");
+  }
+
+  CommittedRuntimeSnapshot runtime;
+  try {
+    runtime = query_port->Snapshot();
+  } catch (const std::exception& snapshot_error) {
+    return fail_protocol(
+        std::string("runtime query snapshot failed after failed execution; ") +
+        "commit authority is unknown: " + snapshot_error.what());
+  } catch (...) {
+    return fail_protocol(
+        "runtime query snapshot failed after failed execution; "
+        "commit authority is unknown");
+  }
+
+  if (runtime.revision == sent_base_revision) return error;
+  if (runtime.revision < sent_base_revision) {
+    return fail_protocol(
+        "runtime query revision regressed after failed execution; "
+        "commit authority is unknown",
+        runtime.revision);
+  }
+
+  {
+    std::lock_guard lock(mutex_);
+    committed_runtime_ = runtime;
+    agents_ = runtime.ordered_agents;
+    config_revision_ = runtime.config_revision;
+    committed_runtime_revision_ = runtime.revision;
+  }
+  return fail_protocol(
+      "execution reported failure after authoritative runtime advanced: " +
+          error.Message(),
+      runtime.revision);
+}
+
+Result<ExecutionReceipt> PipelineController::executeCommand(
+    const std::shared_ptr<StageCommandPort>& command_port,
+    const ExecutionCommand& command, const ExecutionContext& context) {
+  if (!command_port) {
+    return Result<ExecutionReceipt>::Failure(
+        Error::InvalidArgument("pipeline command port is unavailable"));
+  }
+  try {
+    return command_port->Execute(command, context);
+  } catch (const std::exception& error) {
+    return Result<ExecutionReceipt>::Failure(
+        Error::InvalidArgument(error.what()));
+  } catch (...) {
+    return Result<ExecutionReceipt>::Failure(
+        Error::InvalidArgument("unknown command-port execution exception"));
+  }
 }
 
 PipelineController::~PipelineController() {
@@ -214,8 +321,8 @@ Result<uint64_t> PipelineController::submit(Work work) {
       return Result<uint64_t>::Failure(
           Error::InvalidArgument("pipeline execution ports are unavailable"));
     }
-    if (protocol_failure_) {
-      return Result<uint64_t>::Failure(*protocol_failure_);
+    if (const auto fatal = effectiveFatalRuntimeErrorLocked()) {
+      return Result<uint64_t>::Failure(*fatal);
     }
     if (maintenance_in_progress_) {
       return Result<uint64_t>::Failure(
@@ -273,10 +380,6 @@ Result<uint64_t> PipelineController::submit(Work work) {
       result = Result<void>::Failure(
           Error::InvalidArgument("unknown pipeline exception"));
     }
-    if (result && cancellation->IsCancellationRequested()) {
-      result = Result<void>::Failure(
-          Error::Cancelled("observed after runner operation returned"));
-    }
     work_result->emplace(std::move(result));
   });
   std::thread lifecycle_worker(
@@ -309,6 +412,9 @@ Result<uint64_t> PipelineController::SubmitRunAll() {
       }
       auto result = runOneStage(id, stage, context);
       if (!result) return result;
+      if (const auto fatal = FatalRuntimeError()) {
+        return Result<void>::Failure(*fatal);
+      }
     }
     return Result<void>::Ok();
   });
@@ -340,15 +446,13 @@ Result<uint64_t> PipelineController::SubmitNode(
     }
     command_context = withProgress(command_context, id, descriptor.stage,
                                    node, agent);
-    auto result = command_port_->Execute(
-        ExecutionCommand::Node(node, agent), command_context);
-    if (result && cancellationRequested()) {
-      return Result<void>::Failure(
-          Error::Cancelled("after node runner returned"));
-    }
+    auto result = executeCommand(command_port_,
+                                 ExecutionCommand::Node(node, agent),
+                                 command_context);
     if (!result) {
-      const Error error = AddExecutionContext(
-          result.GetError(), query_port_, descriptor.stage, node, agent);
+      const Error error = AddExecutionContext(reconcileExecutionFailure(
+          result.GetError(), command_context.base_revision, query_port_),
+          query_port_, descriptor.stage, node, agent);
       emit(FailureEvent(id, EventType::kNodeFailed, descriptor.stage,
                         error, node, agent));
       return Result<void>::Failure(error);
@@ -371,6 +475,7 @@ Result<uint64_t> PipelineController::SubmitNode(
         id, EventType::kArtifactCommitted, descriptor.stage, {},
         0, node, agent};
     committed.affected_agents = result.Value().affected_agents;
+    AttachRecovery(committed, result.Value().recovery_required);
     emit(std::move(committed));
     const auto total = ProgressTotal(node, agents_, agent);
     emit({id, EventType::kProgressUpdated, descriptor.stage, {},
@@ -391,8 +496,8 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
       return Result<void>::Failure(
           Error::InvalidArgument("pipeline maintenance is in progress"));
     }
-    if (protocol_failure_) {
-      return Result<void>::Failure(*protocol_failure_);
+    if (const auto fatal = effectiveFatalRuntimeErrorLocked()) {
+      return Result<void>::Failure(*fatal);
     }
     if (job_ && (job_->state == JobState::kQueued ||
                  job_->state == JobState::kRunning ||
@@ -428,9 +533,11 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
         Error::InvalidArgument("unknown command-port reconfigure exception"));
   }
   if (!reconfigured) {
+    const Error error = reconcileExecutionFailure(
+        reconfigured.GetError(), base_revision, query_port);
     std::lock_guard lock(mutex_);
     maintenance_in_progress_ = false;
-    return Result<void>::Failure(reconfigured.GetError());
+    return Result<void>::Failure(error);
   }
   auto accepted = acceptExecutionReceipt(
       reconfigured.Value(), base_revision, query_port);
@@ -439,8 +546,10 @@ Result<void> PipelineController::ApplyConfig(ConfigDomain domain,
     maintenance_in_progress_ = false;
   }
   if (!accepted) return accepted;
-  emit({0, EventType::kArtifactInvalidated, std::nullopt,
-        "config applied"});
+  ExecutionEvent configured{0, EventType::kArtifactInvalidated, std::nullopt,
+                            "config applied"};
+  AttachRecovery(configured, reconfigured.Value().recovery_required);
+  emit(std::move(configured));
   return Result<void>::Ok();
 }
 
@@ -456,8 +565,8 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
       return Result<ConfigApplyReceipt>::Failure(
           Error::InvalidArgument("pipeline maintenance is in progress"));
     }
-    if (protocol_failure_) {
-      return Result<ConfigApplyReceipt>::Failure(*protocol_failure_);
+    if (const auto fatal = effectiveFatalRuntimeErrorLocked()) {
+      return Result<ConfigApplyReceipt>::Failure(*fatal);
     }
     if (job_ && (job_->state == JobState::kQueued ||
                  job_->state == JobState::kRunning ||
@@ -477,7 +586,7 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
     alignment_feedback = alignment_feedback_;
   }
 
-  Result<ConfigApplyReceipt> applied = Result<ConfigApplyReceipt>::Failure(
+  Result<ConfigCommandReceipt> applied = Result<ConfigCommandReceipt>::Failure(
       Error::InvalidArgument("pipeline execution ports are unavailable"));
   try {
     if (command_port && query_port) {
@@ -487,22 +596,25 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
            expected.runtime_revision});
     }
   } catch (const std::exception& error) {
-    applied = Result<ConfigApplyReceipt>::Failure(
+    applied = Result<ConfigCommandReceipt>::Failure(
         Error::InvalidArgument(error.what()));
   } catch (...) {
-    applied = Result<ConfigApplyReceipt>::Failure(Error::InvalidArgument(
+    applied = Result<ConfigCommandReceipt>::Failure(Error::InvalidArgument(
         "unknown command-port config transaction exception"));
   }
   if (!applied) {
+    const Error error = reconcileExecutionFailure(
+        applied.GetError(), expected.runtime_revision, query_port);
     std::lock_guard lock(mutex_);
     maintenance_in_progress_ = false;
-    return applied;
+    return Result<ConfigApplyReceipt>::Failure(error);
   }
 
-  const auto& receipt = applied.Value();
+  const auto& command_receipt = applied.Value();
+  const auto& receipt = command_receipt.receipt;
   auto accepted = acceptExecutionReceipt(
       {receipt.base_runtime_revision, receipt.runtime_revision,
-       receipt.affected_agents},
+       receipt.affected_agents, {}, command_receipt.recovery_required},
       expected.runtime_revision, query_port);
   Error config_protocol_error = Error::InvalidArgument("");
   bool config_protocol_failed = false;
@@ -518,6 +630,7 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
       config_protocol_error.MarkFatalRuntime().WithRuntimeRevision(
           committed_runtime_.revision);
       protocol_failure_ = config_protocol_error;
+      config_protocol_error = *effectiveFatalRuntimeErrorLocked();
       config_protocol_failed = true;
     }
   }
@@ -531,8 +644,9 @@ Result<ConfigApplyReceipt> PipelineController::ApplyConfig(
   ExecutionEvent invalidated{0, EventType::kArtifactInvalidated,
                              std::nullopt, "config applied"};
   invalidated.affected_agents = receipt.affected_agents;
+  AttachRecovery(invalidated, command_receipt.recovery_required);
   emit(std::move(invalidated));
-  return applied;
+  return Result<ConfigApplyReceipt>::Ok(receipt);
 }
 
 Result<void> PipelineController::ReplacePorts(
@@ -627,16 +741,13 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(AgentId target_agent)
     }
     command_context = withProgress(command_context, id, StageId::kAlignment,
                                    NodeId::kOptimize, target_agent);
-    auto result = command_port_->Execute(
-        ExecutionCommand::OptimizeThrough(target_agent), command_context);
-    if (result && cancellationRequested()) {
-      return Result<void>::Failure(
-          Error::Cancelled("after optimizer replay returned"));
-    }
+    auto result = executeCommand(command_port_,
+                                 ExecutionCommand::OptimizeThrough(target_agent),
+                                 command_context);
     if (!result) {
-      const Error error = AddExecutionContext(
-          result.GetError(), query_port_, StageId::kAlignment,
-          NodeId::kOptimize, target_agent);
+      const Error error = AddExecutionContext(reconcileExecutionFailure(
+          result.GetError(), command_context.base_revision, query_port_),
+          query_port_, StageId::kAlignment, NodeId::kOptimize, target_agent);
       emit(FailureEvent(id, EventType::kStageFailed, StageId::kAlignment,
                         error, NodeId::kOptimize, target_agent));
       return Result<void>::Failure(error);
@@ -654,6 +765,7 @@ Result<uint64_t> PipelineController::SubmitOptimizeThrough(AgentId target_agent)
     ExecutionEvent completed{id, EventType::kStageCompleted,
                              StageId::kAlignment, "optimizer replay"};
     completed.affected_agents = result.Value().affected_agents;
+    AttachRecovery(completed, result.Value().recovery_required);
     emit(std::move(completed));
     return Result<void>::Ok();
   });
@@ -675,15 +787,12 @@ Result<void> PipelineController::runOneStage(
     command_context.base_revision = committed_runtime_.revision;
   }
   command_context = withProgress(command_context, job_id, stage, std::nullopt);
-  auto result = command_port_->Execute(ExecutionCommand::Stage(stage),
-                                       command_context);
-  if (result && cancellationRequested()) {
-    return Result<void>::Failure(
-        Error::Cancelled("after stage runner returned"));
-  }
+  auto result = executeCommand(command_port_, ExecutionCommand::Stage(stage),
+                               command_context);
   if (!result) {
-    const Error error = AddExecutionContext(
-        result.GetError(), query_port_, stage);
+    const Error error = AddExecutionContext(reconcileExecutionFailure(
+        result.GetError(), command_context.base_revision, query_port_),
+        query_port_, stage);
     emit(FailureEvent(job_id, EventType::kStageFailed, stage,
                       error));
     return Result<void>::Failure(error);
@@ -696,8 +805,17 @@ Result<void> PipelineController::runOneStage(
     emit(FailureEvent(job_id, EventType::kStageFailed, stage, error));
     return Result<void>::Failure(error);
   }
+  for (const AgentId& excluded : result.Value().excluded_agents) {
+    ExecutionEvent event{
+        job_id, EventType::kAlignmentAgentExcluded, StageId::kAlignment,
+        "agent excluded from this Alignment result", 0,
+        NodeId::kLoopDetect, excluded};
+    event.affected_agents = {excluded};
+    emit(std::move(event));
+  }
   ExecutionEvent completed{job_id, EventType::kStageCompleted, stage, {}};
   completed.affected_agents = result.Value().affected_agents;
+  AttachRecovery(completed, result.Value().recovery_required);
   emit(std::move(completed));
   return Result<void>::Ok();
 }
@@ -893,6 +1011,37 @@ PipelineSnapshot PipelineController::Snapshot() const {
     snapshot.job->cancellation = cancellation->Telemetry();
   }
   return snapshot;
+}
+
+std::optional<Error> PipelineController::FatalRuntimeError() const {
+  std::lock_guard lock(mutex_);
+  return effectiveFatalRuntimeErrorLocked();
+}
+
+std::optional<Error> PipelineController::effectiveFatalRuntimeErrorLocked()
+    const {
+  if (!protocol_failure_) {
+    return committed_runtime_.recovery_required
+               ? std::optional<Error>(*committed_runtime_.recovery_required)
+               : std::nullopt;
+  }
+  if (!committed_runtime_.recovery_required) return protocol_failure_;
+
+  // Recovery is the actionable committed-state condition: its code, manifest
+  // path, and structured context must remain observable even when the same
+  // command also violates the controller/port protocol. Keep both canonical
+  // causes separately latched and synthesize their public projection on read.
+  Error combined = *committed_runtime_.recovery_required;
+  combined.MarkFatalRuntime();
+  combined.message += "; additional runtime protocol failure: ";
+  combined.message += protocol_failure_->Message();
+  return combined;
+}
+
+void PipelineController::RecordRecoveryRequired(
+    std::shared_ptr<const Error> recovery_required) noexcept {
+  std::lock_guard lock(mutex_);
+  committed_runtime_.recovery_required = std::move(recovery_required);
 }
 
 Result<VisualizationSnapshot> PipelineController::GetVisualizationSnapshot(

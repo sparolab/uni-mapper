@@ -251,6 +251,7 @@ Result<void> AlignmentArtifactStore::Prepare(
   root["alignments"] = nlohmann::json::array();
   bool has_user_approval = false;
   for (const auto& context : state.payload->contexts) {
+    if (context.flow == ControlFlow::kSkip) continue;
     if (!context.loop_output ||
         !context.loop_output->accepted_global_T_agent ||
         !context.loop_output->accepted_alignment_method ||
@@ -305,7 +306,9 @@ Result<void> AlignmentArtifactStore::Prepare(
   output.close();
   uint64_t artifact_hash = kFnvOffset;
   HashText(artifact_hash, root.dump());
-  for (const AgentId& agent : state.ordered_agents) {
+  for (const auto& context : state.payload->contexts) {
+    if (context.flow == ControlFlow::kSkip) continue;
+    const AgentId& agent = context.agent.id;
     artifacts.RecordExternalFile(ArtifactType::kMapAlignment, agent,
                                  destination.string(), Hex(artifact_hash));
   }

@@ -16,9 +16,15 @@ endfunction()
 function(assert_exact_matches description root pattern)
   set(expected ${ARGN})
   file(GLOB_RECURSE candidates
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.c"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cc"
     "${OPEN_LMM_SOURCE_DIR}/${root}/*.cpp"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cxx"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.hh"
     "${OPEN_LMM_SOURCE_DIR}/${root}/*.hpp"
-    "${OPEN_LMM_SOURCE_DIR}/${root}/*.h")
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.h"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.hxx"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.inl")
   set(actual)
   foreach(candidate IN LISTS candidates)
     file(READ "${candidate}" contents)
@@ -37,11 +43,41 @@ function(assert_exact_matches description root pattern)
   endif()
 endfunction()
 
+function(assert_tree_excludes description root)
+  file(GLOB_RECURSE candidates LIST_DIRECTORIES false
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.c"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cc"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cmake"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cpp"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.cxx"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.h"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.hh"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.hpp"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.hxx"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.inl"
+    "${OPEN_LMM_SOURCE_DIR}/${root}/*.txt")
+  foreach(candidate IN LISTS candidates)
+    file(READ "${candidate}" contents)
+    foreach(pattern IN LISTS ARGN)
+      string(FIND "${contents}" "${pattern}" found)
+      if(NOT found EQUAL -1)
+        file(RELATIVE_PATH relative_candidate
+          "${OPEN_LMM_SOURCE_DIR}" "${candidate}")
+        message(FATAL_ERROR
+          "${description}: ${relative_candidate} contains ${pattern}")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+
 # Goal 4 starts by freezing the exact known reverse edges. Later dependency
 # correction commits shrink these lists to zero; new callers fail immediately.
 assert_exact_matches(
-  "GUI controller-internal include baseline"
-  "gui" "runtime/control/pipeline_controller.hpp")
+  "adapters must not include private runtime headers"
+  "src/adapters" "#include <runtime/")
+assert_exact_matches(
+  "adapters must not quote-include private runtime headers"
+  "src/adapters" "#include \"runtime/")
 assert_exact_matches(
   "execution concrete AlgorithmFactory include baseline"
   "src/runtime/execution" "plugins/host/algorithm_factory.hpp")
@@ -49,8 +85,48 @@ assert_exact_matches(
   "reconfigure concrete AlgorithmFactory include baseline"
   "src/config/application" "plugins/host/algorithm_factory.hpp")
 assert_exact_matches(
+  "domain must not include plugin-host internals"
+  "src/domain" "plugins/host/")
+assert_exact_matches(
+  "domain must not load runtime plugins"
+  "src/domain" "load_plugin_v1<")
+assert_exact_matches(
+  "domain must not inspect runtime plugins"
+  "src/domain" "inspect_plugin_v1(")
+assert_exact_matches(
+  "domain must not retain descriptor inspection helpers"
+  "src/domain" "InspectDescriptorPlugin")
+assert_exact_matches(
+  "domain must not retain plugin load helpers"
+  "src/domain" "loadModule(")
+assert_exact_matches(
   "projection whole RuntimeState dependency baseline"
   "src/visualization/projection" "runtime/state/runtime_state.hpp")
+
+assert_file_excludes(
+  "src/plugins/host/algorithm_factory.cpp"
+  "InspectDescriptorPlugin"
+  "LoopDetectorKdtree::loadModule"
+  "DynamicRemoverOffline::loadModule"
+  "DynamicRemoverOnline::loadModule")
+assert_file_excludes(
+  "src/domain/loop_detection/CMakeLists.txt"
+  "open_lmm_plugin_host"
+  "plugins/host")
+assert_file_excludes(
+  "src/domain/dynamic_removal/CMakeLists.txt"
+  "open_lmm_plugin_host"
+  "plugins/host")
+assert_tree_excludes(
+  "domain must not depend on or load through plugin-host internals"
+  "src/domain"
+  "plugins/host/"
+  "open_lmm_plugin_host"
+  "load_plugin_v1<"
+  "inspect_plugin_v1("
+  "dlopen("
+  "dlsym("
+  "CMAKE_DL_LIBS")
 
 # Production sources compiled directly into a test executable bypass canonical
 # target ownership. Keep the current exception list exact until Goal 5 assigns
@@ -70,13 +146,28 @@ if(NOT "${test_compiled_production_sources}" STREQUAL
     "[${test_compiled_production_sources}]")
 endif()
 
-file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/CMakeLists.txt"
-  batch_compat_cmake)
-string(FIND "${batch_compat_cmake}"
-  "add_library(open_lmm_batch_compat_objects OBJECT" batch_compat_owner)
-if(batch_compat_owner EQUAL -1)
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/composition/CMakeLists.txt"
+  runtime_composition_cmake)
+string(REGEX MATCHALL "map_server\\.cpp" production_port_owners
+  "${runtime_composition_cmake}")
+list(LENGTH production_port_owners production_port_owner_count)
+if(NOT production_port_owner_count EQUAL 1)
   message(FATAL_ERROR
-    "canonical batch compatibility owner is missing: open_lmm_batch_compat_objects")
+    "runtime composition must own the concrete production port exactly once")
+endif()
+file(GLOB_RECURSE all_cmake_files LIST_DIRECTORIES false
+  "${OPEN_LMM_SOURCE_DIR}/*/CMakeLists.txt")
+set(all_production_port_owners)
+foreach(cmake_file IN LISTS all_cmake_files)
+  file(READ "${cmake_file}" cmake_contents)
+  string(REGEX MATCHALL "map_server\\.cpp" cmake_port_owners
+    "${cmake_contents}")
+  list(APPEND all_production_port_owners ${cmake_port_owners})
+endforeach()
+list(LENGTH all_production_port_owners all_production_port_owner_count)
+if(NOT all_production_port_owner_count EQUAL 1)
+  message(FATAL_ERROR
+    "the concrete production port must have exactly one CMake owner")
 endif()
 
 file(READ "${OPEN_LMM_SOURCE_DIR}/src/plugins/host/CMakeLists.txt"
@@ -99,6 +190,7 @@ if(visualization_owner EQUAL -1)
 endif()
 
 foreach(runtime_owner IN ITEMS
+    open_lmm_runtime_model_objects
     open_lmm_runtime_state_objects
     open_lmm_runtime_resources_objects
     open_lmm_runtime_execution_objects
@@ -120,6 +212,50 @@ foreach(runtime_owner IN ITEMS
     message(FATAL_ERROR "canonical runtime owner is missing: ${runtime_owner}")
   endif()
 endforeach()
+
+assert_exact_matches(
+  "runtime state must not include execution internals"
+  "src/runtime/state" "runtime/execution")
+assert_exact_matches(
+  "domain must not include runtime internals"
+  "src/domain" "runtime/")
+assert_exact_matches(
+  "runtime model must not include state internals"
+  "src/runtime/model" "runtime/state")
+assert_exact_matches(
+  "runtime model must not include execution internals"
+  "src/runtime/model" "runtime/execution")
+assert_tree_excludes(
+  "runtime model must not depend on state or execution targets"
+  "src/runtime/model"
+  "runtime/state/"
+  "runtime/execution/"
+  "open_lmm_runtime_state_objects"
+  "open_lmm_runtime_execution_objects")
+assert_tree_excludes(
+  "runtime state must not depend on execution targets"
+  "src/runtime/state"
+  "runtime/execution/"
+  "open_lmm_runtime_execution_objects")
+if(EXISTS "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stage_runner.hpp" OR
+   EXISTS "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/stage_runner.cpp")
+  message(FATAL_ERROR "legacy stage_runner files must not remain")
+endif()
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/runtime_facade.cmake"
+  runtime_facade_cmake)
+string(FIND "${runtime_facade_cmake}"
+  "open_lmm_runtime_model_objects" runtime_model_object)
+string(FIND "${runtime_facade_cmake}"
+  "open_lmm_runtime_state_objects" runtime_state_object)
+string(FIND "${runtime_facade_cmake}"
+  "open_lmm_runtime_execution_objects" runtime_execution_object)
+if(runtime_model_object EQUAL -1 OR runtime_state_object EQUAL -1 OR
+   runtime_execution_object EQUAL -1 OR
+   NOT runtime_model_object LESS runtime_state_object OR
+   NOT runtime_state_object LESS runtime_execution_object)
+  message(FATAL_ERROR
+    "runtime facade ownership must remain model -> state -> execution")
+endif()
 
 file(READ "${OPEN_LMM_SOURCE_DIR}/src/storage/CMakeLists.txt" storage_cmake)
 string(FIND "${storage_cmake}"
@@ -226,10 +362,14 @@ endforeach()
 
 # Domain support still consumes the foundation logger through its private
 # canonical include path; the façade DSO dependency remains explicit.
-assert_exact_matches(
-  "legacy pipeline to foundation logging include baseline"
-  "src/runtime/execution/legacy_pipeline" "foundation/logging/logging.hpp"
-  "src/runtime/execution/legacy_pipeline/pipeline.cpp")
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/execution/pipeline.cpp"
+  runtime_pipeline_source)
+string(FIND "${runtime_pipeline_source}" "foundation/logging/logging.hpp"
+  runtime_pipeline_logging_include)
+if(runtime_pipeline_logging_include EQUAL -1)
+  message(FATAL_ERROR
+    "runtime execution pipeline must retain its declared logging dependency")
+endif()
 assert_exact_matches(
   "domain support to foundation logging include baseline"
   "src/domain/support" "foundation/logging/logging.hpp"
@@ -277,7 +417,7 @@ foreach(source IN LISTS core_sources)
 endforeach()
 
 assert_file_excludes(
-  "src/runtime/execution/legacy_pipeline/pipeline.hpp"
+  "src/runtime/execution/pipeline.hpp"
   "spdlog/"
   "fmt/"
   "common/profiling.hpp"
@@ -335,6 +475,55 @@ assert_file_excludes(
   "add_compile_options($<$<CONFIG:Release>:-O3>)"
   "install(DIRECTORY \${PROJECT_SOURCE_DIR}/\${public_header_dir}/")
 
+# Goal 7: public contracts have one physical owner and obsolete layer roots no
+# longer participate in the build.  Logical include names remain unchanged.
+foreach(obsolete_root IN ITEMS common utils core server gui)
+  file(GLOB_RECURSE obsolete_files LIST_DIRECTORIES false
+    "${OPEN_LMM_SOURCE_DIR}/${obsolete_root}/*")
+  if(obsolete_files)
+    message(FATAL_ERROR
+      "obsolete implementation root is not empty: ${obsolete_root}: "
+      "${obsolete_files}")
+  endif()
+endforeach()
+assert_file_excludes(
+  "CMakeLists.txt"
+  "add_subdirectory(common)"
+  "add_subdirectory(utils)"
+  "add_subdirectory(core)"
+  "add_subdirectory(server)"
+  "add_subdirectory(gui)"
+  "if(NOT EXISTS \"\${public_header_source}\")"
+  "$<BUILD_INTERFACE:\${PROJECT_SOURCE_DIR}/..>")
+assert_file_excludes(
+  "cmake/CompilerOptions.cmake"
+  "INCLUDE_DIRS"
+  "$<BUILD_INTERFACE:\${PROJECT_SOURCE_DIR}/..>")
+
+file(GLOB_RECURSE physical_public_headers
+  RELATIVE "${OPEN_LMM_SOURCE_DIR}/include/open_lmm"
+  "${OPEN_LMM_SOURCE_DIR}/include/open_lmm/*.h"
+  "${OPEN_LMM_SOURCE_DIR}/include/open_lmm/*.hpp")
+file(STRINGS
+  "${OPEN_LMM_SOURCE_DIR}/test/package_consumer/public_header_allowlist.txt"
+  expected_public_headers)
+list(SORT physical_public_headers)
+list(SORT expected_public_headers)
+if(NOT physical_public_headers STREQUAL expected_public_headers)
+  message(FATAL_ERROR
+    "source public headers differ from the approved allowlist. expected="
+    "[${expected_public_headers}] actual=[${physical_public_headers}]")
+endif()
+
+file(GLOB legacy_ros_sources LIST_DIRECTORIES false
+  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/*.cpp"
+  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/*.hpp")
+if(legacy_ros_sources)
+  message(FATAL_ERROR
+    "ROS source bypasses runtime_adapter/gui_composition ownership: "
+    "${legacy_ros_sources}")
+endif()
+
 file(READ "${OPEN_LMM_SOURCE_DIR}/src/foundation/contracts/CMakeLists.txt"
   common_cmake)
 string(REGEX MATCH
@@ -372,7 +561,7 @@ endforeach()
 
 # MapServer is the stable command/query port façade only; mutable
 # session/runtime responsibilities belong to StageExecutor and RuntimeStateStore.
-file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/map_server.hpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/runtime/composition/map_server.hpp"
   map_server_header)
 foreach(expected
     "std::unique_ptr<StageExecutor> executor_"
@@ -382,6 +571,36 @@ foreach(expected
     message(FATAL_ERROR "MapServer façade must contain: ${expected}")
   endif()
 endforeach()
+assert_exact_matches(
+  "runtime service must not include adapter internals"
+  "src/runtime/service" "adapters/")
+assert_tree_excludes(
+  "runtime service must not depend on adapter targets"
+  "src/runtime/service"
+  "adapters/"
+  "open_lmm_gui"
+  "open_lmm_batch")
+assert_tree_excludes(
+  "adapters must not link private runtime owners"
+  "src/adapters"
+  "open_lmm_runtime_model_objects"
+  "open_lmm_runtime_state_objects"
+  "open_lmm_runtime_resources_objects"
+  "open_lmm_runtime_execution_objects"
+  "open_lmm_runtime_control_objects"
+  "open_lmm_runtime_service_objects"
+  "open_lmm_runtime_composition_objects"
+  "open_lmm_map_server")
+if(EXISTS "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/map_server.hpp" OR
+   EXISTS "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/map_server.cpp" OR
+   EXISTS "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/compat/CMakeLists.txt")
+  message(FATAL_ERROR "legacy batch compatibility runtime port must not remain")
+endif()
+string(FIND "${runtime_facade_cmake}"
+  "open_lmm_batch_compat_objects" legacy_batch_compat_object)
+if(NOT legacy_batch_compat_object EQUAL -1)
+  message(FATAL_ERROR "runtime facade must not retain the legacy batch port owner")
+endif()
 foreach(forbidden "RuntimeStateStore" "OutputRepository" "state_mutex_")
   string(FIND "${map_server_header}" "${forbidden}" found)
   if(NOT found EQUAL -1)
@@ -503,10 +722,20 @@ foreach(expected "AgentExecutor" "MemoryClass::kResidentPayload")
   endif()
 endforeach()
 foreach(expected "AgentExecutor" "internal_cpu_threads"
-                 "kInstanceIsolatedParallel" "AcquireHeavyMemoryPhase")
+                 "kInstanceIsolatedParallel" "AcquireHeavyMemoryPhase"
+                 "EstimateMapUpdateMemory" "MemoryClass::kHeavyMap"
+                 "run_agent")
   string(FIND "${map_update_executor_source}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR "bounded MapUpdate executor must contain: ${expected}")
+  endif()
+endforeach()
+foreach(forbidden "recursive_directory_iterator" "file_size("
+                  "EstimateAgentMemory")
+  string(FIND "${map_update_executor_source}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "MapUpdate admission must not depend on directory bytes: ${forbidden}")
   endif()
 endforeach()
 foreach(forbidden "runParallelDataLoad" "runParallelMapUpdate"
@@ -572,7 +801,7 @@ endif()
 # launcher or a consumer of internal RuntimeService headers.
 # The standalone open_lmm_batch executable owns the direct synchronous path.
 assert_file_excludes(
-  "../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
+  "../ros/ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp"
   "map_server->process()"
   "gui_auto_run"
   "MapServer"
@@ -581,7 +810,7 @@ assert_file_excludes(
   "std_srvs"
   "Trigger"
   "std_msgs::msg::String")
-file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
+file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp"
   ros_adapter)
 foreach(expected
     "RuntimeClient"
@@ -597,12 +826,12 @@ foreach(expected
   endif()
 endforeach()
 assert_file_excludes(
-  "../ros/ros2/open_lmm_ros/open_lmm_ros.cpp"
+  "../ros/ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp"
   "GuiRuntimeHost"
   "gui_plugin_path"
   "open_lmm/gui/")
 file(READ
-  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/open_lmm_ros_gui.cpp"
+  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/gui_composition/open_lmm_ros_gui.cpp"
   ros_gui_composition)
 foreach(expected "GuiRuntimeHost" "open_lmm/gui/gui_runtime_host.hpp")
   string(FIND "${ros_gui_composition}" "${expected}" found)
@@ -612,7 +841,7 @@ foreach(expected "GuiRuntimeHost" "open_lmm/gui/gui_runtime_host.hpp")
   endif()
 endforeach()
 assert_file_excludes(
-  "../ros/ros2/open_lmm_ros/open_lmm_ros.hpp"
+  "../ros/ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.hpp"
   "server/runtime_service.hpp"
   "runtime/service/runtime_service.hpp"
   "gui_controller_bridge.hpp"
@@ -626,6 +855,28 @@ string(FIND "${batch_cmake}" "add_executable(open_lmm_batch main.cpp)"
 if(found_batch_launcher EQUAL -1)
   message(FATAL_ERROR "standalone open_lmm_batch launcher must be built")
 endif()
+file(READ "${OPEN_LMM_SOURCE_DIR}/src/adapters/batch/main.cpp" batch_main)
+string(FIND "${batch_main}" "RuntimeClient" found_batch_runtime_client)
+if(found_batch_runtime_client EQUAL -1)
+  message(FATAL_ERROR "batch launcher must remain a RuntimeClient leaf")
+endif()
+foreach(forbidden "MapServer" "runtime/service/" "runtime/composition/")
+  string(FIND "${batch_main}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "batch launcher must not consume runtime internals: ${forbidden}")
+  endif()
+endforeach()
+foreach(forbidden
+    "open_lmm_map_server"
+    "open_lmm_runtime_composition_objects"
+    "open_lmm_runtime_service_objects")
+  string(FIND "${batch_cmake}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR
+      "batch launcher target must not link runtime internals: ${forbidden}")
+  endif()
+endforeach()
 
 file(READ "${OPEN_LMM_SOURCE_DIR}/../docker/open_lmm.Dockerfile" dockerfile)
 foreach(expected

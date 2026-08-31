@@ -23,6 +23,7 @@ struct RuntimeBootstrapResult {
   std::shared_ptr<const RuntimeState> initial_state;
   ResourceBudget suggested_resource_budget;
   std::shared_ptr<const AlgorithmProvider> algorithms;
+  std::shared_ptr<const Error> recovery_required;
 };
 
 class RuntimeBootstrapper {

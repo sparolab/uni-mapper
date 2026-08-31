@@ -4,7 +4,10 @@
 #include <open_lmm/common/plugin_api.h>
 #include <domain/dynamic_removal/plugin/offline_plugin.hpp>
 #include <domain/dynamic_removal/plugin/online_plugin.hpp>
+#include <domain/dynamic_removal/dynamic_remover_base.hpp>
 #include <domain/loop_detection/database/database_kdtree.h>
+#include <domain/loop_detection/loop_detector_base.hpp>
+#include <plugins/host/algorithm_factory.hpp>
 #include <plugins/host/load_module.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 
@@ -84,6 +87,20 @@ int main(int argc, char** argv) {
     built_ins.emplace(argument.substr(0, separator),
                       argument.substr(separator + 1));
   }
+  open_lmm::AlgorithmFactory algorithms;
+
+  open_lmm::LoopDetectorConfig missing_descriptor;
+  missing_descriptor.type = "kdtree";
+  missing_descriptor.model = "missing_c7_fixture";
+  missing_descriptor.plugin_config_json = "{}";
+  auto missing_preflight =
+      algorithms.PreflightDescriptor(missing_descriptor);
+  Check(!missing_preflight &&
+            missing_preflight.GetError().code ==
+                open_lmm::Error::Code::kPluginLoadFailed &&
+            missing_preflight.GetError().context.plugin ==
+                "libcreate_missing_c7_fixture.so",
+        "AlgorithmFactory preflight preserves plugin failure context");
 
   const std::string scan_context_json = CanonicalConfig(
       open_lmm::ConfigDocumentKind::kLoopDetector,
@@ -111,6 +128,16 @@ int main(int argc, char** argv) {
       Check(index.getSize() == 1 && index.Clone()->getSize() == 1,
             "descriptor artifact must preserve its plugin handle owner");
     }
+
+    open_lmm::LoopDetectorConfig factory_config;
+    factory_config.type = "kdtree";
+    factory_config.model = "scan_context";
+    factory_config.plugin_config_json = scan_context_json;
+    Check(algorithms.PreflightDescriptor(factory_config).IsOk(),
+          "AlgorithmFactory must inspect descriptor plugins in the host");
+    auto detector = algorithms.CreateLoopDetector(factory_config);
+    Check(detector.IsOk() && detector.Value() != nullptr,
+          "AlgorithmFactory must pass a loaded descriptor owner to the domain");
   }
 
   if (auto path = built_ins.find("create_solid"); path != built_ins.end()) {
@@ -132,9 +159,23 @@ int main(int argc, char** argv) {
         open_lmm::ConfigDocumentKind::kDynamicRemover,
         {{"dynamic_remover", {{"dynamic_remover_type", "online"},
                               {"model", model}}}});
-    auto plugin = open_lmm::load_plugin_v1<IOnlineRemoverPlugin>(
-        path->second, "dynamic_remover_online", config);
-    Check(plugin.IsOk(), "built-in online remover must use ABI v1 loader");
+    {
+      auto plugin = open_lmm::load_plugin_v1<IOnlineRemoverPlugin>(
+          path->second, "dynamic_remover_online", config);
+      Check(plugin.IsOk(), "built-in online remover must use ABI v1 loader");
+    }
+
+    open_lmm::DynamicRemoverConfig factory_config;
+    factory_config.type = "online";
+    factory_config.model = model;
+    factory_config.plugin_config_json = config;
+    Check(algorithms.PreflightRemover(factory_config).IsOk(),
+          "AlgorithmFactory must inspect online remover plugins in the host");
+    {
+      auto remover = algorithms.CreateDynamicRemover(factory_config);
+      Check(remover.IsOk() && remover.Value() != nullptr,
+            "AlgorithmFactory must pass an online plugin owner to the domain");
+    }
   }
   for (const char* target : {"create_free_dom", "create_erasor"}) {
     auto path = built_ins.find(target);
@@ -144,9 +185,23 @@ int main(int argc, char** argv) {
         open_lmm::ConfigDocumentKind::kDynamicRemover,
         {{"dynamic_remover", {{"dynamic_remover_type", "offline"},
                               {"model", model}}}});
-    auto plugin = open_lmm::load_plugin_v1<IOfflineRemoverPlugin>(
-        path->second, "dynamic_remover_offline", config);
-    Check(plugin.IsOk(), "built-in offline remover must use ABI v1 loader");
+    {
+      auto plugin = open_lmm::load_plugin_v1<IOfflineRemoverPlugin>(
+          path->second, "dynamic_remover_offline", config);
+      Check(plugin.IsOk(), "built-in offline remover must use ABI v1 loader");
+    }
+
+    open_lmm::DynamicRemoverConfig factory_config;
+    factory_config.type = "offline";
+    factory_config.model = model;
+    factory_config.plugin_config_json = config;
+    Check(algorithms.PreflightRemover(factory_config).IsOk(),
+          "AlgorithmFactory must inspect offline remover plugins in the host");
+    {
+      auto remover = algorithms.CreateDynamicRemover(factory_config);
+      Check(remover.IsOk() && remover.Value() != nullptr,
+            "AlgorithmFactory must pass an offline plugin owner to the domain");
+    }
   }
 
   std::cout << "plugin ABI tests passed\n";

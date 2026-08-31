@@ -1,6 +1,6 @@
 #pragma once
 #include <memory>
-#include <runtime/execution/legacy_pipeline/pipeline.hpp>
+#include <runtime/execution/pipeline.hpp>
 #include <domain/data_loader/data_loader_base.hpp>
 
 namespace open_lmm {

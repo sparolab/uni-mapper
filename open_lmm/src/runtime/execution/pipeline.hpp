@@ -1,35 +1,12 @@
 #pragma once
-#include <filesystem>
 #include <memory>
-#include <optional>
 #include <vector>
 
-#include <open_lmm/common/agent_context.hpp>
-#include <open_lmm/common/agent_data.hpp>
 #include <open_lmm/common/result.hpp>
-#include <open_lmm/common/cancellation.hpp>
+#include <runtime/model/agent_working_set.hpp>
 #include <runtime/state/shared_data.hpp>
 
 namespace open_lmm {
-namespace fs = std::filesystem;
-
-enum class ControlFlow : uint8_t {
-  kContinue,  // 다음 노드로
-  kSkip,      // 이 에이전트 건너뜀 (에러 없음)
-  kKill,      // 전체 파이프라인 중단
-};
-
-// 파이프라인을 흐르는 에이전트별 컨텍스트
-struct AgentPipelineCtx {
-  AgentContext agent;
-  fs::path     data_dir;
-  std::shared_ptr<CancellationToken> cancellation;
-  ControlFlow  flow = ControlFlow::kContinue;
-
-  // 각 노드가 채우는 중간 결과
-  AgentRawDataHandle                         raw_data;
-  std::shared_ptr<const LoopDetectorOutput> loop_output;
-};
 
 // 파이프라인 노드 기반 클래스
 class PipelineNodeBase {

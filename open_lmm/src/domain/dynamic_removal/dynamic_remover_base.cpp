@@ -50,7 +50,7 @@ DynamicRemoverBase::ProcessStreaming(
               [](const auto& lhs, const auto& rhs) {
                 return lhs.first < rhs.first;
               });
-    ScanVec scans;
+    std::vector<PointCloud::Ptr> scans;
     scans.reserve(indexed_scans.size());
     for (std::size_t expected = 0; expected < indexed_scans.size(); ++expected) {
       if (indexed_scans[expected].first != expected) {

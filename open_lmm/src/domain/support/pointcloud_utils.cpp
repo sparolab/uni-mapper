@@ -1,15 +1,71 @@
 #include "pointcloud_utils.hpp"
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <fstream>
 #include <stdexcept>
 #include <memory>
 #include <open_lmm/common/data_types.hpp>
-#include <runtime/state/shared_data.hpp>
 #include <domain/support/validation.hpp>
 #include <vector>
 
 namespace open_lmm {
+
+IncrementalVoxelAccumulator::IncrementalVoxelAccumulator(
+    float voxel_size, float min_range, float max_range,
+    bool use_range_filter)
+    : minimum_range_squared_(min_range * min_range),
+      maximum_range_squared_(max_range * max_range),
+      use_range_filter_(use_range_filter) {
+  if (!std::isfinite(voxel_size) || voxel_size <= 0.0F) {
+    throw std::invalid_argument("voxel size must be finite and positive");
+  }
+  inverse_voxel_size_ = 1.0F / voxel_size;
+  if (use_range_filter_ &&
+      (!std::isfinite(min_range) || !std::isfinite(max_range) ||
+       min_range < 0.0F || max_range <= min_range)) {
+    throw std::invalid_argument(
+        "range filter must satisfy 0 <= min_range < max_range");
+  }
+}
+
+void IncrementalVoxelAccumulator::Add(const pcl::PointXYZI& point) {
+  const float range_squared =
+      point.x * point.x + point.y * point.y + point.z * point.z;
+  if (use_range_filter_ &&
+      (range_squared < minimum_range_squared_ ||
+       range_squared > maximum_range_squared_)) {
+    return;
+  }
+  ++source_point_count_;
+  float location[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    location[axis] = point.data[axis] * inverse_voxel_size_;
+    if (location[axis] < 0.0F) location[axis] -= 1.0F;
+  }
+  const VOXEL_LOC voxel(
+      static_cast<uint32_t>(static_cast<int64_t>(location[0])),
+      static_cast<uint32_t>(static_cast<int64_t>(location[1])),
+      static_cast<uint32_t>(static_cast<int64_t>(location[2])));
+  auto entry = voxels_.find(voxel);
+  if (entry != voxels_.end()) {
+    entry->second.xyz[0] += point.x;
+    entry->second.xyz[1] += point.y;
+    entry->second.xyz[2] += point.z;
+    entry->second.intensity += point.intensity;
+    ++entry->second.count;
+    return;
+  }
+  M_POINT accumulated;
+  accumulated.xyz[0] = point.x;
+  accumulated.xyz[1] = point.y;
+  accumulated.xyz[2] = point.z;
+  accumulated.intensity = point.intensity;
+  accumulated.count = 1;
+  voxels_.emplace(voxel, accumulated);
+}
 
 std::vector<Eigen::Isometry3f> transformEigenPoses(
     const std::vector<Eigen::Isometry3d>& poses,
@@ -51,64 +107,19 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr downsampleWithRangeFilter(
   if (!valid) throw std::invalid_argument(valid.GetError().Message());
   if (voxel_size < 0.01f) return p_scan;
 
-  std::unordered_map<VOXEL_LOC, M_POINT> voxel_map;
-  const float inv_voxel_size = 1.0f / voxel_size;
+  IncrementalVoxelAccumulator accumulator(voxel_size, min_range, max_range,
+                                          use_range_filter);
+  for (const auto& point : *p_scan) accumulator.Add(point);
 
-  for (const auto& point : *p_scan) {
-    const float range_square =
-        point.x * point.x + point.y * point.y + point.z * point.z;
-    if (use_range_filter) {
-      if (range_square < min_range * min_range ||
-          range_square > max_range * max_range)
-        continue;
-    }
-
-    float loc_xyz[3];
-    for (int i = 0; i < 3; i++) {
-      loc_xyz[i] = point.data[i] * inv_voxel_size;
-      if (loc_xyz[i] < 0) {
-        loc_xyz[i] -= 1.0f;
-      }
-    }
-
-    // Direct float-to-unsigned conversion is undefined for negative voxel
-    // coordinates. Convert through a signed integral type first; the following
-    // signed-to-unsigned conversion is well-defined modulo 2^32 and preserves
-    // the existing VOXEL_LOC bit pattern.
-    const VOXEL_LOC voxel_idx(
-        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[0])),
-        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[1])),
-        static_cast<uint32_t>(static_cast<int64_t>(loc_xyz[2])));
-    auto iter = voxel_map.find(voxel_idx);
-    if (iter != voxel_map.end()) {
-      iter->second.xyz[0] += point.x;
-      iter->second.xyz[1] += point.y;
-      iter->second.xyz[2] += point.z;
-      iter->second.intensity += point.intensity;
-      iter->second.count++;
-    } else {
-      M_POINT anp;
-      anp.xyz[0] = point.x;
-      anp.xyz[1] = point.y;
-      anp.xyz[2] = point.z;
-      anp.intensity = point.intensity;
-      anp.count = 1;
-      voxel_map[voxel_idx] = anp;
-    }
-  }
-
-  const uint32_t num_scan_filtered = static_cast<uint32_t>(voxel_map.size());
+  const std::size_t num_scan_filtered = accumulator.Size();
   pcl::PointCloud<pcl::PointXYZI>::Ptr p_scan_filtered =
       std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
   p_scan_filtered->resize(num_scan_filtered);
-
-  std::transform(voxel_map.begin(), voxel_map.end(), p_scan_filtered->begin(),
-                 [](const auto& item) -> pcl::PointXYZI {
-                   const auto& p = item.second;
-                   const float inv_count = 1.0f / p.count;
-                   return {p.xyz[0] * inv_count, p.xyz[1] * inv_count,
-                           p.xyz[2] * inv_count, p.intensity * inv_count};
-                 });
+  auto output = p_scan_filtered->begin();
+  std::move(accumulator).ConsumeAverages(
+      [&output](float x, float y, float z, float intensity) {
+        *output++ = pcl::PointXYZI{x, y, z, intensity};
+      });
 
   return p_scan_filtered;
 }

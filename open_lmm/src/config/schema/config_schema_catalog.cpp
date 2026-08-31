@@ -338,7 +338,11 @@ SchemaFragment DufoMapSchema() {
   fragment.fields = {
       Bool("/dynamic_remover/replace_intensity", false),
       Number("/dynamic_remover/resolution", 0.2, 0.0, std::nullopt, true),
-      UInt("/dynamic_remover/levels", 20, 1),
+      // UFOMap stores three Morton bits per level plus five depth bits in a
+      // uint64_t.  A twentieth level makes rootCode().parent() shift by 65,
+      // which is undefined; keep the validated configuration in the library's
+      // actually representable range.
+      UInt("/dynamic_remover/levels", 19, 2, 19),
       Choice("/dynamic_remover/down_sampling_method", "center",
              {"center", "centroid", "uniform"}),
       UInt("/dynamic_remover/hit_depth", 0, 0),
