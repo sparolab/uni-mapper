@@ -27,6 +27,7 @@ SoftwareIdentity
 TrialResult
 WorkflowKind
 WorkflowSpec
+validate_manifest
 
 open_lmm.experiments.replay
 ReplayAdapter

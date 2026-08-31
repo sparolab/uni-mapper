@@ -20,6 +20,12 @@ add_test(NAME open_lmm_release_policy_tests
   COMMAND "${CMAKE_COMMAND}"
     "-DOPEN_LMM_REPOSITORY_ROOT=${OPEN_LMM_REPOSITORY_ROOT}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/test/release/release_policy_tests.cmake")
+add_test(NAME open_lmm_viser_python_unit_tests
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "PYTHONPATH=${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser/package"
+    /usr/bin/python3 -m unittest discover
+    -s "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser/test"
+    -v)
 add_test(NAME open_lmm_replay_fetch_tests
   COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/replay/replay_fetch_tests.sh"
     "${OPEN_LMM_REPOSITORY_ROOT}/scripts/replay/fetch_replay_data.sh")

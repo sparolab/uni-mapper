@@ -16,6 +16,8 @@
 
 namespace open_lmm {
 
+class RosVisualizationBridge;
+
 class OpenLMMROS : public rclcpp::Node {
  public:
   using ExecutePipeline = open_lmm_ros::action::ExecutePipeline;
@@ -50,6 +52,7 @@ class OpenLMMROS : public rclcpp::Node {
   void PublishEvent(const ExecutionEvent& event);
 
   std::shared_ptr<RuntimeClient> runtime_;
+  std::unique_ptr<RosVisualizationBridge> visualization_bridge_;
   std::filesystem::path config_path_;
   ExecutionEventSubscription event_subscription_;
   rclcpp::Publisher<open_lmm_ros::msg::ExecutionEvent>::SharedPtr

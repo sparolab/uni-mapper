@@ -92,7 +92,7 @@ foreach(row IN LISTS manifest_lines)
   list(GET fields 7 expires)
 
   if(NOT consumer MATCHES
-      "^(cli|gui|python_native|ros_runtime|ros_gui)$")
+      "^(cli|gui|python_native|ros_runtime|ros_visualization)$")
     message(FATAL_ERROR "invalid inventory consumer: ${row}")
   endif()
   if(NOT edge_kind MATCHES "^(include|link|package_component)$")
@@ -186,6 +186,9 @@ foreach(scan_spec IN LISTS scan_specs)
     if(scan_consumer STREQUAL "ros_runtime" AND
        relative_source MATCHES "/gui(_composition)?/")
       set(source_consumer "ros_gui")
+    elseif(scan_consumer STREQUAL "ros_runtime" AND
+           relative_source MATCHES "/ros_visualization_bridge\\.(cpp|hpp)$")
+      set(source_consumer "ros_visualization")
     endif()
     file(STRINGS "${source_file}" include_lines
       REGEX "^[ \t]*#[ \t]*include[ \t]*[<\"][^>\"]+[>\"]")
@@ -345,14 +348,16 @@ assert_excludes(
 assert_contains(
   "ros/CMakeLists.txt"
   "find_package(open_lmm \${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS client)"
-  "find_package(open_lmm \${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS gui)"
   "open_lmm::client"
-  "open_lmm::gui")
+  "ros_visualization_bridge.cpp")
 assert_excludes(
   "ros/CMakeLists.txt"
   "add_subdirectory("
   "open_lmm::utils"
-  "open_lmm_map_server")
+  "open_lmm_map_server"
+  "open_lmm::gui"
+  "OPEN_LMM_ROS_BUILD_GUI"
+  "open_lmm_ros_gui_component")
 
 file(GLOB_RECURSE core_sources LIST_DIRECTORIES false
   "${OPEN_LMM_REPOSITORY_ROOT}/open_lmm/src/*.c"

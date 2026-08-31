@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from experiment_test_fixture import ExperimentFixture, minimum_manifest
+from open_lmm.experiments import validate_manifest
 from open_lmm.experiments._canonical import canonical_json_bytes, digest_file, digest_value
 from open_lmm.experiments._config import verify_dataset
 from open_lmm.experiments._manifest import load_plan, validate_manifest_document
@@ -50,6 +51,13 @@ class ManifestTests(unittest.TestCase):
         plan, payload = load_plan(manifest, dataset_root=self.fixture.runtime.data, config_root=self.fixture.runtime.config)
         self.assertEqual(plan.dataset.root, self.fixture.runtime.data.resolve())
         self.assertTrue(payload.endswith(b"\n"))
+
+    def test_public_manifest_validation_entrypoint(self) -> None:
+        manifest = self.fixture.root / "validate.json"
+        manifest.write_text(
+            json.dumps(minimum_manifest(self.fixture)), encoding="utf-8"
+        )
+        self.assertIsNone(validate_manifest(manifest))
 
 
 if __name__ == "__main__":

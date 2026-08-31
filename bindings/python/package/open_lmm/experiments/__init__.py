@@ -1,4 +1,4 @@
-from ._api import Experiment
+from ._api import Experiment, validate_manifest
 from ._models import (
     EXPERIMENT_API_VERSION,
     AlgorithmSlot,
@@ -58,4 +58,5 @@ __all__ = [
     "TrialResult",
     "WorkflowKind",
     "WorkflowSpec",
+    "validate_manifest",
 ]

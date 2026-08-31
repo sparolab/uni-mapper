@@ -18,7 +18,7 @@ if(NOT artifact_header STREQUAL
    "schema_version\tartifact_id\tversion\tnamespace\tinstall_mode\tprofiles\texact_dependencies\towner_root")
   message(FATAL_ERROR "artifact manifest schema changed")
 endif()
-set(expected_artifacts core cli gui python ros)
+set(expected_artifacts core cli gui python experiment viser ros)
 foreach(row IN LISTS artifact_rows)
   string(REPLACE "\t" ";" fields "${row}")
   list(LENGTH fields field_count)
@@ -167,7 +167,6 @@ function(require_version_skew_failure artifact source prefix)
   execute_process(COMMAND "${CMAKE_COMMAND}" -S "${source}" -B "${build}"
       "-DCMAKE_PREFIX_PATH=${prefix}" -DBUILD_TESTING=OFF
       -DOPEN_LMM_GUI_BUILD_IRIDESCENCE=OFF
-      -DOPEN_LMM_ROS_BUILD_GUI=OFF
     RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
   if(result EQUAL 0)
     message(FATAL_ERROR "${artifact} accepted a mismatched exact dependency")

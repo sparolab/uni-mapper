@@ -105,6 +105,30 @@ foreach(expected "open_lmm_replay_runner" "open_lmm_client")
     message(FATAL_ERROR "replay runner registration must contain: ${expected}")
   endif()
 endforeach()
+
+# Python applications remain leaf consumers of the installed public SDK.
+file(GLOB_RECURSE python_application_sources LIST_DIRECTORIES false
+  "${OPEN_LMM_SOURCE_DIR}/../applications/python/*/package/*.py")
+if(NOT python_application_sources)
+  message(FATAL_ERROR "Python application packages are missing")
+endif()
+foreach(source IN LISTS python_application_sources)
+  file(READ "${source}" contents)
+  foreach(forbidden IN ITEMS
+      "open_lmm._native"
+      "from open_lmm import _native"
+      "open_lmm.core"
+      "src/runtime/"
+      "plugins/host/")
+    string(FIND "${contents}" "${forbidden}" found)
+    if(NOT found EQUAL -1)
+      file(RELATIVE_PATH relative_source "${OPEN_LMM_SOURCE_DIR}" "${source}")
+      message(FATAL_ERROR
+        "Python application crossed its public adapter boundary: "
+        "${relative_source} contains ${forbidden}")
+    endif()
+  endforeach()
+endforeach()
 string(REGEX MATCH
   "target_link_libraries\\(open_lmm_replay_runner[^\\)]*open_lmm_map_server"
   replay_private_link "${runtime_test_registration}")
@@ -867,15 +891,100 @@ assert_file_excludes(
   "../ros/ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp"
   "GuiRuntimeHost"
   "gui_plugin_path"
-  "open_lmm/gui/")
+  "open_lmm/gui/"
+  "goal_handle->is_canceling()")
 file(READ
-  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/gui_composition/open_lmm_ros_gui.cpp"
-  ros_gui_composition)
-foreach(expected "GuiRuntimeHost" "open_lmm/gui/gui_runtime_host.hpp")
-  string(FIND "${ros_gui_composition}" "${expected}" found)
+  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/rviz_control/open_lmm_control_panel.cpp"
+  ros_control_panel)
+foreach(expected
+    "Endpoint(\"execute\")"
+    "Endpoint(\"status\")"
+    "Endpoint(\"events\")"
+    "async_cancel_all_goals"
+    "Qt::QueuedConnection")
+  string(FIND "${ros_control_panel}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "ROS control Panel must contain: ${expected}")
+  endif()
+endforeach()
+foreach(forbidden "RuntimeClient" "open_lmm::client" "open_lmm/gui/")
+  string(FIND "${ros_control_panel}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR "ROS control Panel has forbidden dependency: ${forbidden}")
+  endif()
+endforeach()
+file(READ
+  "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/runtime_adapter/ros_visualization_bridge.cpp"
+  ros_visualization_bridge)
+foreach(expected
+    "VisualizationQuery"
+    "ToRosPointCloud"
+    "ToRosPath"
+    "ToRosLoopMarkers"
+    "transient_local"
+    "rviz_max_point_count")
+  string(FIND "${ros_visualization_bridge}" "${expected}" found)
   if(found EQUAL -1)
     message(FATAL_ERROR
-      "optional ROS GUI composition must contain: ${expected}")
+      "ROS visualization bridge must contain: ${expected}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/launch/open_lmm_rviz.launch.py"
+  ros_rviz_launch)
+foreach(expected
+    "\"rviz_preview_voxel_size_m\", default_value=\"0.4\""
+    "\"rviz_max_point_count\", default_value=\"2000000\"")
+  string(FIND "${ros_rviz_launch}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "ROS RViz launch must contain: ${expected}")
+  endif()
+endforeach()
+file(READ "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/rviz/open_lmm.rviz"
+  ros_rviz_config)
+foreach(expected
+    "Class: open_lmm_ros/OpenLmmControlPanel"
+    "Target Namespace: /open_lmm_ros")
+  string(FIND "${ros_rviz_config}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "ROS RViz control Panel config is missing: ${expected}")
+  endif()
+endforeach()
+foreach(agent RANGE 1 7)
+  foreach(expected
+      "Name: Agent${agent}"
+      "Value: /open_lmm_ros/visualization/a_agent${agent}/points"
+      "Value: /open_lmm_ros/visualization/a_agent${agent}/path")
+    string(FIND "${ros_rviz_config}" "${expected}" found)
+    if(found EQUAL -1)
+      message(FATAL_ERROR "ROS RViz Agent${agent} group must contain: ${expected}")
+    endif()
+  endforeach()
+endforeach()
+foreach(display_name Map Path Constraint)
+  string(REGEX MATCHALL "Name: ${display_name}([\r\n]|$)"
+    grouped_displays "${ros_rviz_config}")
+  list(LENGTH grouped_displays grouped_display_count)
+  if(NOT grouped_display_count EQUAL 7)
+    message(FATAL_ERROR
+      "ROS RViz requires seven grouped ${display_name} displays")
+  endif()
+endforeach()
+string(REGEX MATCHALL "Color Transformer: FlatColor"
+  agent_flat_color_maps "${ros_rviz_config}")
+list(LENGTH agent_flat_color_maps agent_flat_color_map_count)
+if(NOT agent_flat_color_map_count EQUAL 7)
+  message(FATAL_ERROR
+    "ROS RViz requires one flat-color map display per agent group")
+endif()
+foreach(forbidden
+    "OPEN_LMM_ROS_BUILD_GUI"
+    "open_lmm_ros_gui_component"
+    "open_lmm::gui"
+    "gui_plugin_path"
+    "gui_enabled")
+  string(FIND "${ros_cmake}" "${forbidden}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR "ROS CMake retains removed GUI ownership: ${forbidden}")
   endif()
 endforeach()
 assert_file_excludes(

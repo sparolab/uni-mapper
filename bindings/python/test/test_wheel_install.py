@@ -140,13 +140,7 @@ class InstalledWheelTests(unittest.TestCase):
         self.assertEqual(open_lmm.__version__, "3.0.0")
         self.assertEqual(open_lmm.API_VERSION, 1)
         entries = importlib.metadata.distribution("open-lmm").entry_points
-        self.assertTrue(
-            any(
-                entry.name == "open-lmm-experiment"
-                and entry.value == "open_lmm.experiments._cli:main"
-                for entry in entries
-            )
-        )
+        self.assertFalse(any(entry.name == "open-lmm-experiment" for entry in entries))
         schema = importlib.resources.files("open_lmm.experiments").joinpath(
             "schema/experiment_plan.schema.json"
         )

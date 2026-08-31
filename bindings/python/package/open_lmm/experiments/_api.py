@@ -3,9 +3,15 @@ from __future__ import annotations
 from os import PathLike
 from pathlib import Path
 
-from ._manifest import load_plan
+from ._canonical import load_closed_json
+from ._manifest import load_plan, validate_manifest_document
 from ._models import ExperimentPlan, ExperimentResult
 from ._runner import run_experiment
+
+
+def validate_manifest(manifest: str | PathLike[str]) -> None:
+    """Validate a closed experiment manifest without materializing a run."""
+    validate_manifest_document(load_closed_json(Path(manifest).resolve()))
 
 
 class Experiment:

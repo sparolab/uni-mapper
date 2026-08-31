@@ -9,6 +9,25 @@ Python/platform matrix are deferred to Goal 09.
 
 ## Local wheel build
 
+For a repository developer checkout, the root Makefile owns the convenience
+orchestration while this directory remains the wheel source owner:
+
+```bash
+make python-build    # exact wheel-profile core + local CPython 3.10 wheel
+make python-install  # install that wheel into install/dev/python-venv
+make python-run      # run examples/basic_runtime.py with open_lmm/config
+make python          # build, install, and run in sequence
+make python-clean    # remove only the generated Python developer roots
+```
+
+Use `CONFIG=/absolute/config/path`, `PYTHON=/path/to/python3.10`,
+`PYTHON_JOBS=N`, or `PYTHON_EXAMPLE=/absolute/example.py` as needed. The first
+`python-build` installs the reviewed build constraints into
+`build/dev/python-build-venv`; it never installs into the caller's Python.
+The runtime wheel is installed separately under `install/dev/python-venv`.
+
+The equivalent lower-level flow is retained for CI and custom prefixes.
+
 Create a dedicated CPython 3.10 environment and install the reviewed build
 set before invoking the helper:
 
@@ -62,6 +81,10 @@ and runs every trial in a fresh worker process. Results are published as
 no-overwrite JSON, long-form CSV, and SHA-256 evidence. It never imports the
 native extension directly and does not replace RuntimeClient authority.
 
+The user-facing command is owned by the separate `open-lmm-experiment`
+application wheel in `applications/python/experiment`. Install it alongside
+the exact `open-lmm==3.0.0` SDK wheel before using these commands.
+
 ```bash
 open-lmm-experiment validate --manifest experiment.json
 open-lmm-experiment run \
@@ -76,6 +99,10 @@ replay and Goal 05 performance evidence are accessed through explicit
 `ReplayToolchain` and `BenchmarkToolchain` paths; Python delegates their
 comparison semantics and never rewrites a baseline. Pandas is optional and is
 only imported by `ExperimentResult.to_pandas()`.
+
+The optional browser viewer is likewise a separate application wheel under
+`applications/python/viser`; it does not add Viser to the SDK dependency or
+native runtime closure.
 
 ## Supported surface
 

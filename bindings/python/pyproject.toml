@@ -15,9 +15,6 @@ requires-python = ">=3.10,<3.11"
 license = { text = "GPL-3.0-only" }
 dependencies = ["numpy>=1.21,<2"]
 
-[project.scripts]
-open-lmm-experiment = "open_lmm.experiments._cli:main"
-
 [tool.scikit-build]
 cmake.version = ">=3.25"
 cmake.source-dir = "."

@@ -12,12 +12,17 @@
 
   <!-- common -->
   <depend version_eq="3.0.0">open_lmm</depend>
-  <depend>cv_bridge</depend>
-  <depend>image_transport</depend>
+  <depend>ament_index_cpp</depend>
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rviz_common</depend>
+  <build_depend>qtbase5-dev</build_depend>
+  <exec_depend>libqt5-core</exec_depend>
+  <exec_depend>libqt5-gui</exec_depend>
+  <exec_depend>libqt5-widgets</exec_depend>
 
   <!-- ros2 depend-->
   <depend condition="$ROS_VERSION == 2">rclcpp</depend>
@@ -26,8 +31,10 @@
   <build_depend condition="$ROS_VERSION == 2">rosidl_default_generators</build_depend>
   <exec_depend condition="$ROS_VERSION == 2">rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
-  <depend condition="$ROS_VERSION == 2">rosbag2_cpp</depend>
   <depend condition="$ROS_VERSION == 2">ros2launch</depend>
+  <exec_depend condition="$ROS_VERSION == 2">launch_ros</exec_depend>
+  <exec_depend condition="$ROS_VERSION == 2">ament_index_python</exec_depend>
+  <exec_depend condition="$ROS_VERSION == 2">rviz2</exec_depend>
   <test_depend condition="$ROS_VERSION == 2">ament_lint_auto</test_depend>
   <test_depend condition="$ROS_VERSION == 2">ament_lint_common</test_depend>
   <export>

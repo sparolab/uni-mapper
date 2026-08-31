@@ -29,16 +29,11 @@ if(DEFINED ENV{ROS_VERSION})
 endif()
 
 ### ROS2 ###
-option(OPEN_LMM_ROS_BUILD_GUI
-  "Build the optional in-process OpenLMM GUI composition" ON)
-
 find_package(open_lmm ${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS client)
-if(OPEN_LMM_ROS_BUILD_GUI)
-  find_package(open_lmm ${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS gui)
-endif()
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 find_package(rosidl_default_generators REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ExecutionEvent.msg"
@@ -49,6 +44,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 ### open_lmm_ros ###
 ament_auto_add_library(open_lmm_ros_component SHARED
   ${ros_version}/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp
+  ${ros_version}/open_lmm_ros/runtime_adapter/ros_visualization_bridge.cpp
 )
 set_target_properties(open_lmm_ros_component PROPERTIES
   OUTPUT_NAME open_lmm_ros
@@ -63,35 +59,59 @@ rosidl_get_typesupport_target(open_lmm_ros_typesupport_target
 target_link_libraries(open_lmm_ros_component "${open_lmm_ros_typesupport_target}")
 rclcpp_components_register_nodes(open_lmm_ros_component "open_lmm::OpenLMMROS")
 
-if(OPEN_LMM_ROS_BUILD_GUI)
-  ament_auto_add_library(open_lmm_ros_gui_component SHARED
-    ${ros_version}/open_lmm_ros/gui_composition/open_lmm_ros_gui.cpp
-  )
-  set_target_properties(open_lmm_ros_gui_component PROPERTIES
-    OUTPUT_NAME open_lmm_ros_gui
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
-  )
-  target_link_libraries(open_lmm_ros_gui_component
-    open_lmm_ros_component
-    open_lmm::gui
-    "${open_lmm_ros_typesupport_target}"
-  )
-  rclcpp_components_register_nodes(open_lmm_ros_gui_component
-    "open_lmm::OpenLMMROSGui")
-endif()
+ament_auto_add_library(open_lmm_rviz_control_panel SHARED
+  ${ros_version}/open_lmm_ros/rviz_control/open_lmm_control_panel.cpp
+)
+target_link_libraries(open_lmm_rviz_control_panel
+  Qt5::Widgets
+  "${open_lmm_ros_typesupport_target}"
+)
+pluginlib_export_plugin_description_file(rviz_common rviz_plugin_description.xml)
 
 if(BUILD_TESTING)
   find_package(Threads REQUIRED)
   include(${CMAKE_CURRENT_SOURCE_DIR}/../open_lmm/test/cmake/OpenLmmTest.cmake)
+  ament_auto_add_executable(open_lmm_ros_visualization_bridge_tests
+    test/contract/visualization_bridge_tests.cpp)
+  target_link_libraries(open_lmm_ros_visualization_bridge_tests
+    open_lmm_ros_component)
+  openlmm_add_test(
+    NAME open_lmm_ros_visualization_bridge_tests
+    TARGET open_lmm_ros_visualization_bridge_tests
+    LAYER L5 MODULE adapters.ros OWNER RosVisualizationBridge
+    INVARIANTS INV-06 INV-07 INV-09 INV-13 LANES pr)
+
   add_executable(open_lmm_ros_goal_admission_tests
     test/contract/goal_admission_tests.cpp)
-  target_link_libraries(open_lmm_ros_goal_admission_tests PRIVATE Threads::Threads)
+  target_link_libraries(open_lmm_ros_goal_admission_tests PRIVATE
+    Threads::Threads
+    open_lmm::client)
   openlmm_add_test(
     NAME open_lmm_ros_goal_admission_tests
     TARGET open_lmm_ros_goal_admission_tests
     LAYER L5 MODULE adapters.ros OWNER GoalAdmissionGate
     INVARIANTS INV-13 INV-17 LANES pr SANITIZERS tsan)
+
+  ament_auto_add_executable(open_lmm_ros_control_panel_model_tests
+    test/contract/control_panel_model_tests.cpp)
+  target_link_libraries(open_lmm_ros_control_panel_model_tests
+    "${open_lmm_ros_typesupport_target}")
+  openlmm_add_test(
+    NAME open_lmm_ros_control_panel_model_tests
+    TARGET open_lmm_ros_control_panel_model_tests
+    LAYER L5 MODULE adapters.ros OWNER OpenLmmControlPanel
+    INVARIANTS INV-07 INV-13 INV-17 LANES pr)
+
+  ament_auto_add_executable(open_lmm_ros_control_panel_plugin_tests
+    test/contract/control_panel_plugin_tests.cpp)
+  target_link_libraries(open_lmm_ros_control_panel_plugin_tests
+    open_lmm_rviz_control_panel
+    Qt5::Widgets)
+  openlmm_add_test(
+    NAME open_lmm_ros_control_panel_plugin_tests
+    TARGET open_lmm_ros_control_panel_plugin_tests
+    LAYER L5 MODULE adapters.ros OWNER OpenLmmControlPanel
+    INVARIANTS INV-07 INV-13 LANES pr)
 
   ament_auto_add_executable(open_lmm_ros_runtime_adapter_graph_tests
     test/integration/runtime_adapter_graph_tests.cpp)
@@ -109,7 +129,7 @@ if(BUILD_TESTING)
     LANES pr TIMEOUT 60)
   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/ros-test-log)
   openlmm_apply_test_environment(
-    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:open_lmm_ros_component>:$<TARGET_FILE_DIR:open_lmm::client>:$ENV{LD_LIBRARY_PATH};ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/ros-test-log")
+    "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:open_lmm_ros_component>:$<TARGET_FILE_DIR:open_lmm::client>:$ENV{LD_LIBRARY_PATH};ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/ros-test-log;QT_QPA_PLATFORM=offscreen")
   openlmm_finalize_test_manifest()
 endif()
 
@@ -118,17 +138,14 @@ ament_auto_add_executable(open_lmm_rosnode
   ${ros_version}/open_lmm_ros/runtime_adapter/open_lmm_rosnode.cpp
 )
 target_link_libraries(open_lmm_rosnode
-  $<IF:$<BOOL:${OPEN_LMM_ROS_BUILD_GUI}>,open_lmm_ros_gui_component,open_lmm_ros_component>
+  open_lmm_ros_component
 )
-if(OPEN_LMM_ROS_BUILD_GUI)
-  target_compile_definitions(open_lmm_rosnode PRIVATE
-    OPEN_LMM_ROS_GUI_COMPOSITION=1)
-endif()
 
 # Install launch files.
 install(DIRECTORY
-  # ${ros_version}/launch
-  # ${ros_version}/rviz
+  ${ros_version}/launch
+  ${ros_version}/rviz
   DESTINATION share/${PROJECT_NAME}/
 )
+install(FILES README.md DESTINATION share/${PROJECT_NAME})
 ament_auto_package()

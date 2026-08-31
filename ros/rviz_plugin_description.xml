@@ -1,0 +1,7 @@
+<library path="open_lmm_rviz_control_panel">
+  <class name="open_lmm_ros/OpenLmmControlPanel"
+         type="open_lmm_ros::control::OpenLmmControlPanel"
+         base_class_type="rviz_common::Panel">
+    <description>Controls the single OpenLMM ROS runtime through its public ROS action, service, and event topic.</description>
+  </class>
+</library>

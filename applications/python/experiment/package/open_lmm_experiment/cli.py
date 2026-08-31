@@ -4,16 +4,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from ._api import Experiment
-from ._manifest import validate_manifest_document
-from ._canonical import load_closed_json
-from ._models import ExperimentStatus
+from open_lmm.experiments import Experiment, ExperimentStatus, validate_manifest
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="open-lmm-experiment")
     commands = parser.add_subparsers(dest="command", required=True)
-    validate = commands.add_parser("validate", help="validate a closed experiment manifest")
+    validate = commands.add_parser(
+        "validate", help="validate a closed experiment manifest"
+    )
     validate.add_argument("--manifest", required=True)
     run = commands.add_parser("run", help="run a locked local experiment")
     run.add_argument("--manifest", required=True)
@@ -28,13 +27,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         arguments = parser.parse_args(argv)
         if arguments.command == "validate":
-            validate_manifest_document(load_closed_json(Path(arguments.manifest)))
+            validate_manifest(arguments.manifest)
             return 0
         if not Path(arguments.dataset_root).is_dir() or (
             arguments.config_root is not None
             and not Path(arguments.config_root).is_dir()
         ):
-            print("open-lmm-experiment: dataset/config input is not available", file=sys.stderr)
+            print(
+                "open-lmm-experiment: dataset/config input is not available",
+                file=sys.stderr,
+            )
             return 77
         experiment = Experiment.from_manifest(
             arguments.manifest,

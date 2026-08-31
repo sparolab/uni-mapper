@@ -1,4 +1,6 @@
 #include "open_lmm_ros.hpp"
+#include "action_terminal.hpp"
+#include "ros_visualization_bridge.hpp"
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -125,6 +127,8 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
              std::shared_ptr<GetRuntimeStatus::Response> response) {
         HandleStatus(request, response);
       });
+  visualization_bridge_ =
+      std::make_unique<RosVisualizationBridge>(*this, runtime_);
   auto subscribed = runtime_->SubscribeEvents(
       [this](const ExecutionEvent& event) { PublishEvent(event); });
   if (!subscribed) {
@@ -132,12 +136,14 @@ OpenLMMROS::OpenLMMROS(const rclcpp::NodeOptions& options)
                              subscribed.GetError().Message());
   }
   event_subscription_ = std::move(subscribed).Value();
+  visualization_bridge_->Start();
 
   RCLCPP_INFO(get_logger(), "ready; send goals to ~/execute");
 }
 
 OpenLMMROS::~OpenLMMROS() {
   event_subscription_.Reset();
+  if (visualization_bridge_) visualization_bridge_->Stop();
   std::optional<JobHandle> active_job;
   {
     std::lock_guard lock(action_mutex_);
@@ -217,20 +223,26 @@ void OpenLMMROS::ExecuteGoal(
 
   auto waited = runtime_->Wait(job);
   auto snapshot = runtime_->Snapshot();
+  std::optional<JobSnapshot> authoritative_job;
   if (snapshot) {
     const auto& value = snapshot.Value();
     result->runtime_state = static_cast<uint8_t>(value.state);
     result->config_revision = value.pipeline.config_revision;
     result->output_directory = value.output_directory.string();
+    if (value.pipeline.job && value.pipeline.job->id == job.value) {
+      authoritative_job = value.pipeline.job;
+    }
   }
-  result->success = waited.IsOk();
-  result->message = waited ? std::string{} : waited.GetError().Message();
-  if (goal_handle->is_canceling() ||
-      (snapshot && snapshot.Value().pipeline.job &&
-       snapshot.Value().pipeline.job->state == JobState::kCancelled)) {
-    goal_handle->canceled(result);
-  } else if (waited) {
+  const auto terminal =
+      ResolveRosActionTerminal(waited, job.value, authoritative_job);
+  result->success = terminal == RosActionTerminal::kSucceeded;
+  result->message = terminal == RosActionTerminal::kSucceeded
+                        ? std::string{}
+                        : waited.GetError().Message();
+  if (terminal == RosActionTerminal::kSucceeded) {
     goal_handle->succeed(result);
+  } else if (terminal == RosActionTerminal::kCanceled) {
+    goal_handle->canceled(result);
   } else {
     goal_handle->abort(result);
   }
@@ -257,6 +269,7 @@ void OpenLMMROS::HandleStatus(
   response->success = true;
   response->runtime_state = static_cast<uint8_t>(value.state);
   response->output_directory = value.output_directory.string();
+  response->runtime_revision = value.pipeline.runtime_revision;
   response->config_revision = value.pipeline.config_revision;
   response->has_job = value.pipeline.job.has_value();
   if (value.pipeline.job) {
@@ -278,6 +291,7 @@ void OpenLMMROS::HandleStatus(
 void OpenLMMROS::PublishEvent(const ExecutionEvent& event) {
   auto message = ToRosEvent(event);
   event_publisher_->publish(message);
+  if (visualization_bridge_) visualization_bridge_->RequestRefresh(event);
   std::shared_ptr<GoalHandleExecutePipeline> goal;
   {
     std::lock_guard lock(action_mutex_);

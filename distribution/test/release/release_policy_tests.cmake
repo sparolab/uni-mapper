@@ -19,6 +19,10 @@ set(core_dir "${OPEN_LMM_REPOSITORY_ROOT}/open_lmm")
 set(cli_dir "${OPEN_LMM_REPOSITORY_ROOT}/applications/cli")
 set(gui_dir "${OPEN_LMM_REPOSITORY_ROOT}/applications/gui")
 set(python_dir "${OPEN_LMM_REPOSITORY_ROOT}/bindings/python")
+set(experiment_dir
+  "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/experiment")
+set(viser_dir
+  "${OPEN_LMM_REPOSITORY_ROOT}/applications/python/viser")
 set(workflow
   "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/compiler-matrix.yml")
 set(nightly_benchmark_workflow
@@ -43,8 +47,40 @@ assert_file_contains(
   "${python_dir}/pyproject.toml"
   "name = \"open-lmm\""
   "version = \"3.0.0\""
+  "requires-python = \">=3.10,<3.11\"")
+file(READ "${python_dir}/pyproject.toml" python_pyproject)
+string(FIND "${python_pyproject}" "open-lmm-experiment =" old_experiment_entry)
+if(NOT old_experiment_entry EQUAL -1)
+  message(FATAL_ERROR "the SDK wheel must not own the experiment command")
+endif()
+assert_file_contains(
+  "${experiment_dir}/pyproject.toml"
+  "name = \"open-lmm-experiment\""
+  "version = \"3.0.0\""
   "requires-python = \">=3.10,<3.11\""
-  "open-lmm-experiment = \"open_lmm.experiments._cli:main\"")
+  "dependencies = [\"open-lmm==3.0.0\"]"
+  "open-lmm-experiment = \"open_lmm_experiment.cli:main\"")
+assert_file_contains(
+  "${viser_dir}/pyproject.toml"
+  "name = \"open-lmm-viser\""
+  "version = \"3.0.0\""
+  "requires-python = \">=3.10,<3.11\""
+  "\"open-lmm==3.0.0\""
+  "\"viser>=1.1,<2\""
+  "open-lmm-viser = \"open_lmm_viser.cli:main\"")
+assert_file_contains(
+  "${experiment_dir}/packaging/RELEASE_POLICY.md"
+  "open-lmm-experiment` 3.0.0"
+  "open-lmm==3.0.0")
+assert_file_contains(
+  "${viser_dir}/packaging/RELEASE_POLICY.md"
+  "open-lmm-viser` 3.0.0"
+  "open-lmm==3.0.0")
+assert_file_contains(
+  "${viser_dir}/packaging/THIRD_PARTY_NOTICES.md"
+  "viser"
+  "Apache-2.0"
+  "dist-info/licenses/LICENSE")
 assert_file_contains(
   "${python_dir}/CMakeLists.txt"
   "project(open_lmm_python VERSION 3.0.0"
@@ -58,9 +94,9 @@ assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/ros/CMakeLists.txt"
   "project(open_lmm_ros VERSION 3.0.0"
   "find_package(open_lmm \${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS client)"
-  "find_package(open_lmm \${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS gui)"
   "VERSION \${PROJECT_VERSION}"
-  "SOVERSION \${PROJECT_VERSION_MAJOR}")
+  "SOVERSION \${PROJECT_VERSION_MAJOR}"
+  "ros_visualization_bridge.cpp")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/ros/package.xml"
   "<depend version_eq=\"3.0.0\">open_lmm</depend>")
@@ -264,9 +300,22 @@ assert_file_contains(
   "cli-build:"
   "cli-run:"
   "cli-clean:"
+  "python-build:"
+  "python-install:"
+  "python-run:"
+  "python-clean:"
+  "ros-build:"
+  "ros-run:"
+  "ros-clean:"
   "dev-clean:"
   "-DOPEN_LMM_GUI_BUILD_IRIDESCENCE=ON"
+  "-DOPEN_LMM_BUILD_DESCRIPTOR_SCAN_CONTEXT=ON"
+  "-DOPEN_LMM_BUILD_DYNAMIC_REMOVER_FREE_DOM=ON"
+  "$(PYTHON_SOURCE)/build_local_wheel.sh"
+  "PYTHON_VENV := $(DEV_PREFIX)/python-venv"
   "-DCMAKE_PREFIX_PATH=\"$(DEV_PREFIX)\""
+  "--base-paths \"$(ROS_SOURCE)\""
+  "ROS_USE_RVIZ"
   "env -u LD_LIBRARY_PATH")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/dev/remove_install_manifest.sh"
@@ -276,7 +325,9 @@ assert_file_contains(
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/distribution/manifests/artifact-set-v3.tsv"
   "schema_version\tartifact_id\tversion\tnamespace\tinstall_mode\tprofiles\texact_dependencies\towner_root"
-  "python\t3.0.0\tpython-venv\twheel"
+  "python\t3.0.0\tpython-venv\twheel\tpython-sdk"
+  "experiment\t3.0.0\tpython-venv\twheel\texperiment-cli\tpython=3.0.0\tapplications/python/experiment"
+  "viser\t3.0.0\tpython-venv\twheel\tviser-application\tpython=3.0.0\tapplications/python/viser"
   "ros\t3.0.0\tros-overlay\tament-install")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/distribution/manifests/legacy-owner-transfers-v3.tsv"

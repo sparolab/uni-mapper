@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-lmm-experiment"
+version = "3.0.0"
+description = "Command-line application for OpenLMM experiment manifests"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+license = { text = "GPL-3.0-only" }
+dependencies = ["open-lmm==3.0.0"]
+
+[project.scripts]
+open-lmm-experiment = "open_lmm_experiment.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["package/open_lmm_experiment"]

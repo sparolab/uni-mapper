@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-lmm-viser"
+version = "3.0.0"
+description = "Viser visualization application for OpenLMM"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+license = { text = "GPL-3.0-only" }
+dependencies = [
+  "open-lmm==3.0.0",
+  "viser>=1.1,<2",
+]
+
+[project.scripts]
+open-lmm-viser = "open_lmm_viser.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["package/open_lmm_viser"]

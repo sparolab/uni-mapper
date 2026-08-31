@@ -11,3 +11,4 @@ bool has_active_stage
 uint8 active_stage
 string job_message
 string[] agents
+uint64 runtime_revision

@@ -65,6 +65,13 @@ implementation owner. Core-only client discovery does not require GUI,
 Iridescence, OpenGL or spdlog; explicit GUI discovery requires the exact
 `OpenLmmGui 3.0.0` artifact and fails closed on absence or version skew.
 
+The ROS 2 v3 artifact is a headless `open_lmm::client` consumer. It publishes
+read-only RViz PointCloud2, Path and MarkerArray presentation and has no
+dependency on `OpenLmmGui` or the Iridescence plugin. The former
+`OpenLMMROSGui`, `gui_enabled` and `gui_plugin_path` composition surface was
+removed by the approved P7 product cutover. The standalone GUI remains a
+separate native artifact and runtime owner.
+
 The supported combined distribution installs matching `open_lmm` core, `open_lmm_gui` and `open-lmm-cli`
 artifacts into the same clean prefix. Their normalized install manifests must have an
 `empty intersection`. Validation first installs core, proves that `bin/open_lmm_batch` is absent, then
@@ -82,10 +89,10 @@ It consumes already-built leaf install artifacts and never builds leaf source wi
 | `cli` | native prefix | CMake install | `core=3.0.0` |
 | `gui` | native prefix | CMake install | `core=3.0.0` |
 | `python` | Python venv | wheel | reviewed `core-runtime-closure=3.0.0` |
-| `ros` | ROS overlay | ament install | `core=3.0.0`, and `gui=3.0.0` when enabled |
+| `ros` | ROS overlay | ament install | `core=3.0.0` |
 
 Every installed path has exactly one artifact owner inside its namespace. Native
-composition order is `core -> CLI -> GUI`; ROS consumes that native prefix from a
+composition order is `core -> CLI -> GUI`; ROS consumes the core native prefix from a
 separate overlay and Python remains in a separate venv. Manifest uninstall simulation
 uses the reverse order `ROS -> GUI -> CLI -> core`, followed separately by Python venv
 removal, and must preserve other-owner and unknown files. Legacy transfer cleanup is

@@ -1,0 +1,474 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: open_lmm_ros/OpenLmmControlPanel
+    Name: OpenLMM Control
+    Target Namespace: /open_lmm_ros
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 25; 179; 255
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent1/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 25; 179; 255
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 25; 179; 255
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent1/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent1
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 170; 0
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent2/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 170; 0
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 255; 170; 0
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent2/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent2
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 80; 220; 120
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent3/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 80; 220; 120
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 80; 220; 120
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent3/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent3
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 90; 150
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent4/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 90; 150
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 255; 90; 150
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent4/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent4
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 170; 120; 255
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent5/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 170; 120; 255
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 170; 120; 255
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent5/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent5
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 230; 80
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent6/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 230; 80
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 255; 230; 80
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent6/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent6
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 80; 220; 220
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Name: Map
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent7/points
+          Use Fixed Frame: true
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 80; 220; 220
+          Enabled: true
+          Head Diameter: 0.3
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.03
+          Name: Path
+          Offset: 0; 0; 0
+          Pose Color: 80; 220; 220
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.1
+          Shaft Length: 0.1
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/a_agent7/path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Constraint
+          Namespaces:
+            open_lmm/inter_loop: true
+            open_lmm/intra_loop: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /open_lmm_ros/visualization/loops
+          Value: true
+      Enabled: true
+      Name: Agent7
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+Window Geometry:
+  Height: 900
+  Width: 1440

@@ -1,8 +1,12 @@
 #include "../../ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.hpp"
+#include "../../ros2/open_lmm_ros/runtime_adapter/ros_visualization_bridge.hpp"
 #include "support/runtime/runtime_config_fixture.hpp"
 
 #include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -111,6 +115,36 @@ void RunGraphContract() {
       [&](const open_lmm_ros::msg::ExecutionEvent&) {
         event_count.fetch_add(1, std::memory_order_relaxed);
       });
+  std::promise<void> first_cloud;
+  std::promise<void> first_path;
+  std::promise<void> first_markers;
+  std::atomic<bool> cloud_seen{false};
+  std::atomic<bool> path_seen{false};
+  std::atomic<bool> markers_seen{false};
+  const auto visualization_qos =
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+  auto clouds = observer->create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/open_lmm_ros/visualization/a_agent1/points", visualization_qos,
+      [&](const sensor_msgs::msg::PointCloud2& message) {
+        if (message.width != 0 && !cloud_seen.exchange(true)) {
+          first_cloud.set_value();
+        }
+      });
+  auto paths = observer->create_subscription<nav_msgs::msg::Path>(
+      "/open_lmm_ros/visualization/a_agent1/path", visualization_qos,
+      [&](const nav_msgs::msg::Path& message) {
+        if (!message.poses.empty() && !path_seen.exchange(true)) {
+          first_path.set_value();
+        }
+      });
+  auto markers =
+      observer->create_subscription<visualization_msgs::msg::MarkerArray>(
+          "/open_lmm_ros/visualization/loops", visualization_qos,
+          [&](const visualization_msgs::msg::MarkerArray& message) {
+            if (message.markers.size() == 2 && !markers_seen.exchange(true)) {
+              first_markers.set_value();
+            }
+          });
   auto status = observer->create_client<open_lmm_ros::srv::GetRuntimeStatus>(
       "/open_lmm_ros/status");
   auto actions = rclcpp_action::create_client<ExecutePipeline>(
@@ -129,7 +163,9 @@ void RunGraphContract() {
   auto status_future = status->async_send_request(
       std::make_shared<open_lmm_ros::srv::GetRuntimeStatus::Request>());
   const auto initial_status = GetWithWatchdog(status_future, "initial status");
-  Check(initial_status->success && initial_status->error.empty(),
+  Check(initial_status->success && initial_status->error.empty() &&
+            initial_status->runtime_revision != 0 &&
+            initial_status->config_revision != 0,
         "status service exposes the opened runtime");
 
   ExecutePipeline::Goal malformed;
@@ -157,10 +193,53 @@ void RunGraphContract() {
   auto result_future = actions->async_get_result(goal);
   const auto result = GetWithWatchdog(result_future, "run-all result");
   Check(result.code == rclcpp_action::ResultCode::SUCCEEDED &&
-            result.result->success && result.result->job_id != 0,
+            result.result->success && result.result->job_id != 0 &&
+            result.result->runtime_state ==
+                static_cast<uint8_t>(open_lmm::RuntimeStatus::kReady) &&
+            result.result->config_revision == initial_status->config_revision &&
+            !result.result->output_directory.empty() &&
+            result.result->message.empty(),
         "real action completes the public runtime workflow");
+  bool late_cancel_rejected = false;
+  try {
+    auto late_cancel_future = actions->async_cancel_goal(goal);
+    const auto late_cancel =
+        GetWithWatchdog(late_cancel_future, "post-commit cancellation");
+    late_cancel_rejected = late_cancel->goals_canceling.empty();
+  } catch (const std::exception&) {
+    // rclcpp may evict an already-terminal goal handle locally. That is also
+    // an explicit rejection rather than a second terminal transition.
+    late_cancel_rejected = true;
+  }
+  Check(late_cancel_rejected &&
+            result.code == rclcpp_action::ResultCode::SUCCEEDED &&
+            result.result->success,
+        "post-commit cancellation did not preserve committed success");
   Check(event_count.load(std::memory_order_relaxed) != 0,
         "runtime events cross the real ROS topic graph");
+  auto cloud_future = first_cloud.get_future();
+  auto path_future = first_path.get_future();
+  auto marker_future = first_markers.get_future();
+  Check(cloud_future.wait_for(20s) == std::future_status::ready,
+        "committed point cloud crosses the real ROS topic graph");
+  Check(path_future.wait_for(20s) == std::future_status::ready,
+        "committed path crosses the real ROS topic graph");
+  Check(marker_future.wait_for(20s) == std::future_status::ready,
+        "committed loop marker batch crosses the real ROS topic graph");
+
+  std::promise<void> late_cloud;
+  std::atomic<bool> late_cloud_seen{false};
+  auto late_cloud_future = late_cloud.get_future();
+  auto late_cloud_subscription =
+      observer->create_subscription<sensor_msgs::msg::PointCloud2>(
+          "/open_lmm_ros/visualization/a_agent1/points", visualization_qos,
+          [&](const sensor_msgs::msg::PointCloud2& message) {
+            if (message.width != 0 && !late_cloud_seen.exchange(true)) {
+              late_cloud.set_value();
+            }
+          });
+  Check(late_cloud_future.wait_for(10s) == std::future_status::ready,
+        "late subscriber receives the retained committed point cloud");
 
   std::promise<void> cancel_feedback;
   std::atomic<bool> cancel_feedback_seen{false};
@@ -188,9 +267,11 @@ void RunGraphContract() {
       GetWithWatchdog(cancel_result_future, "cancel terminal result");
   const bool cancellation_accepted = !cancel_response->goals_canceling.empty();
   Check((cancellation_accepted &&
-         cancel_result.code == rclcpp_action::ResultCode::CANCELED) ||
+         cancel_result.code == rclcpp_action::ResultCode::CANCELED &&
+         !cancel_result.result->success) ||
             (!cancellation_accepted &&
-             cancel_result.code == rclcpp_action::ResultCode::SUCCEEDED),
+             cancel_result.code == rclcpp_action::ResultCode::SUCCEEDED &&
+             cancel_result.result->success),
         "cancel endpoint preserves pre-commit cancel or committed-success semantics");
 
   auto final_status_future = status->async_send_request(
@@ -200,9 +281,87 @@ void RunGraphContract() {
   Check(final_status->success && final_status->config_revision != 0,
         "status remains queryable after action cancellation");
 
+  ExecutePipeline::Goal next;
+  next.kind = ExecutePipeline::Goal::NODE;
+  next.has_node = true;
+  next.node = static_cast<uint8_t>(open_lmm::NodeId::kPoseSave);
+  auto next_goal_future = actions->async_send_goal(next);
+  auto next_handle =
+      GetWithWatchdog(next_goal_future, "next goal admission");
+  Check(static_cast<bool>(next_handle),
+        "terminal action did not reopen goal admission");
+  auto next_result_future = actions->async_get_result(next_handle);
+  const auto next_result =
+      GetWithWatchdog(next_result_future, "next goal result");
+  Check(next_result.code == rclcpp_action::ResultCode::SUCCEEDED &&
+            next_result.result->success,
+        "next goal did not complete after cancellation reconciliation");
+
   (void)events;
+  (void)clouds;
+  (void)paths;
+  (void)markers;
+  (void)late_cloud_subscription;
   executor.remove_node(observer);
   executor.remove_node(adapter);
+}
+
+void TestVisualizationParameterValidation() {
+  auto default_node =
+      std::make_shared<rclcpp::Node>("open_lmm_default_rviz_parameters");
+  open_lmm::RosVisualizationBridge defaults(
+      *default_node, std::shared_ptr<open_lmm::RuntimeClient>{});
+  Check(default_node->get_parameter("rviz_preview_voxel_size_m").as_double() ==
+            0.4,
+        "RViz preview defaults to a 0.4 metre voxel");
+  Check(default_node->get_parameter("rviz_max_point_count").as_int() ==
+            2'000'000,
+        "RViz point payload defaults to the bounded two million limit");
+
+  rclcpp::NodeOptions invalid_options;
+  invalid_options.parameter_overrides(
+      {rclcpp::Parameter("rviz_max_point_count", 0)});
+  auto invalid_node =
+      std::make_shared<rclcpp::Node>("open_lmm_invalid_rviz_parameters",
+                                    invalid_options);
+  bool rejected = false;
+  try {
+    open_lmm::RosVisualizationBridge bridge(
+        *invalid_node, std::shared_ptr<open_lmm::RuntimeClient>{});
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  Check(rejected, "invalid RViz resource parameters fail closed");
+
+  rclcpp::NodeOptions excessive_options;
+  excessive_options.parameter_overrides(
+      {rclcpp::Parameter("rviz_max_point_count", 2'000'001)});
+  auto excessive_node =
+      std::make_shared<rclcpp::Node>("open_lmm_excessive_rviz_parameters",
+                                    excessive_options);
+  rejected = false;
+  try {
+    open_lmm::RosVisualizationBridge bridge(
+        *excessive_node, std::shared_ptr<open_lmm::RuntimeClient>{});
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  Check(rejected, "unbounded RViz resource parameters fail closed");
+
+  rclcpp::NodeOptions disabled_options;
+  disabled_options.parameter_overrides(
+      {rclcpp::Parameter("rviz_visualization_enabled", false)});
+  auto disabled_node =
+      std::make_shared<rclcpp::Node>("open_lmm_disabled_rviz_bridge",
+                                    disabled_options);
+  open_lmm::RosVisualizationBridge disabled(
+      *disabled_node, std::shared_ptr<open_lmm::RuntimeClient>{});
+  disabled.Start();
+  const auto topics = disabled_node->get_topic_names_and_types();
+  Check(topics.find("/open_lmm_disabled_rviz_bridge/visualization/loops") ==
+            topics.end(),
+        "disabled RViz bridge creates no visualization publishers");
+  disabled.Stop();
 }
 
 }  // namespace
@@ -211,6 +370,7 @@ int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
   try {
     RunGraphContract();
+    TestVisualizationParameterValidation();
     rclcpp::shutdown();
     return 0;
   } catch (const std::exception& error) {
