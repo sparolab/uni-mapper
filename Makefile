@@ -12,7 +12,9 @@ VISER_SOURCE := $(REPOSITORY_ROOT)/applications/python/viser
 IRIDESCENCE_PYTHON_SOURCE := $(REPOSITORY_ROOT)/applications/python/iridescence
 ROS_SOURCE := $(REPOSITORY_ROOT)/ros
 DEV_BUILD_ROOT := $(REPOSITORY_ROOT)/build/dev
+TEST_BUILD_ROOT := $(REPOSITORY_ROOT)/build/test
 CORE_BUILD := $(DEV_BUILD_ROOT)/core
+CORE_TEST_BUILD := $(TEST_BUILD_ROOT)/core
 GUI_BUILD := $(DEV_BUILD_ROOT)/gui
 CLI_BUILD := $(DEV_BUILD_ROOT)/cli
 PYTHON_CORE_BUILD := $(DEV_BUILD_ROOT)/python-core
@@ -53,7 +55,8 @@ VISER_AUTO_RUN ?= false
 IRIDESCENCE_PREVIEW_VOXEL_SIZE_M ?=
 IRIDESCENCE_AUTO_RUN ?= false
 
-.PHONY: help core-build core-clean gui gui-build gui-run gui-clean \
+.PHONY: help core-build core-clean test test-clean \
+  gui gui-build gui-run gui-clean \
   cli cli-build cli-run cli-clean python python-build python-install \
   python-run python-clean viser viser-install viser-run viser-clean \
   iridescence iridescence-install iridescence-run iridescence-clean \
@@ -65,6 +68,8 @@ help:
 	  '' \
 	  '  make core-build  Build/install only the C++ core' \
 	  '  make core-clean  Remove core-owned developer artifacts' \
+	  '  make test        Build and run the complete C++ core CTest suite' \
+	  '  make test-clean  Remove the generated core test build' \
 	  '  make gui         Build core + GUI, then run the GUI' \
 	  '  make gui-build   Build/install core + GUI without running it' \
 	  '  make gui-run     Run the existing installed developer GUI' \
@@ -138,6 +143,35 @@ core-build:
 	  exit 1
 	fi
 	printf '==> developer core installed in %s\n' "$(DEV_PREFIX)"
+
+test:
+	@for tool in cmake ctest "$(CC)" "$(CXX)"; do
+	  if ! command -v "$$tool" >/dev/null 2>&1; then
+	    printf 'Required test tool was not found: %s\n' "$$tool" >&2
+	    exit 1
+	  fi
+	done
+	if [[ ! "$(JOBS)" =~ ^[1-9][0-9]*$$ ]]; then
+	  printf 'JOBS must be a positive integer, got: %s\n' "$(JOBS)" >&2
+	  exit 1
+	fi
+	printf '==> configuring OpenLMM core tests (%s)\n' "$(BUILD_TYPE)"
+	CC="$(CC)" CXX="$(CXX)" cmake \
+	  -S "$(CORE_SOURCE)" -B "$(CORE_TEST_BUILD)" \
+	  -DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" \
+	  -DBUILD_TESTING=ON
+	cmake --build "$(CORE_TEST_BUILD)" --parallel "$(JOBS)"
+	ctest --test-dir "$(CORE_TEST_BUILD)" --output-on-failure
+	printf '%s\n' '==> OpenLMM core tests passed'
+
+test-clean:
+	@if [[ "$(TEST_BUILD_ROOT)" != "$(REPOSITORY_ROOT)/build/test" || \
+	      "$(CORE_TEST_BUILD)" != "$(REPOSITORY_ROOT)/build/test/core" ]]; then
+	  printf '%s\n' 'Refusing to clean paths outside the fixed test root.' >&2
+	  exit 1
+	fi
+	cmake -E remove_directory "$(CORE_TEST_BUILD)"
+	printf '%s\n' '==> removed generated core test build'
 
 gui:
 	@$(MAKE) --no-print-directory gui-build \
