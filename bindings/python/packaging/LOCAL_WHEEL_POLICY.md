@@ -5,7 +5,7 @@ It consumes an exact OpenLMM 3.0.0 installed core and bundles only the
 OpenLMM-owned runtime and the complete seven-plugin built-in closure recorded
 in `open_lmm-python-runtime-closure.tsv`.
 
-The wheel is not a manylinux, PyPI, portable external-plugin ABI, SBOM,
-signature, provenance, or stable-release claim. System C/C++ dependencies
-remain part of the reviewed build/runtime image. Those publication and supply
-chain guarantees remain Goal 09 work.
+The wheel is not a manylinux, PyPI or portable external-plugin ABI claim.
+System C/C++ dependencies remain part of the reviewed build/runtime image.
+Release candidates attach the exact wheel with SHA-256, a CycloneDX SBOM and
+GitHub artifact attestation; stable releases reuse those bytes unchanged.

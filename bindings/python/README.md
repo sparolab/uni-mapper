@@ -3,9 +3,9 @@
 This package is the optional CPython leaf adapter for OpenLMM's public
 `RuntimeClient`. It does not expose runtime internals or PCL objects.
 
-Goal 06 supports a local CPython 3.10 wheel on Ubuntu 22.04 x86-64. Portable
-public wheel publication, manylinux repair, signing, and a wider
-Python/platform matrix are deferred to Goal 09.
+The official v3 wheel targets CPython 3.10 on Ubuntu 22.04 x86-64 and is
+attached to each GitHub release with checksums, a CycloneDX SBOM and artifact
+attestation. It is not a manylinux/PyPI or wider-platform compatibility claim.
 
 ## Local wheel build
 

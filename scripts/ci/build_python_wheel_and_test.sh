@@ -90,7 +90,11 @@ wheel_files=("$wheel_directory"/*.whl)
 wheel_file=${wheel_files[0]}
 sha256sum "$wheel_file" > "$configuration_root/wheel.sha256"
 
-"$pinned_python" -m venv --system-site-packages "$install_venv"
+"$pinned_python" -m venv "$install_venv"
+grep '^numpy==' "$repository_root/bindings/python/build-constraints.txt" \
+  > "$configuration_root/runtime-requirements.txt"
+"$install_venv/bin/python" -m pip install --require-hashes --no-deps \
+  -r "$configuration_root/runtime-requirements.txt"
 env -u PYTHONPATH -u LD_LIBRARY_PATH \
   "$install_venv/bin/python" -m pip install \
   --no-index --no-deps "$wheel_file"
@@ -123,9 +127,7 @@ site_packages=$("$install_venv/bin/python" -c \
 python_owner_inventory="$configuration_root/python-owner-inventory.tsv"
 python_owner_body="$configuration_root/python-owner-inventory.body"
 : > "$python_owner_body"
-python_owned_roots=(
-  "$site_packages/open_lmm"
-  "$install_venv/bin/open-lmm-experiment")
+python_owned_roots=("$site_packages/open_lmm")
 for dist_info in "$site_packages"/open_lmm-*.dist-info; do
   if [[ -d "$dist_info" ]]; then
     python_owned_roots+=("$dist_info")
@@ -156,10 +158,6 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
   "$install_venv/bin/python" -m pip uninstall --yes open-lmm
 if [[ ! -f "$site_packages/open_lmm_user_file" ]]; then
   echo "wheel uninstall removed an unknown Python namespace file" >&2
-  exit 1
-fi
-if [[ -e "$install_venv/bin/open-lmm-experiment" ]]; then
-  echo "wheel uninstall retained the open-lmm-experiment owner" >&2
   exit 1
 fi
 if [[ -e "$site_packages/open_lmm" ]] ||

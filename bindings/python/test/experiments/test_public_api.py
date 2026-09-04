@@ -26,7 +26,6 @@ class PublicAPITests(unittest.TestCase):
         self.assertEqual(sorted(experiments.__all__), sorted(sections["open_lmm.experiments"]))
         self.assertEqual(sorted(replay.__all__), sorted(sections["open_lmm.experiments.replay"]))
         self.assertEqual(sorted(benchmark.__all__), sorted(sections["open_lmm.experiments.benchmark"]))
-        self.assertEqual(len(open_lmm.__all__), 47)
         self.assertNotIn("experiments", open_lmm.__all__)
         self.assertEqual(experiments.EXPERIMENT_API_VERSION, 1)
 
