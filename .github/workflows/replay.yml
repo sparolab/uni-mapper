@@ -34,9 +34,31 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Verify immutable replay inputs
+        id: replay
         shell: bash
         run: |
           set -euo pipefail
+          values=(
+            "$REPLAY_IMAGE"
+            "$OPEN_LMM_REPLAY_TINY_URL"
+            "$OPEN_LMM_REPLAY_TINY_SHA256"
+            "$OPEN_LMM_REPLAY_SMALL_URL"
+            "$OPEN_LMM_REPLAY_SMALL_SHA256"
+            "$OPEN_LMM_REPLAY_FAILURE_URL"
+            "$OPEN_LMM_REPLAY_FAILURE_SHA256"
+          )
+          configured=false
+          for value in "${values[@]}"; do
+            if [[ -n "$value" ]]; then
+              configured=true
+              break
+            fi
+          done
+          if [[ "$configured" == false ]]; then
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Internal replay is not configured; skipping.'
+            exit 0
+          fi
           if [[ ! "$REPLAY_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]; then
             echo "OPEN_LMM_REPLAY_IMAGE must be image@sha256:<64 lowercase hex>" >&2
             exit 1
@@ -59,9 +81,11 @@ jobs:
               exit 1
             fi
           done
+          echo 'configured=true' >> "$GITHUB_OUTPUT"
           docker pull "$REPLAY_IMAGE"
 
       - name: Build and run tiny, small, and failure replay
+        if: steps.replay.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -135,7 +159,7 @@ jobs:
             '
 
       - name: Preserve replay evidence
-        if: always()
+        if: always() && steps.replay.outputs.configured == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: replay-internal-tiny-small
@@ -158,18 +182,28 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Verify immutable replay inputs
+        id: replay
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -z "$REPLAY_IMAGE" &&
+                -z "$OPEN_LMM_REPLAY_REPRESENTATIVE_URL" &&
+                -z "$OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256" ]]; then
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Representative replay is not configured; skipping.'
+            exit 0
+          fi
           if [[ ! "$REPLAY_IMAGE" =~ @sha256:[0-9a-f]{64}$ ||
                 -z "$OPEN_LMM_REPLAY_REPRESENTATIVE_URL" ||
                 ! "$OPEN_LMM_REPLAY_REPRESENTATIVE_SHA256" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then
             echo "immutable representative replay configuration is missing" >&2
             exit 1
           fi
+          echo 'configured=true' >> "$GITHUB_OUTPUT"
           docker pull "$REPLAY_IMAGE"
 
       - name: Build and run representative replay
+        if: steps.replay.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -205,7 +239,7 @@ jobs:
             '
 
       - name: Preserve representative evidence
-        if: always()
+        if: always() && steps.replay.outputs.configured == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: replay-internal-representative
