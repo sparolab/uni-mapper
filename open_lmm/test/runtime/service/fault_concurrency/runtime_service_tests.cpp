@@ -309,7 +309,15 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
             std::make_shared<InteractivePort>());
       });
 
+  Check(!service.ConfigDocuments() && !service.ConfigCandidates() &&
+            !service.RecentLogs(1),
+        "runtime queries reject a closed service");
+  Check(!service.RecentLogs(0) && !service.RecentLogs(513),
+        "runtime log queries enforce their public bound");
   Check(service.Open({root / "config", "one"}).IsOk(), "open one runtime");
+  Check(!service.ConfigDocuments() && !service.ConfigCandidates() &&
+            service.RecentLogs(1),
+        "runtime queries forward through the active query port");
   Check(!service.Open({root / "config", "two"}), "reject a second runtime");
   Check(service.SetAlignmentFeedbackEnabled(true).IsOk(),
         "interactive fixture explicitly enables feedback authority");

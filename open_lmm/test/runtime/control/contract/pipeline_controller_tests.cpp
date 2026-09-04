@@ -1353,6 +1353,15 @@ void TestTerminalCallbackRejectsWorkerLifecycleCommands() {
 }
 
 void TestThreadLaunchFailureDoesNotPublishPartialJob() {
+  auto runner = std::make_shared<FakeRunner>();
+  bool rejected_empty_launcher = false;
+  try {
+    PipelineController controller(runner, runner, {});
+  } catch (const std::invalid_argument&) {
+    rejected_empty_launcher = true;
+  }
+  Check(rejected_empty_launcher, "empty thread launcher is rejected");
+
   for (const std::size_t failed_worker : {std::size_t{1}, std::size_t{2}}) {
     ThreadLaunchProbe probe(2 + failed_worker);
     {
@@ -1391,6 +1400,27 @@ void TestThreadLaunchFailureDoesNotPublishPartialJob() {
     Check(probe.Started() == probe.Completed(),
           "all launched pipeline workers finish before controller teardown");
   }
+
+  for (const std::size_t failed_worker : {std::size_t{1}, std::size_t{2}}) {
+    std::size_t calls = 0;
+    PipelineController controller(
+        runner, runner, [&calls, failed_worker](ThreadTask task) {
+          if (++calls == failed_worker) throw 1;
+          return std::thread(std::move(task));
+        });
+    const auto failed = controller.SubmitNode(NodeId::kDataLoad, Id("A"));
+    Check(!failed && failed.GetError().code == Error::Code::kInvalidArgument,
+          "unknown thread launcher exception is a typed error");
+  }
+
+  std::size_t calls = 0;
+  PipelineController nonjoinable_worker(
+      runner, runner, [&calls](ThreadTask) {
+        if (++calls == 2) throw 1;
+        return std::thread{};
+      });
+  Check(!nonjoinable_worker.SubmitNode(NodeId::kDataLoad, Id("A")),
+        "failed startup tolerates a nonjoinable partial worker");
 }
 
 void TestControllerCoordinatorFullFallbackIntegration() {

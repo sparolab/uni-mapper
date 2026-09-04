@@ -6,7 +6,7 @@
   },
   "manifests": {
     "critical_sources_sha256": "c26e45b807f65e534477df2c57874239e6a9a19f577d5710e8e1bf98a76e1934",
-    "critical_tests_sha256": "3069811c2ea5052f7018f6fc53774274c93872b5c4c63e762c661bca70796b55"
+    "critical_tests_sha256": "45d557205e452b3a94f37f3c79c0d2d21c9002141b26534a008b3c0e1a7445d7"
   },
   "owners": {
     "FileSetTransaction": {
@@ -17,18 +17,18 @@
       "source_sha256": "51c0b942cd09c6f10b01f29893b4f2df9be5d567a9f20b1475b139c4fa8c2f8d"
     },
     "PipelineController": {
-      "branches": { "count": 392, "covered": 274, "rate": 0.69898 },
-      "functions": { "count": 55, "covered": 54 },
-      "lines": { "count": 1338, "covered": 1177 },
+      "branches": { "count": 400, "covered": 280, "rate": 0.7 },
+      "functions": { "count": 59, "covered": 58 },
+      "lines": { "count": 1376, "covered": 1214 },
       "path": "src/runtime/control/pipeline_controller.cpp",
-      "source_sha256": "25b2533a2b1c0d7a1e236105ba2a39574cfc4e0f5b8825a267a0b7a53e764f8c"
+      "source_sha256": "1d89ee6f3a7cafafb0ea8b605923b52dd3dcf95f56f4814982a3c013206ca842"
     },
     "RuntimeService": {
-      "branches": { "count": 370, "covered": 234, "rate": 0.632432 },
-      "functions": { "count": 66, "covered": 61 },
-      "lines": { "count": 971, "covered": 770 },
+      "branches": { "count": 380, "covered": 246, "rate": 0.647368 },
+      "functions": { "count": 69, "covered": 64 },
+      "lines": { "count": 991, "covered": 795 },
       "path": "src/runtime/service/runtime_service.cpp",
-      "source_sha256": "b7725a2fc342c8349b628ee9c08a74b912b177be08e63881ad29db1e3634b1df"
+      "source_sha256": "9227ad85e7289b0da9b04afe706994f8d22ef0c2e5dbb0da52691645485d3701"
     },
     "RuntimeStateStore": {
       "branches": { "count": 38, "covered": 29, "rate": 0.763158 },
