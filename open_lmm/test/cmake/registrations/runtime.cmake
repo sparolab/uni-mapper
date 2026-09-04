@@ -31,7 +31,11 @@ openlmm_set_global_target_properties(open_lmm_runtime_service_suite)
 
 function(openlmm_add_runtime_service_suite target selector layer invariants)
   set(runtime_service_timeout 60)
-  if(OPEN_LMM_ENABLE_COVERAGE)
+  if(OPEN_LMM_ENABLE_TSAN)
+    # The TSan lane is intentionally slower than the normal PR lane. This
+    # property must match the finite guard used by build_sanitizer_tests.sh.
+    set(runtime_service_timeout 180)
+  elseif(OPEN_LMM_ENABLE_COVERAGE)
     # Clang's branch instrumentation can make the lifecycle-heavy contract
     # suite substantially slower on a contended CI runner. Keep the normal
     # PR timeout unchanged while retaining a finite deadlock guard here.

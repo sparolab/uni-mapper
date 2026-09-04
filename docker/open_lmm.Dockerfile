@@ -35,8 +35,12 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libgl1-mesa-glx \
     x11-apps \
+    xvfb \
     zenity \
+    ros-humble-rviz-common \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git config --system --add safe.directory /root/workspace
 
 #! compiler verification matrix for CI and upgrade testing
 RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
@@ -46,6 +50,7 @@ RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
       g++-13 \
       clang-15 \
       clang-tidy-15 \
+      llvm-15 \
       libomp-15-dev && \
     rm -rf /var/lib/apt/lists/*
 
@@ -100,6 +105,7 @@ RUN apt-get update && \
       .. && \
     make -j$(nproc) && \
     make install && \
+    ldconfig && \
     cd / && \
     rm -rf /tmp/gtsam
 
