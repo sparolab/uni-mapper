@@ -125,8 +125,6 @@ if ! grep -Fq "$gui_source_root/src/host/gui_plugin_module.cpp" \
   echo "staged GUI build did not compile the Loader-B production source" >&2
   exit 1
 fi
-cmake --install "$gui_build_root" --prefix "$core_prefix"
-
 CC="$compiler_c" CXX="$compiler_cxx" \
   colcon --log-base "$log_root/ros" build \
     --base-paths "$repository_root/ros" \
@@ -141,6 +139,7 @@ ctest --test-dir "$build_root/open_lmm" --output-on-failure \
   --output-junit "$configuration_root/ctest-open_lmm.xml"
 ctest --test-dir "$gui_build_root" --output-on-failure \
   --output-junit "$configuration_root/ctest-open_lmm-gui.xml"
+cmake --install "$gui_build_root" --prefix "$core_prefix"
 ctest --test-dir "$build_root/open_lmm_ros" --output-on-failure \
   --output-junit "$configuration_root/ctest-open_lmm-ros.xml"
 
