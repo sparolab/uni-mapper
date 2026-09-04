@@ -8,6 +8,7 @@
 #include <plugins/host/algorithm_factory.hpp>
 #include <plugins/host/load_module.hpp>
 #include <open_lmm/utils/config_schema.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -17,12 +18,6 @@
 #include <string_view>
 
 namespace {
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 std::string CanonicalConfig(open_lmm::ConfigDocumentKind kind,
                             nlohmann::json document) {

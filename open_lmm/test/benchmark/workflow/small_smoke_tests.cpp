@@ -1,6 +1,7 @@
 #include "support/benchmark/fixture_generator.hpp"
 #include "support/benchmark/process_window_sampler.hpp"
 #include "support/benchmark/stage_event_recorder.hpp"
+#include "support/check.hpp"
 
 #include <open_lmm/server/runtime_client.hpp>
 
@@ -18,12 +19,6 @@ namespace {
 namespace fs = std::filesystem;
 using namespace open_lmm;
 using namespace open_lmm::test::benchmark;
-
-void Check(bool condition, const std::string& message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 class ScopedCurrentPath {
  public:

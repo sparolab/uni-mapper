@@ -3,6 +3,7 @@
 #include <domain/data_loader/data_loader_base.hpp>
 #include <domain/dynamic_removal/dynamic_remover_base.hpp>
 #include <domain/loop_detection/loop_detector_base.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -12,12 +13,6 @@
 namespace {
 
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 AgentContext Agent() {
   auto id = AgentId::Parse("A").Value();

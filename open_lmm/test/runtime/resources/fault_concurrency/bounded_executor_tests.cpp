@@ -1,6 +1,7 @@
 #include <runtime/resources/resource_governor.hpp>
 #include <foundation/concurrency/bounded_executor.hpp>
 #include "support/synchronization.hpp"
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,12 +19,6 @@
 
 namespace {
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 class ThreadLaunchProbe {
  public:

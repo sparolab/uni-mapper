@@ -1,4 +1,5 @@
 #include <domain/descriptor/built_in_descriptor_engine.hpp>
+#include "support/check.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -13,12 +14,6 @@
 namespace {
 
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 struct FakeState {
   enum class MakeMode { kSuccess, kNull, kStdThrow, kNonStdThrow, kBadKey };

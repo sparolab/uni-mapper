@@ -2,6 +2,7 @@
 #include <domain/loop_detection/descriptor_alignment_proposer.hpp>
 #include <domain/loop_detection/map_alignment_refiner.hpp>
 #include "support/synchronization.hpp"
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -17,13 +18,6 @@ using namespace open_lmm;
 
 namespace {
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
-
-void Check(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    std::exit(1);
-  }
-}
 
 MapAlignmentProposal Proposal(AlignmentMethod method, double x) {
   MapAlignmentProposal proposal;

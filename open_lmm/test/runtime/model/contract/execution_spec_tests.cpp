@@ -1,6 +1,7 @@
 #include <open_lmm/common/agent_data.hpp>
 #include <runtime/state/artifact_repository.hpp>
 #include <runtime/model/execution_spec.hpp>
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -10,12 +11,6 @@
 
 namespace open_lmm {
 namespace {
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

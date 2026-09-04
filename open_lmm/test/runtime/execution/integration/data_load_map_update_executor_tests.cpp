@@ -3,6 +3,7 @@
 #include <plugins/host/algorithm_factory.hpp>
 #include <domain/data_loader/data_loader_base.hpp>
 #include "support/synchronization.hpp"
+#include "support/check.hpp"
 
 #include <atomic>
 #include <barrier>
@@ -11,12 +12,6 @@
 #include <thread>
 
 namespace {
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 open_lmm::AgentId Id(const char* value) {
   return open_lmm::AgentId::Parse(value).Value();

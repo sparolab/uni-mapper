@@ -1,5 +1,7 @@
 #pragma once
 
+#include "support/check.hpp"
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -11,11 +13,7 @@
 
 namespace open_lmm::test::replay {
 
-inline void Check(bool condition, const std::string& message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
+using ::Check;
 
 class TemporaryTree {
  public:

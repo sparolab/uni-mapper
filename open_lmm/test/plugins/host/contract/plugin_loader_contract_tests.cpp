@@ -1,4 +1,5 @@
 #include "plugins/fixtures/plugin_fixture_interface.hpp"
+#include "support/check.hpp"
 
 #include <plugins/host/load_module.hpp>
 
@@ -7,12 +8,6 @@
 #include <string>
 
 namespace {
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 }  // namespace
 

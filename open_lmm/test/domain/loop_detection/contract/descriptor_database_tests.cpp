@@ -1,5 +1,6 @@
 #include <domain/loop_detection/database/database_kdtree.h>
 #include <domain/loop_detection/intra_loop_temporal_gate.hpp>
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -15,12 +16,6 @@
 namespace {
 
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 class Payload final : public DescriptorOpaquePayload {};
 

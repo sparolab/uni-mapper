@@ -1,4 +1,5 @@
 #include <open_lmm/core/alignment/alignment_decision_policy.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -6,12 +7,6 @@
 namespace {
 
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

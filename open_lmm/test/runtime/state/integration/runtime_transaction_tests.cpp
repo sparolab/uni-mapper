@@ -3,6 +3,7 @@
 #include <runtime/state/runtime_payload_builder.hpp>
 #include <runtime/state/runtime_state.hpp>
 #include <config/application/runtime_reconfigurer.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -12,12 +13,6 @@ namespace open_lmm {
 namespace {
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 class FakeOptimizer final : public BackendOptimizerBase {
  public:

@@ -1,6 +1,7 @@
 #include <runtime/control/pipeline_controller.hpp>
 #include "support/runtime/recording_runtime_port.hpp"
 #include "support/synchronization.hpp"
+#include "support/check.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -17,13 +18,6 @@
 
 namespace {
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    std::exit(1);
-  }
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

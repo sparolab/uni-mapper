@@ -5,6 +5,7 @@
 #include <storage/transactions/output_repository.hpp>
 #include <open_lmm/utils/config_schema.hpp>
 #include <foundation/logging/logging.hpp>
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <barrier>
@@ -19,12 +20,6 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 std::string Read(const fs::path& path) {
   std::ifstream input(path);

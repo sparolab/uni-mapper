@@ -2,6 +2,7 @@
 
 #include <runtime/client/runtime_retirement_coordinator.hpp>
 #include "support/runtime/runtime_config_fixture.hpp"
+#include "support/check.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -16,12 +17,6 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 void TestForwardingMoveAndClose() {
   static_assert(std::is_move_constructible_v<RuntimeClient>);

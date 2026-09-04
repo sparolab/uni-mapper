@@ -1,5 +1,6 @@
 #include <visualization/projection/visualization_projector.hpp>
 #include <runtime/state/runtime_state.hpp>
+#include "support/check.hpp"
 
 #include <pcl/io/pcd_io.h>
 
@@ -13,12 +14,6 @@
 namespace {
 using namespace open_lmm;
 namespace fs = std::filesystem;
-
-void Check(bool value, const char* message) {
-  if (value) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

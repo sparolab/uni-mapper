@@ -1,5 +1,6 @@
 #include <domain/loop_detection/alignment_map_builder.hpp>
 #include <domain/loop_detection/kiss_alignment_proposer.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,12 +10,6 @@
 namespace {
 
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

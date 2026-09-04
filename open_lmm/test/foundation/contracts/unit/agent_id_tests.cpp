@@ -1,6 +1,7 @@
 #include <open_lmm/common/agent_id.hpp>
 #include <open_lmm/common/data_types.hpp>
 #include <open_lmm/common/result.hpp>
+#include "support/check.hpp"
 
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/inference/Symbol.h>
@@ -18,12 +19,6 @@
 
 namespace {
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 AgentId Id(const std::string& value) {
   auto parsed = AgentId::Parse(value);

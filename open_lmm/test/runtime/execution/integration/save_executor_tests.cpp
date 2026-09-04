@@ -1,4 +1,5 @@
 #include <runtime/execution/stages/save_executor.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -12,12 +13,6 @@ namespace {
 
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

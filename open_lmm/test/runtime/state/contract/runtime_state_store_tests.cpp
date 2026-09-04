@@ -1,4 +1,5 @@
 #include <runtime/state/runtime_state_store.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -6,12 +7,6 @@
 
 namespace {
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 std::shared_ptr<const RuntimeState> State(uint64_t revision) {
   auto state = std::make_shared<RuntimeState>();

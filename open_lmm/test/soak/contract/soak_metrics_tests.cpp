@@ -1,5 +1,6 @@
 #include "support/soak/soak_metrics.hpp"
 #include "support/soak/owner_stress_support.hpp"
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -19,12 +20,6 @@ namespace fs = std::filesystem;
 using Json = nlohmann::json;
 
 namespace {
-
-void Check(bool condition, const std::string& message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 class TemporaryTree {
  public:

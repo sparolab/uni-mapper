@@ -1,5 +1,6 @@
 #include <open_lmm/core/alignment/alignment_proposer.hpp>
 #include <open_lmm/core/alignment/loop_constraint_builder.hpp>
+#include "support/check.hpp"
 
 #include <array>
 #include <cmath>
@@ -12,12 +13,6 @@
 namespace {
 
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

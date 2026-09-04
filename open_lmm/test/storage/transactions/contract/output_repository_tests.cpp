@@ -1,4 +1,5 @@
 #include <storage/transactions/output_repository.hpp>
+#include "support/check.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -10,12 +11,6 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 std::string ReadText(const fs::path& path) {
   std::ifstream input(path);

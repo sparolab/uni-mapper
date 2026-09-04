@@ -6,6 +6,7 @@
 #include <domain/optimization/backend_optimizer_base.hpp>
 #include <domain/data_loader/data_loader_base.hpp>
 #include <open_lmm/utils/config_schema.hpp>
+#include "support/check.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -22,12 +23,6 @@ namespace {
 
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
 
 void WriteJson(const fs::path& path, const nlohmann::json& value) {
   fs::create_directories(path.parent_path());

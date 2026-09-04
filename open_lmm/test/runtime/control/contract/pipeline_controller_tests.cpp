@@ -2,6 +2,7 @@
 #include <domain/loop_detection/map_alignment_coordinator.hpp>
 #include "support/runtime/recording_runtime_port.hpp"
 #include "support/synchronization.hpp"
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <barrier>
@@ -21,13 +22,6 @@ using namespace open_lmm;
 
 namespace {
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
-
-void Check(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << "FAIL: " << message << '\n';
-    std::exit(1);
-  }
-}
 
 class ThreadLaunchProbe {
  public:

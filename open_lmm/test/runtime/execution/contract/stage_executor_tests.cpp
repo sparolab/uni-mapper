@@ -2,6 +2,7 @@
 #include <runtime/execution/stage_executor.hpp>
 
 #include "support/runtime/runtime_config_fixture.hpp"
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -10,12 +11,6 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 void TestCommandAndQueryFacade() {
   const auto root = fs::temp_directory_path() / "open_lmm_stage_executor_contract";

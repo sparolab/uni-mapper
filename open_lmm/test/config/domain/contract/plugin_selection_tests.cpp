@@ -1,4 +1,5 @@
 #include <config/domain/algorithm_config.hpp>
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <cmath>
@@ -7,12 +8,6 @@
 #include <string>
 
 namespace {
-
-void Check(bool condition, const std::string& message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 template <typename T, typename Decoder>
 open_lmm::Result<T> ValidateAndDecode(open_lmm::ConfigDocumentKind kind,

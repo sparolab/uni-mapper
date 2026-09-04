@@ -5,6 +5,7 @@
 #include <domain/optimization/backend_optimizer_base.hpp>
 #include <plugins/host/algorithm_factory.hpp>
 #include "support/synchronization.hpp"
+#include "support/check.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -22,12 +23,6 @@
 namespace {
 using namespace open_lmm;
 namespace fs = std::filesystem;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(1);
-}
 
 AgentId Id(const char* value) { return AgentId::Parse(value).Value(); }
 

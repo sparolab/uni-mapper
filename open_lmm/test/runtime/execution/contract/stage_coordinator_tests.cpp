@@ -3,6 +3,7 @@
 #include <runtime/execution/stages/stage_coordinator.hpp>
 
 #include "support/runtime/runtime_config_fixture.hpp"
+#include "support/check.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -11,12 +12,6 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace open_lmm;
-
-void Check(bool condition, const char* message) {
-  if (condition) return;
-  std::cerr << "FAIL: " << message << '\n';
-  std::exit(1);
-}
 
 ExecutionContext Context(uint64_t revision) {
   return {std::make_shared<CancellationToken>(),
