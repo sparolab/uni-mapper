@@ -83,10 +83,10 @@ inline Result<PluginMetadata> validate_plugin_v1(
       detail::PluginString(api->build_version)};
   const auto mismatch = [&](std::string_view field, std::string expected,
                             std::string actual) {
+    auto message = "plugin " + std::string(field) + " mismatch in " + so_name +
+                   ": expected '" + expected + "', got '" + actual + "'";
     return Result<PluginMetadata>::Failure(
-        Error::PluginLoadFailed(
-            "plugin " + std::string(field) + " mismatch in " + so_name +
-            ": expected '" + expected + "', got '" + actual + "'")
+        Error::PluginLoadFailed(std::move(message))
             .WithPlugin(so_name)
             .WithValidation("/metadata/" + std::string(field),
                             std::move(expected), std::move(actual),
