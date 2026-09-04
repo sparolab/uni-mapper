@@ -25,10 +25,6 @@ from ._planner import PlannedTrial, plan_trials
 from ._subprocess import ProcessOutcome, run_logged, safe_environment
 
 
-def _worker_environment() -> dict[str, str]:
-    return safe_environment()
-
-
 def _software_digest(plan: ExperimentPlan) -> str:
     value = plan_identity(plan)["software"]
     return digest_value(value)
@@ -154,7 +150,7 @@ def _run_trial(plan: ExperimentPlan, trial: PlannedTrial, directory: Path) -> Tr
             log_path=directory / "worker.log",
             timeout_seconds=plan.execution.timeout_seconds,
             log_limit_bytes=plan.execution.log_limit_bytes,
-            environment=_worker_environment(),
+            environment=safe_environment(),
         )
     exit_code = outcome.returncode
     request_path.unlink(missing_ok=True)

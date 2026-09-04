@@ -15,6 +15,5 @@ target_link_libraries(open_lmm_dynamic_remover
  PRIVATE
   open_lmm_profiling
   small_gicp
-  tqdmcpp::tqdmcpp
 )
 openlmm_set_global_target_properties(open_lmm_dynamic_remover)

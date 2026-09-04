@@ -1,7 +1,6 @@
 add_library(open_lmm_domain_support_objects OBJECT
   pose_conversion.cpp
   registration.cpp
-  registration_log.cpp
   registration_pointcloud.cpp
   pointcloud_utils.cpp)
 target_link_libraries(open_lmm_domain_support_objects PRIVATE

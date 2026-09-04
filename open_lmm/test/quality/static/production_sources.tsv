@@ -8,7 +8,6 @@ src/config/schema/config_schema_catalog.cpp	required
 src/domain/alignment/alignment_decision_policy.cpp	required
 src/domain/alignment/alignment_proposer.cpp	required
 src/domain/alignment/loop_constraint_builder.cpp	required
-src/domain/data_loader/data_loader_base.cpp	required
 src/domain/data_loader/data_loader_file.cpp	required
 src/domain/descriptor/descriptor_artifact.cpp	required
 src/domain/descriptor/descriptor_engine.cpp	required
@@ -22,17 +21,14 @@ src/domain/loop_detection/kiss_alignment_proposer.cpp	required
 src/domain/loop_detection/loop_detector_kdtree.cpp	required
 src/domain/loop_detection/map_alignment_coordinator.cpp	required
 src/domain/loop_detection/map_alignment_refiner.cpp	required
-src/domain/optimization/backend_optimizer_base.cpp	required
 src/domain/optimization/backend_optimizer_incremental.cpp	required
 src/domain/support/pointcloud_utils.cpp	required
 src/domain/support/pose_conversion.cpp	required
 src/domain/support/registration.cpp	required
-src/domain/support/registration_log.cpp	required
 src/domain/support/registration_pointcloud.cpp	required
 src/foundation/concurrency/bounded_executor.cpp	required
 src/foundation/contracts/agent_id.cpp	required
 src/foundation/contracts/runtime_api.cpp	required
-src/foundation/contracts/runtime_contracts.cpp	required
 src/foundation/logging/logging.cpp	required
 src/plugins/descriptor/scan_context/create_scan_context.cpp	required
 src/plugins/descriptor/scan_context/scan_context.cpp	required

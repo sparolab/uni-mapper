@@ -1,7 +1,6 @@
 
 add_library(open_lmm_backend_optimizer SHARED)
 target_sources(open_lmm_backend_optimizer PRIVATE
-  backend_optimizer_base.cpp
   backend_optimizer_incremental.cpp
 )
 target_link_libraries(open_lmm_backend_optimizer

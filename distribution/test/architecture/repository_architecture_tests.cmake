@@ -429,7 +429,7 @@ endif()
 assert_exact_matches(
   "domain support to foundation logging include baseline"
   "src/domain/support" "foundation/logging/logging.hpp"
-  "src/domain/support/registration_log.cpp")
+  "src/domain/support/registration.cpp")
 assert_exact_matches(
   "plugin host public-contract include baseline"
   "src/plugins/host" "open_lmm/common/"

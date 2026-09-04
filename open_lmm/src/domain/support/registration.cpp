@@ -1,13 +1,15 @@
 #include "registration.hpp"
 
 #include <foundation/diagnostics/profiling.hpp>
-#include <domain/support/registration_log.hpp>
+#include <foundation/logging/logging.hpp>
 #include <domain/support/registration_pointcloud.hpp>
 #include <open_lmm/common/rigid_transform.hpp>
 
 #include <small_gicp/pcl/pcl_point.hpp>
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/pcl/pcl_registration.hpp>
+
+#include <sstream>
 
 namespace open_lmm {
 small_gicp::RegistrationPCL<pcl::PointXYZI, pcl::PointXYZI> setupRegistration(
@@ -34,12 +36,15 @@ std::optional<Eigen::Isometry3d> calculateFinalTransform(
     const Eigen::Isometry3d& init_rel_pose) {
   OPEN_LMM_ZONE_N("Registration.FitnessCheck");
   if (!reg.hasConverged()) {
-    LogRegistrationDidNotConverge();
+    LogDebug("registration rejected: solver did not converge");
     return std::nullopt;
   }
   const double fitness_score = reg.getFitnessScore();
   if (fitness_score > 0.5) {
-    LogRegistrationFitnessRejected(fitness_score);
+    std::ostringstream message;
+    message << "registration rejected: fitness score " << fitness_score
+            << " exceeds 0.5";
+    LogDebug(message.str());
     return std::nullopt;
   }
   Eigen::Isometry3d T_to_rot;
