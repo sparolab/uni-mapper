@@ -24,14 +24,16 @@ the previous `GuiServices` layout is rejected safely.
 
 ## Supported release matrix
 
-- Ubuntu 22.04, x86-64
-- ROS 2 Humble for the ROS adapter
-- GCC 12 and GCC 13 with libstdc++
-- Clang 15 with the documented libstdc++ 12 compatibility include set
-- CMake 3.25.3 in the release/CI image
-- GTSAM 4.2a9 as built by `docker/open_lmm.Dockerfile`
+The official v3 artifacts are deliberately narrow:
 
-Other environments may work but are not release gates until added to the required-check contract.
+- `ghcr.io/sparolab/uni-mapper:3.0.0[-rc.N]`: Ubuntu 22.04, x86-64, Headless Core + CLI
+- `open_lmm-3.0.0-cp310-*-linux_x86_64.whl`: CPython 3.10 on Linux x86-64
+
+ROS 2 Humble and the native GUI remain source-build regression checks, but are
+not official binary artifacts. GCC 12, GCC 13 and Clang 15 remain the required
+compiler validation matrix. The release image uses CMake 3.25.3 and GTSAM
+4.2a9 from pinned, hash-verified inputs. Other environments may work but are
+not release gates until added to this contract.
 
 ## Install components and file ownership
 
@@ -105,13 +107,26 @@ This changes the source-build installation workflow from one core install to exp
 steps: install core, then configure `applications/cli`, `applications/gui` and `bindings/python` against that installed
 core. A combined native prefix is published only after its ownership checks succeed; the Python
 wheel remains a separate artifact and must pass its isolated install/runtime audit. Rollback
-restores matching artifact versions as one distribution transaction. OS package-manager transfer
-metadata, public archives, signing, SBOM and provenance remain separate release-engineering work
-and are not implied by this CMake ownership split.
+restores matching artifact versions as one distribution transaction. OS
+package-manager transfer metadata remains separate work and is not implied by
+this CMake ownership split. Official publication is defined below.
 
-Official archives or images, SBOM and CVE gates, signing, provenance, immutable registry
-publication, and RC-to-stable same-bytes promotion remain Goal 09 supply-chain work.
-Passing this ownership contract is not evidence that those release gates are complete.
+The candidate workflow publishes the image to GHCR and attaches the CPython
+wheel, SHA256SUMS, CycloneDX image/wheel SBOMs and release-manifest v1 to a
+GitHub prerelease. Trivy blocks HIGH and CRITICAL findings. A vulnerability
+exception must name the CVE, state its reason in review and carry an
+`exp:YYYY-MM-DD` expiry; expired exceptions fail the gate. GitHub artifact
+attestations cover the image digest and attached files.
+
+Stable promotion pulls and retags the exact candidate image digest and reuses
+the exact candidate files. It never rebuilds and never publishes a mutable
+`latest` tag. Rollback selects a previously attested digest.
+
+Runtime transactions provide process-level candidate → validate → commit
+atomicity. They do not claim crash- or power-loss durability: there is no WAL,
+filesystem-wide fsync protocol or package-manager crash-atomic publication.
+After a process or host failure, operators must reconcile against authoritative
+runtime state and committed files.
 
 ## Required release evidence
 

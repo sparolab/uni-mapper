@@ -1,0 +1,219 @@
+name: Release candidate
+
+on:
+  push:
+    tags: ['v3.0.0-rc.*']
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: Release candidate tag (v3.0.0-rc.N)
+        required: true
+
+permissions:
+  contents: write
+  checks: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  IMAGE: ghcr.io/sparolab/uni-mapper
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Validate release input and repository policy
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rc_tag=${{ github.event.inputs.rc_tag || github.ref_name }}
+          [[ "$rc_tag" =~ ^v3\.0\.0-rc\.[1-9][0-9]*$ ]]
+          echo "tag=$rc_tag" >> "$GITHUB_OUTPUT"
+          echo "version=${rc_tag#v}" >> "$GITHUB_OUTPUT"
+          scripts/ci/check_architecture_policy.sh
+
+      - name: Require completed verification evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+            > /tmp/check-runs.json
+          required=(
+            'build / gcc12-gui-off'
+            'build / gcc12-gui-on'
+            'build / gcc13-gui-off'
+            'build / clang15-gui-off'
+            'sanitizer / asan-ubsan'
+            'sanitizer / tsan'
+            'package / python310-wheel'
+            'policy / architecture-boundary'
+            'quality / static-high-confidence'
+            'quality / fuzz-smoke'
+            'quality / critical-coverage'
+            'nightly / gcc12-headless'
+            'nightly / clang15-headless'
+          )
+          for name in "${required[@]}"; do
+            jq -e --arg name "$name" \
+              '[.check_runs[] | select(.name == $name and .conclusion == "success")] | length > 0' \
+              /tmp/check-runs.json >/dev/null || {
+                echo "required successful check is missing: $name" >&2
+                exit 1
+              }
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build identical Headless images twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_epoch=$(git show -s --format=%ct)
+          for copy in a b; do
+            DOCKER_BUILDKIT=1 docker build --no-cache \
+              --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
+              --build-arg 'OPEN_LMM_VERSION=${{ steps.release.outputs.version }}' \
+              --file docker/open_lmm.release.Dockerfile \
+              --tag "open-lmm-release:$copy" .
+          done
+          first=$(docker image inspect --format '{{.Id}}' open-lmm-release:a)
+          second=$(docker image inspect --format '{{.Id}}' open-lmm-release:b)
+          [[ "$first" == "$second" ]]
+          docker tag open-lmm-release:a "$IMAGE:${{ steps.release.outputs.version }}"
+
+      - name: Verify source-free non-root runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$IMAGE:${{ steps.release.outputs.version }}"
+          [[ "$(docker run --rm --entrypoint id "$tag" -u)" == 65532 ]]
+          docker run --rm --entrypoint sh "$tag" -c \
+            '! test -e /src && ! test -d /opt/open_lmm/include &&
+             ! command -v cmake && ! command -v g++ &&
+             ldd /opt/open_lmm/bin/open_lmm_batch | (! grep "not found") &&
+             find /opt/open_lmm/lib -type f -name "*.so*" -exec ldd {} \; |
+               (! grep "not found")'
+          docker run --rm "$tag" --help | grep 'Usage:'
+
+      - name: Build and verify the wheel twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
+          DOCKER_BUILDKIT=1 docker build \
+            --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
+            --build-arg 'OPEN_LMM_VERSION=${{ steps.release.outputs.version }}' \
+            --file docker/open_lmm.release.Dockerfile --target build \
+            --tag open-lmm-wheel:ci .
+          for copy in a b; do
+            docker run --rm \
+              --env "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
+              --volume "$GITHUB_WORKSPACE:/root/workspace" \
+              --workdir /root/workspace open-lmm-wheel:ci \
+              scripts/ci/build_python_wheel_and_test.sh \
+                "release-wheel-$copy" /usr/bin/gcc-12 /usr/bin/g++-12 \
+                /opt/open_lmm-python-build/bin/python
+          done
+          wheel_a=(.ci-build/release-wheel-a/wheel/*.whl)
+          wheel_b=(.ci-build/release-wheel-b/wheel/*.whl)
+          [[ "$(sha256sum "${wheel_a[0]}" | cut -d' ' -f1)" == \
+             "$(sha256sum "${wheel_b[0]}" | cut -d' ' -f1)" ]]
+          mkdir release-assets
+          cp "${wheel_a[0]}" release-assets/
+
+      - name: Validate expiring vulnerability exceptions
+        shell: bash
+        run: |
+          awk '
+            /^# reason: .+/ { reason=1; next }
+            /^[[:space:]]*(#.*)?$/ { next }
+            !reason || $0 !~ /^CVE-[0-9]+-[0-9]+ exp:[0-9]{4}-[0-9]{2}-[0-9]{2}$/ { exit 1 }
+            { reason=0 }
+          ' .trivyignore
+
+      - name: Scan image vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.release.outputs.version }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          ignorefile: .trivyignore
+          exit-code: '1'
+
+      - name: Create image SBOM
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.release.outputs.version }}
+          format: cyclonedx
+          output: release-assets/image.cdx.json
+
+      - name: Scan wheel vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          scan-type: fs
+          scan-ref: release-assets
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          ignorefile: .trivyignore
+          exit-code: '1'
+
+      - name: Create wheel SBOM
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          scan-type: fs
+          scan-ref: release-assets
+          format: cyclonedx
+          output: release-assets/wheel.cdx.json
+
+      - name: Publish immutable image and release metadata
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tag="$IMAGE:${{ steps.release.outputs.version }}"
+          push_output=$(docker push "$tag")
+          printf '%s\n' "$push_output"
+          digest=$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' <<<"$push_output" | tail -1)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg version '${{ steps.release.outputs.version }}' \
+            --arg commit "$GITHUB_SHA" --arg image "$IMAGE" \
+            --arg digest "$digest" \
+            '{schema_version:1,version:$version,commit:$commit,image:$image,image_digest:$digest,platform:"linux/amd64",python:"cp310",public_api_version:1,soname:3,plugin_abi:1}' \
+            > release-assets/release-manifest-v1.json
+          (cd release-assets && sha256sum *.whl *.json > SHA256SUMS)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest image
+        uses: actions/attest@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.0.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest release files
+        uses: actions/attest@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.0.0
+        with:
+          subject-path: release-assets/*
+
+      - name: Create GitHub prerelease
+        shell: bash
+        run: |
+          gh release create '${{ steps.release.outputs.tag }}' \
+            --prerelease --verify-tag --generate-notes release-assets/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

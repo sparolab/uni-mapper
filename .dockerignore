@@ -1,0 +1,8 @@
+.git
+.cache
+.ci-build
+build
+install
+imgui.ini
+__pycache__
+*.pyc

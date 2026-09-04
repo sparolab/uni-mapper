@@ -1,0 +1,2 @@
+# Exceptions use two lines: `# reason: ...`, then `CVE-NNNN-NNNN exp:YYYY-MM-DD`.
+# Empty by default.

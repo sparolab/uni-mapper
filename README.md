@@ -1,55 +1,120 @@
 # OpenLMM
 
-> [!note]
-> This branch is a generalized version of **[Uni-Mapper](https://ieeexplore.ieee.org/abstract/document/11057931)**. As the main author has graduated and follow-up work based on this paper is ongoing, the official code release is limited. Instead, we decided to provide **OpenLMM**, a more generalized version of **Uni-Mapper** that includes multi-map alignment and dynamic object removal modules.
+OpenLMM is a modularized LiDAR map merging and long-term map management
+framework. It is the generalized implementation of
+[Uni-Mapper](https://ieeexplore.ieee.org/abstract/document/11057931) and
+includes loop closure detection, robust optimization, multi-map alignment and
+dynamic-object removal.
 
+[![Uni-Mapper demo](https://img.youtube.com/vi/SK0TU9Vy3Is/maxresdefault.jpg)](https://www.youtube.com/watch?v=SK0TU9Vy3Is)
 
-<details>
-<summary><b>📌 Uni-Mapper details</b></summary>
+## Features
 
-## Uni-mapper
-[<img src="https://img.youtube.com/vi/SK0TU9Vy3Is/maxresdefault.jpg" alt="Uni-Mapper Youtube Video" width="100%">](https://www.youtube.com/watch?v=SK0TU9Vy3Is)
+- Data loaders for PCD, KITTI BIN, KITTI poses, TUM poses and custom formats
+- Dynamically loaded Scan Context and SOLiD loop detectors
+- iSAM2-based backend optimization
+- Online HMM-MOS and DUFOMap dynamic removal
+- Offline ERASOR dynamic removal
 
-This repository is the official code of the paper:
+## Official v3 artifacts
 
-> **Uni-Mapper: Unified Mapping Framework for Multi-modal LiDARs in Complex and Dynamic Environments**
->
-> [Gilhwan Kang](https://scholar.google.com/citations?user=F6dY8DoAAAAJ&hl=ko), [Hogyun Kim](https://scholar.google.com/citations?user=t5UEbooAAAAJ&hl=ko), [Byunghee Choi](https://scholar.google.com/citations?user=JCJAwgIAAAAJ&hl=ko), [Seokhwan Jeong](https://scholar.google.com/citations?user=ZAO6skQAAAAJ&hl=ko), [Young-Sik Shin](https://scholar.google.com/citations?user=gGfBRawAAAAJ&hl=ko)&ast;, and [Younggun Cho](https://scholar.google.com/citations?user=W5MOKWIAAAAJ&hl=ko&oi=ao)&ast;. <br>
-> &ast; Corresponding Authors. <br> 
->
-> *Accepted in Transaction on Intelligent Vehicles* <br>
+The supported binary surface is intentionally small:
 
+- `ghcr.io/sparolab/uni-mapper:3.0.0`: Ubuntu 22.04 x86-64 Headless Core + CLI
+- `open_lmm-3.0.0-cp310-*-linux_x86_64.whl`: CPython 3.10 Linux x86-64 SDK
 
-## Introduction
-**Uni-mapper** is a map-merging framework for multi-modal LiDARs in complex and dynamic environments.
-Our approach consists of three core components: dynamic object removal, dynamic-aware scene description, and multiple map alignment. A voxel-wise free space hash map is built to remove dynamic objects by combining sequential free spaces. This is integrated with a stable triangle descriptor (STD) to form DynaSTD, which preserves static points and is effective across multi-modal LiDARs. DynaSTD is used for pose graph optimizations in intra-session and inter-map loop closures, with a centralized anchor-node approach to reduce intra-session drift errors.
+ROS 2 Humble and the native GUI remain tested source-build adapters; they are
+not official v3 binary artifacts. Candidate artifacts use the corresponding
+`3.0.0-rc.N` version and are promoted without rebuilding.
 
+Run the batch image with a mounted configuration and data directory:
 
+```bash
+docker run --rm \
+  --volume "$PWD/open_lmm/config:/config:ro" \
+  --volume "/path/to/dataset:/data:ro" \
+  --volume "$PWD/output:/output" \
+  ghcr.io/sparolab/uni-mapper:3.0.0 /config
+```
 
-## Table of Contents
-> **__Note__** The code will be released after the paper is accepted.
->
-> **Setup**
-> - Installation
-> - Datasets
->
-> **Example**
-> - Merging multiple maps
+Configuration paths inside the mounted files must refer to `/data` and
+`/output`. Verify release files with `SHA256SUMS` and GitHub artifact
+attestations before deployment.
 
+Install the Python SDK into a clean CPython 3.10 environment:
 
-## How to use
-- refer the `workshop` branch
+```bash
+python3.10 -m venv .venv
+.venv/bin/pip install ./open_lmm-3.0.0-cp310-*-linux_x86_64.whl
+.venv/bin/python -c 'import open_lmm; print(open_lmm.__version__)'
+```
 
+## Build from source
 
-## Updates
-- `25.05.31` : Accepted in Transaction on Intelligent Vehicles
-- `24.10.09` : Resubmitted to T-IV
-- `24.05.08` : Accepted in ICRAW on Future of Construction (3rd prize)
+The reproducible CI toolchain image contains the supported compilers and ROS
+dependencies:
 
+```bash
+docker build -f docker/open_lmm.Dockerfile -t open-lmm-dev .
+docker run --rm -v "$PWD:/root/workspace" -w /root/workspace \
+  open-lmm-dev scripts/ci/build_and_test.sh local \
+  /usr/bin/gcc-12 /usr/bin/g++-12 OFF
+```
 
+Local owner-specific entry points are also available:
+
+```bash
+make core-build
+make cli-build
+make gui-build
+make python-build
+make ros-build
+```
+
+Use `make gui CONFIG=/absolute/path/to/config` to build and run the standalone
+GUI, or `make ros CONFIG=/absolute/path/to/config` to launch the ROS 2 adapter
+with RViz. See [applications/gui/README.md](applications/gui/README.md),
+[ros/README.md](ros/README.md) and [bindings/python/README.md](bindings/python/README.md)
+for the owner-specific instructions.
+
+System PCL is required. Other dependencies may use the pinned fallbacks under
+`open_lmm/thirdparty/`. The public C++ API uses `SOVERSION=3`; plugin ABI v1 is
+same-toolchain compatible, and the Python API reports `API_VERSION = 1`.
+
+## Dataset format
+
+The example dataset is available from
+[Google Drive](https://drive.google.com/drive/folders/1MiwAkoHn0tzPc5O6FQhFEykhTY4JBqxU?usp=sharing).
+
+```text
+dataset_root/
+├── agent1/
+│   ├── Scans/
+│   │   ├── 000000.pcd
+│   │   ├── 000001.pcd
+│   │   └── ...
+│   └── optimized_poses.txt
+└── agent2/
+    ├── Scans/
+    └── optimized_poses.txt
+```
+
+Scan directory names, pose filenames and formats are configured in
+`open_lmm/config/core/data_loader/file_based.json`.
+
+## Correctness contract
+
+Committed runtime state has one owner, `RuntimeStateStore`, and changes follow
+candidate → validate → commit. Valid presentations remain visible until their
+replacement is ready. These guarantees are process-level; OpenLMM does not
+claim crash- or power-loss durability across a host failure.
+
+See [RELEASE_POLICY.md](RELEASE_POLICY.md), [distribution/README.md](distribution/README.md)
+and [AGENTS.md](AGENTS.md) for compatibility, packaging and architecture rules.
 
 ## Citation
-```
+
+```bibtex
 @article{kang2025uni,
   title={Uni-Mapper: Unified Mapping Framework for Multi-modal LiDARs in Complex and Dynamic Environments},
   author={Kang, Gilhwan and Kim, Hogyun and Choi, Byunghee and Jeong, Seokhwan and Shin, Young-Sik and Cho, Younggun},
@@ -58,138 +123,16 @@ Our approach consists of three core components: dynamic object removal, dynamic-
   publisher={IEEE}
 }
 ```
-</details>
-
-## Intro
-**OpenLMM** is a modularized **L**iDAR **M**ap **M**erging and **L**ong-term **M**ap **M**anagement framework, including loop closure detection, robust optimization, and dynamic removal modules for long-term LiDAR mapping.
-
-
-
-[Click here for a demo!](https://gist.github.com/user-attachments/assets/73bade41-570d-447b-9831-6474bc97bbd3)
-
-
-
-**Features**
-- **Data Loader**
-  - Supports `pcd`, `bin`, and custom formats for scan data
-  - Supports `KITTI`, `TUM`, and custom formats for pose data
-- **Loop Detector**
-  - Dynamic loading of place recognition (PR) modules
-  - Supports k-d tree–based vector search modules (`Scan Context`, `Solid`)
-- **Backend Optimizer**
-  - Supports `iSAM2` based optimization
-- **Dynamic Remover**
-  - Dynamic loading of dynamic object removal (DOR) modules
-  - Supports online removal modules (`HMM-MOS`, `DUFOMap`)
-  - Supports offline removal module (`ERASOR`)
-
-
-## Local Setting
-### System requirenments
-- [Ubuntu 22.04](https://releases.ubuntu.com/jammy/)
-- [ROS2 Humble](https://docs.ros.org/en/humble/index.html)
-- [GTSAM 4.2a9](https://github.com/borglab/gtsam/releases/tag/4.2a9)
-
-
-### Local build
-```
-# 1. make your own workspace
-mkdir -p ws_OpenLMM/src
-cd ws_OpenLMM/src
-
-2. Clone the repository (renaming the directory to `open-lmm` is important!)
-git clone https://github.com/sparolab/uni-mapper.git open-lmm
-
-# 3. colcon build
-cd ..
-colcon build --symlink-install
-
-# 4. Run OpenLMM
-source install/setup.bash
-ros2 run open_lmm_ros open_lmm_rosnode
-```
-
-## Docker Setting
-### System requirenments
-- docker
-- docker-compose
-
-
-### Docker build
-```
-# 1. make your own workspace in local system
-mkdir -p ws_OpenLMM/src
-cd ws_OpenLMM/src
-
-2. Clone the repository (renaming the directory to `open-lmm` is important!)
-git clone https://github.com/sparolab/uni-mapper.git open-lmm
-
-# 3. Set open-lmm via dockerfile
-cd open-lmm
-bash run_docker.sh $(YOUR_LOCAL_DATASET_ROOT_PATH)
-
-# 4. colcon build in docker container (via VsCode container extension, Terminal...)
-cd /root/workspace
-colcon build --symlink-install
-
-# 5. Run OpenLMM
-source install/setup.bash
-ros2 run open_lmm_ros open_lmm_rosnode
-```
-
-## How to use?
-### Prepare example dataset
-Sample dataset collected in our campus (**[Google Drive link](https://drive.google.com/drive/folders/1MiwAkoHn0tzPc5O6FQhFEykhTY4JBqxU?usp=sharing)**)
-
-### Data format
-```
-root
-├─ dataset_root
-│  ├─ agent1
-│  │  ├─ Scans
-│  │  │  ├─ 000000.pcd
-│  │  │  ├─ 000001.pcd
-│  │  │  └─ ...
-│  │  └─ optimized_poses.txt
-│  ├─ agent2
-│  │  ├─ Scans
-│  │  └─ optimized_poses.txt
-│  └─ ...
-└─ ...
-```
-- **Refer to the `config/core/data_loader/file_based.json` file for detailed usage.**
-- You can modify the `Scans` directory name, as well as the file name and extension of `poses.txt`.
-- Supports `pcd` and `bin(KITTI)` file formats for scan data.
-- Supports both `KITTI` and `TUM` pose formats.
-- You can also define a `custom` type for both scan format and pose format.
-- Since **Uni-Mapper** utilizes **STD** as the base loop descriptor, I also use accumulated scans as keyframes (by accumulating 10 frames of Fast-LIO2 output points).
-
-### Config setting
-TBD
-
-
-## TODO
-- [ ] Add visualization support
-- [ ] Refactor the centralized `shared_data` structure
-- [ ] Replace `PCL` types with `Eigen` vectors
-- [ ] Add hash map-based LiDAR descriptors
-
 
 ## Acknowledgments
-While working on the **Uni-Mapper** project, I (Gilhwan Kang) found it particularly challenging to tackle dynamic object removal, LiDAR-based place recognition, and map alignment all at once. Originally started as a personal study rather than as a novel research contribution, this project is intended to serve as a practical tool to help other researchers easily test or adapt their own custom datasets and algorithms when working on similar problems.
 
-This project stands on the shoulders of giants—it is built upon a foundation of outstanding prior research and open-source contributions. The following acknowledgments are our gratitude for those invaluable works.
-- **[LT-Mapper](https://github.com/gisbi-kim/lt-mapper)** – used as the baseline framework of **Uni-Mapper**
-- **[GLIM](https://github.com/koide3/glim)** – referenced for dynamic loading modules and configuration structure
-- **[KISS-ICP](https://github.com/PRBonn/kiss-icp)** – served as a baseline for the overall codebase structure and modern CMake setup
-- **[KISS-MATCHER](https://github.com/MIT-SPARK/KISS-Matcher)** – provided essential map-to-map alignment functionalities
-- **[ScanContext](https://github.com/DanMcGann/scan_context)** – used as the base DB structure for KD-tree-based scan retrieval
-- **[SOLID](https://github.com/sparolab/solid)** – contributed insights into light-weight LiDAR descriptor
-- **[Dynamic Benchmark](https://github.com/KTH-RPL/DynamicMap_Benchmark)** – offered C++-refactored versions of dynamic object removal algorithms such as **[ERASOR](https://github.com/LimHyungTae/ERASOR)** and **[DUFOMap](https://github.com/Kin-Zhang/dufomap)**
-- **[HmmMOS](https://github.com/vb44/HMM-MOS)** – referred to as a SOTA online dynamic object removal approach
+OpenLMM builds on LT-Mapper, GLIM, KISS-ICP, KISS-Matcher, ScanContext, SOLiD,
+DynamicMap Benchmark, ERASOR, DUFOMap and HMM-MOS. Their authors and maintainers
+made this project possible; dependency licenses are recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
-Since this repository includes `ERASOR` (licensed under `GPL-3.0`), it is also distributed under the same license.
 
-## Contact
-- Maintainer: Gilhwan Kang (gilhwan@hyundai.com)
+GPL-3.0-only. See [LICENCE](LICENCE).
+
+Maintainer: Gilhwan Kang (`gilhwan@hyundai.com`).

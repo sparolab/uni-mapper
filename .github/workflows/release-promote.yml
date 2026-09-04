@@ -1,0 +1,74 @@
+name: Promote release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: Existing candidate tag (v3.0.0-rc.N)
+        required: true
+      stable_tag:
+        description: Stable tag (v3.0.0)
+        required: true
+        default: v3.0.0
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  IMAGE: ghcr.io/sparolab/uni-mapper
+
+jobs:
+  promote:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate tags and download exact RC assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ '${{ inputs.rc_tag }}' =~ ^v3\.0\.0-rc\.[1-9][0-9]*$ ]]
+          [[ '${{ inputs.stable_tag }}' == v3.0.0 ]]
+          mkdir release-assets
+          gh release download '${{ inputs.rc_tag }}' --dir release-assets
+          (cd release-assets && sha256sum --check SHA256SUMS)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag the exact RC image digest
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          rc_version=${{ inputs.rc_tag }}
+          stable_version=${{ inputs.stable_tag }}
+          docker pull "$IMAGE:${rc_version#v}"
+          before=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:${rc_version#v}")
+          before=${before##*@}
+          docker tag "$IMAGE:${rc_version#v}" "$IMAGE:${stable_version#v}"
+          push_output=$(docker push "$IMAGE:${stable_version#v}")
+          printf '%s\n' "$push_output"
+          after=$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' <<<"$push_output" | tail -1)
+          [[ "$before" == "$after" ]]
+          [[ "$(jq -r .image_digest release-assets/release-manifest-v1.json)" == "$after" ]]
+          echo "digest=$after" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest stable image name
+        uses: actions/attest@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.0.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Publish stable release without rebuilding
+        shell: bash
+        run: |
+          target=$(jq -r .commit release-assets/release-manifest-v1.json)
+          gh release create '${{ inputs.stable_tag }}' \
+            --target "$target" --generate-notes release-assets/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

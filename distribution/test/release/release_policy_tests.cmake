@@ -15,6 +15,25 @@ function(assert_file_contains path)
   endforeach()
 endfunction()
 
+function(assert_actions_pinned path label)
+  file(READ "${path}" contents)
+  string(REGEX MATCHALL "uses:[^\r\n]+" action_lines "${contents}")
+  list(LENGTH action_lines action_count)
+  if(action_count LESS 1)
+    message(FATAL_ERROR "${label} workflow must use pinned GitHub Actions")
+  endif()
+  foreach(action_line IN LISTS action_lines)
+    string(REGEX REPLACE "^.*@([0-9a-f]+).*$" "\\1" action_ref
+      "${action_line}")
+    string(LENGTH "${action_ref}" action_ref_length)
+    if(NOT action_ref MATCHES "^[0-9a-f]+$" OR
+       NOT action_ref_length EQUAL 40)
+      message(FATAL_ERROR
+        "${label} GitHub Action is not pinned to 40-hex SHA: ${action_line}")
+    endif()
+  endforeach()
+endfunction()
+
 set(core_dir "${OPEN_LMM_REPOSITORY_ROOT}/open_lmm")
 set(cli_dir "${OPEN_LMM_REPOSITORY_ROOT}/applications/cli")
 set(gui_dir "${OPEN_LMM_REPOSITORY_ROOT}/applications/gui")
@@ -31,6 +50,10 @@ set(nightly_benchmark_workflow
   "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/nightly-benchmark.yml")
 set(quality_workflow
   "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/quality-gates.yml")
+set(release_candidate_workflow
+  "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/release-candidate.yml")
+set(release_promote_workflow
+  "${OPEN_LMM_REPOSITORY_ROOT}/.github/workflows/release-promote.yml")
 
 assert_file_contains(
   "${core_dir}/CMakeLists.txt"
@@ -160,7 +183,12 @@ assert_file_contains(
   "core -> CLI -> GUI"
   "ROS -> GUI -> CLI -> core"
   "baseline `cdda354`"
-  "Goal 09 supply-chain work")
+  "ghcr.io/sparolab/uni-mapper"
+  "Headless Core + CLI"
+  "do not claim crash- or power-loss durability"
+  "blocks HIGH and CRITICAL"
+  "never publishes a mutable"
+  "exact candidate image digest")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/THIRD_PARTY_NOTICES.md"
   "GPL-3.0-only"
@@ -253,6 +281,58 @@ if(NOT nightly_mutable_image_build EQUAL -1)
     "nightly benchmark must consume one reviewed immutable image digest")
 endif()
 assert_file_contains(
+  "${OPEN_LMM_REPOSITORY_ROOT}/docker/open_lmm.release.Dockerfile"
+  "ubuntu@sha256:79676deb51ebb02885b0b9d33788e78a37cf1045ad79d1bb04c6a222c3556b3d"
+  "snapshot.ubuntu.com"
+  "--require-hashes"
+  "--component Runtime"
+  "--component Plugins"
+  "USER 65532:65532"
+  "ENTRYPOINT [\"/opt/open_lmm/bin/open_lmm_batch\"]")
+assert_file_contains(
+  "${OPEN_LMM_REPOSITORY_ROOT}/bindings/python/build-constraints.txt"
+  "pip==24.0 --hash=sha256:"
+  "scikit-build-core==0.10.7 --hash=sha256:"
+  "pybind11==2.13.6 --hash=sha256:"
+  "numpy==1.21.5 --hash=sha256:")
+assert_file_contains(
+  "${core_dir}/thirdparty/kiss_matcher/robin.patch"
+  "a2dfd612a501bca83c47206255dbbff619481f97"
+  "1c449ae953ce2a440b0d16c5ed1181d2754860ab")
+if(EXISTS "${core_dir}/thirdparty/pcl/pcl.cmake")
+  message(FATAL_ERROR "the invalid bundled PCL fallback must not return")
+endif()
+assert_file_contains(
+  "${release_candidate_workflow}"
+  "ghcr.io/sparolab/uni-mapper"
+  "Require completed verification evidence"
+  "nightly / gcc12-headless"
+  "Build identical Headless images twice"
+  "Validate expiring vulnerability exceptions"
+  "severity: HIGH,CRITICAL"
+  "format: cyclonedx"
+  "release-manifest-v1.json"
+  "actions/attest@"
+  "--prerelease")
+assert_file_contains(
+  "${release_promote_workflow}"
+  "Retag the exact RC image digest"
+  "[[ \"$before\" == \"$after\" ]]"
+  "Publish stable release without rebuilding")
+file(READ "${release_promote_workflow}" release_promote_contents)
+string(FIND "${release_promote_contents}" "docker build"
+  stable_rebuild)
+string(FIND "${release_promote_contents}" ":latest"
+  mutable_latest)
+if(NOT stable_rebuild EQUAL -1 OR NOT mutable_latest EQUAL -1)
+  message(FATAL_ERROR "stable promotion must not rebuild or publish latest")
+endif()
+foreach(legacy_launcher IN ITEMS run_docker.sh docker/docker-compose.yml)
+  if(EXISTS "${OPEN_LMM_REPOSITORY_ROOT}/${legacy_launcher}")
+    message(FATAL_ERROR "legacy privileged launcher remains: ${legacy_launcher}")
+  endif()
+endforeach()
+assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/build_and_test.sh"
   "-DOPEN_LMM_ENABLE_STRICT_WARNINGS=ON"
   "-DCMAKE_BUILD_TYPE=Release"
@@ -301,6 +381,8 @@ assert_file_contains(
   "bindings/python/build_local_wheel.sh"
   "OPEN_LMM_PYTHON_WHEEL_ONLY=ON"
   "python-owner-inventory.tsv"
+  "runtime-requirements.txt"
+  "--require-hashes"
   "wheel.sha256")
 assert_file_contains(
   "${OPEN_LMM_REPOSITORY_ROOT}/scripts/ci/check_architecture_policy.sh"
@@ -433,21 +515,7 @@ string(FIND "${workflow_contents}" "paths:" paths_filter)
 if(NOT paths_filter EQUAL -1)
   message(FATAL_ERROR "required workflow must not use a paths filter")
 endif()
-string(REGEX MATCHALL "uses:[^\r\n]+" action_lines "${workflow_contents}")
-list(LENGTH action_lines action_count)
-if(action_count LESS 1)
-  message(FATAL_ERROR "workflow must use at least one pinned GitHub Action")
-endif()
-foreach(action_line IN LISTS action_lines)
-  string(REGEX REPLACE "^.*@([0-9a-f]+).*$" "\\1" action_ref
-    "${action_line}")
-  string(LENGTH "${action_ref}" action_ref_length)
-  if(NOT action_ref MATCHES "^[0-9a-f]+$" OR
-     NOT action_ref_length EQUAL 40)
-    message(FATAL_ERROR
-      "GitHub Action is not pinned to an immutable 40-hex SHA: ${action_line}")
-  endif()
-endforeach()
+assert_actions_pinned("${workflow}" "Required")
 
 file(READ "${quality_workflow}" quality_workflow_contents)
 string(FIND "${quality_workflow_contents}" "paths:" quality_paths_filter)
@@ -460,19 +528,6 @@ if(NOT quality_baseline_rewrite EQUAL -1)
   message(FATAL_ERROR
     "quality workflow must never auto-calibrate/rewrite the reviewed baseline")
 endif()
-string(REGEX MATCHALL "uses:[^\r\n]+" quality_action_lines
-  "${quality_workflow_contents}")
-list(LENGTH quality_action_lines quality_action_count)
-if(quality_action_count LESS 1)
-  message(FATAL_ERROR "quality workflow must use pinned GitHub Actions")
-endif()
-foreach(action_line IN LISTS quality_action_lines)
-  string(REGEX REPLACE "^.*@([0-9a-f]+).*$" "\\1" action_ref
-    "${action_line}")
-  string(LENGTH "${action_ref}" action_ref_length)
-  if(NOT action_ref MATCHES "^[0-9a-f]+$" OR
-     NOT action_ref_length EQUAL 40)
-    message(FATAL_ERROR
-      "Quality GitHub Action is not pinned to 40-hex SHA: ${action_line}")
-  endif()
-endforeach()
+assert_actions_pinned("${quality_workflow}" "Quality")
+assert_actions_pinned("${release_candidate_workflow}" "Release candidate")
+assert_actions_pinned("${release_promote_workflow}" "Release promotion")
