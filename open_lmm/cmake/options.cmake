@@ -6,7 +6,7 @@ option(USE_CCACHE "Build using Ccache if found on the path" ON)
 # 시스템 의존성 옵션 — ON: 시스템 설치본 사용, OFF: FetchContent 자동 다운로드
 option(USE_SYSTEM_EIGEN3 "Use system pre-installed Eigen" ON)
 option(USE_SYSTEM_TBB "Use system pre-installed oneAPI/tbb" ON)
-option(USE_SYSTEM_PCL "Use system pre-installed PCL" ON)
+option(USE_SYSTEM_PCL "Use system pre-installed PCL (required in v3)" ON)
 option(USE_SYSTEM_GTSAM "Use system pre-installed GTSAM" ON) # tested on v4.2a9
 option(USE_SYSTEM_NANOFLANN "Use system pre-installed nanoflann" OFF) # fetched v1.5.5
 option(USE_SYSTEM_TQDMCPP "Use system pre-installed tqdmcpp" OFF) # fetched custom

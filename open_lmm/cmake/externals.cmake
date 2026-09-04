@@ -21,8 +21,7 @@ if(OPEN_LMM_ENABLE_TRACY)
   FetchContent_Declare(
     tracy
     GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-    GIT_TAG        v0.11.1
-    GIT_SHALLOW    TRUE
+    GIT_TAG        5d542dc09f3d9378d005092a4ad446bd405f819a
   )
   FetchContent_MakeAvailable(tracy)
 endif()

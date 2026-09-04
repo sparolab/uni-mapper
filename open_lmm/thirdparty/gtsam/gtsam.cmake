@@ -9,7 +9,7 @@ include(FetchContent)
 FetchContent_Declare(
     gtsam
     GIT_REPOSITORY https://github.com/borglab/gtsam.git
-    GIT_TAG        4.2
+    GIT_TAG        c57988fe554e7213c77fe379c1d7c483de26ad33
 )
 FetchContent_MakeAvailable(gtsam)
 # FetchContent_GetProperties(gtsam)

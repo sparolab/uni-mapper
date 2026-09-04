@@ -7,6 +7,6 @@ set(MASTER_PROJECT_HAS_TARGET_UNINSTALL ON CACHE BOOL "Set to ON to avoid confli
 FetchContent_Declare(
   nanoflann
   GIT_REPOSITORY https://github.com/jlblancoc/nanoflann.git
-  GIT_TAG        v1.5.5
+  GIT_TAG        923c2ac16a955317054c296d298425d33c0cb9de
 )
 FetchContent_MakeAvailable(nanoflann)

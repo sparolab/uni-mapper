@@ -35,9 +35,10 @@ include(FetchContent)
 FetchContent_Declare(
     robin
     GIT_REPOSITORY https://github.com/MIT-SPARK/ROBIN.git
-    GIT_TAG        v.1.2.4
-    GIT_SHALLOW    TRUE
+    GIT_TAG        52bab5f2bb6dd68a5febb6bd06bb2ffdff2f75c2
     GIT_PROGRESS   TRUE
+    PATCH_COMMAND  patch -p1 < ${CMAKE_CURRENT_LIST_DIR}/robin.patch
+    UPDATE_DISCONNECTED 1
 )
 
 FetchContent_Declare(

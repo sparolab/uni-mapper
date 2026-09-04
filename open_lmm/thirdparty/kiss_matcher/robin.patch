@@ -1,0 +1,13 @@
+diff --git a/cmake/DownloadExternal.cmake b/cmake/DownloadExternal.cmake
+index 40c4980..6ac37d1 100644
+--- a/cmake/DownloadExternal.cmake
++++ b/cmake/DownloadExternal.cmake
+@@ -8 +8 @@ function(robin_download_pybind11)
+-		GIT_TAG        v2.13.6
++		GIT_TAG        a2e59f0e7065404b44dfe92a28aca47ba1378dc4
+@@ -19 +19 @@ function(robin_download_pmc)
+-			GIT_TAG        master
++			GIT_TAG        a2dfd612a501bca83c47206255dbbff619481f97
+@@ -63 +63 @@ function(robin_download_xenium)
+-			GIT_TAG        main
++			GIT_TAG        1c449ae953ce2a440b0d16c5ed1181d2754860ab
