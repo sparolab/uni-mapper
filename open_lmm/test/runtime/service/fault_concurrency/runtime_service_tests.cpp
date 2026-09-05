@@ -315,6 +315,28 @@ void TestSingleRuntimeLifecycleAndJobIdentity() {
   Check(!service.RecentLogs(0) && !service.RecentLogs(513),
         "runtime log queries enforce their public bound");
   Check(service.Open({root / "config", "one"}).IsOk(), "open one runtime");
+  // ROS action and visualization workers query the same service concurrently.
+  // TSan must observe both the state publication and the returned state copy.
+  {
+    test::ManualResetEvent start;
+    std::atomic<bool> valid{true};
+    std::vector<std::jthread> readers;
+    for (int reader = 0; reader < 4; ++reader) {
+      readers.emplace_back([&] {
+        start.Wait("concurrent snapshot readers start");
+        for (int iteration = 0; iteration < 1000; ++iteration) {
+          const auto snapshot = service.Snapshot();
+          if (!snapshot || snapshot.Value().state != RuntimeStatus::kReady ||
+              snapshot.Value().label != "one") {
+            valid.store(false);
+          }
+        }
+      });
+    }
+    start.Signal();
+    readers.clear();
+    Check(valid.load(), "concurrent snapshots retain the ready runtime state");
+  }
   Check(!service.ConfigDocuments() && !service.ConfigCandidates() &&
             service.RecentLogs(1),
         "runtime queries forward through the active query port");

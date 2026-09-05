@@ -114,7 +114,7 @@ if(BUILD_TESTING)
     TARGET open_lmm_ros_runtime_adapter_graph_tests
     LAYER L3 MODULE adapters.ros OWNER OpenLMMROS
     INVARIANTS INV-05 INV-07 INV-08 INV-13 INV-17 INV-18
-    LANES pr TIMEOUT 60)
+    LANES pr SANITIZERS tsan TIMEOUT 60)
   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/ros-test-log)
   openlmm_apply_test_environment(
     "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:open_lmm_ros_component>:$<TARGET_FILE_DIR:open_lmm::client>:$ENV{LD_LIBRARY_PATH};ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/ros-test-log;QT_QPA_PLATFORM=offscreen")

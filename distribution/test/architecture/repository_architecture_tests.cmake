@@ -878,8 +878,13 @@ assert_file_excludes(
   "../ros/ros2/open_lmm_ros/runtime_adapter/open_lmm_ros.cpp"
   "GuiRuntimeHost"
   "gui_plugin_path"
-  "open_lmm/gui/"
-  "goal_handle->is_canceling()")
+  "open_lmm/gui/")
+# ROS cancellation state may gate the CANCELED transport transition, but must
+# not decide committed success. Keep the authoritative terminal resolver.
+string(FIND "${ros_adapter}" "ResolveRosActionTerminal(waited, job.value, authoritative_job)" ros_terminal_resolver)
+if(ros_terminal_resolver EQUAL -1)
+  message(FATAL_ERROR "ROS terminal result must reconcile authoritative runtime state")
+endif()
 file(READ
   "${OPEN_LMM_SOURCE_DIR}/../ros/ros2/open_lmm_ros/rviz_control/open_lmm_control_panel.cpp"
   ros_control_panel)

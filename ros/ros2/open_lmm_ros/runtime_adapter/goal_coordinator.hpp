@@ -54,6 +54,7 @@ class RosGoalCoordinator {
       return {true, std::nullopt};
     }
     if (phase_ == RosGoalPhase::kActiveJob && job_) {
+      cancel_pending_ = true;
       return {true, job_};
     }
     return {};
@@ -70,6 +71,10 @@ class RosGoalCoordinator {
   [[nodiscard]] bool CancelPending(
       const rclcpp_action::GoalUUID& uuid) const {
     return Matches(uuid) && cancel_pending_;
+  }
+
+  void RejectCancel(const rclcpp_action::GoalUUID& uuid) {
+    if (Matches(uuid)) cancel_pending_ = false;
   }
 
   [[nodiscard]] std::optional<JobHandle> ActiveJob() const { return job_; }

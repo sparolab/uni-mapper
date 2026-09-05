@@ -32,6 +32,11 @@ if [[ ! -x "$compiler_c" || ! -x "$compiler_cxx" ]]; then
   exit 1
 fi
 
+if [[ "$sanitizer" == TSAN && "$(basename "$compiler_cxx")" != clang++* ]]; then
+  echo "ROS TSan requires Clang and LLVM OpenMP/Archer (CI uses clang-15)." >&2
+  exit 1
+fi
+
 cxx_compatibility_flags=""
 if [[ "$(basename "$compiler_cxx")" == clang++* ]]; then
   cxx_compatibility_flags="-nostdinc++ -isystem /usr/include/c++/12 -isystem /usr/include/x86_64-linux-gnu/c++/12 -isystem /usr/include/c++/12/backward"
@@ -202,6 +207,11 @@ else
       --output-junit "$configuration_root/ctest-gui.xml" \
       --timeout "${OPEN_LMM_TSAN_TIMEOUT_SECONDS:-180}" \
       -L "sanitizer:$sanitizer_label"
+fi
+
+if [[ "$sanitizer" == TSAN ]]; then
+  bash "$script_dir/run_ros_tsan_tests.sh" "$configuration_root/ros-tsan" \
+    "$compiler_c" "$compiler_cxx" "$core_install_root"
 fi
 
 echo "==> sanitizer verified: $configuration_name ($sanitizer)"

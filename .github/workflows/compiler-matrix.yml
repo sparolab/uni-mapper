@@ -87,10 +87,10 @@ jobs:
             cc: /usr/bin/clang-15
             cxx: /usr/bin/clang++-15
           - name: tsan
-            configuration: gcc12-tsan
+            configuration: clang15-tsan
             sanitizer: TSAN
-            cc: /usr/bin/gcc-12
-            cxx: /usr/bin/g++-12
+            cc: /usr/bin/clang-15
+            cxx: /usr/bin/clang++-15
 
     steps:
       - name: Check out source
@@ -105,7 +105,9 @@ jobs:
 
       - name: Run sanitizer check
         run: |
+          # Permit setarch to reserve the sanitizer shadow address space.
           docker run --rm \
+            --security-opt seccomp=unconfined \
             --volume "$GITHUB_WORKSPACE:/root/workspace" \
             --workdir /root/workspace \
             open-lmm-compiler-matrix:ci \

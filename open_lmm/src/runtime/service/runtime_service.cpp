@@ -744,9 +744,11 @@ Result<RuntimeSnapshot> RuntimeService::Snapshot() const {
   auto instance = active.Value();
   auto pipeline = instance->controller->Snapshot();
   const auto fatal_runtime_error = instance->controller->FatalRuntimeError();
+  RuntimeStatus state;
   {
     std::lock_guard instance_lock(instance->mutex);
     instance->state = DeriveState(*instance, pipeline, fatal_runtime_error);
+    state = instance->state;
   }
   {
     std::lock_guard lock(mutex_);
@@ -764,7 +766,7 @@ Result<RuntimeSnapshot> RuntimeService::Snapshot() const {
                                   recent_public_events_.end());
   }
   return Result<RuntimeSnapshot>::Ok(
-      {instance->label, instance->state, instance->output_directory,
+      {instance->label, state, instance->output_directory,
        std::move(pipeline)});
 }
 

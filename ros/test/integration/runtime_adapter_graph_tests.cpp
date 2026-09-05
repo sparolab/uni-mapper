@@ -150,6 +150,16 @@ void RunGraphContract() {
   auto actions = rclcpp_action::create_client<ExecutePipeline>(
       observer, "/open_lmm_ros/execute");
 
+  // Callback state and late subscriptions must outlive the spinning guard,
+  // including when a watchdog/check throws during the contract.
+  std::promise<void> first_feedback;
+  std::atomic<bool> first_feedback_seen{false};
+  std::promise<void> late_cloud;
+  std::atomic<bool> late_cloud_seen{false};
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
+      late_cloud_subscription;
+  std::promise<void> cancel_feedback;
+  std::atomic<bool> cancel_feedback_seen{false};
   rclcpp::executors::MultiThreadedExecutor executor(
       rclcpp::ExecutorOptions{}, 4);
   executor.add_node(adapter);
@@ -174,8 +184,6 @@ void RunGraphContract() {
   Check(!GetWithWatchdog(malformed_future, "malformed goal"),
         "invalid action shape is rejected by the real adapter");
 
-  std::promise<void> first_feedback;
-  std::atomic<bool> first_feedback_seen{false};
   rclcpp_action::Client<ExecutePipeline>::SendGoalOptions send_options;
   send_options.feedback_callback =
       [&](GoalHandle::SharedPtr,
@@ -227,10 +235,8 @@ void RunGraphContract() {
   Check(marker_future.wait_for(20s) == std::future_status::ready,
         "committed loop marker batch crosses the real ROS topic graph");
 
-  std::promise<void> late_cloud;
-  std::atomic<bool> late_cloud_seen{false};
   auto late_cloud_future = late_cloud.get_future();
-  auto late_cloud_subscription =
+  late_cloud_subscription =
       observer->create_subscription<sensor_msgs::msg::PointCloud2>(
           "/open_lmm_ros/visualization/a_agent1/points", visualization_qos,
           [&](const sensor_msgs::msg::PointCloud2& message) {
@@ -241,8 +247,6 @@ void RunGraphContract() {
   Check(late_cloud_future.wait_for(10s) == std::future_status::ready,
         "late subscriber receives the retained committed point cloud");
 
-  std::promise<void> cancel_feedback;
-  std::atomic<bool> cancel_feedback_seen{false};
   rclcpp_action::Client<ExecutePipeline>::SendGoalOptions cancel_options;
   cancel_options.feedback_callback =
       [&](GoalHandle::SharedPtr,
@@ -266,11 +270,11 @@ void RunGraphContract() {
   const auto cancel_result =
       GetWithWatchdog(cancel_result_future, "cancel terminal result");
   const bool cancellation_accepted = !cancel_response->goals_canceling.empty();
+  // Accepting cancellation does not revoke a concurrently committed success.
   Check((cancellation_accepted &&
          cancel_result.code == rclcpp_action::ResultCode::CANCELED &&
          !cancel_result.result->success) ||
-            (!cancellation_accepted &&
-             cancel_result.code == rclcpp_action::ResultCode::SUCCEEDED &&
+            (cancel_result.code == rclcpp_action::ResultCode::SUCCEEDED &&
              cancel_result.result->success),
         "cancel endpoint preserves pre-commit cancel or committed-success semantics");
 
@@ -296,6 +300,27 @@ void RunGraphContract() {
   Check(next_result.code == rclcpp_action::ResultCode::SUCCEEDED &&
             next_result.result->success,
         "next goal did not complete after cancellation reconciliation");
+
+  // Chain requests directly from terminal results, with no status queries,
+  // visualization waits or retries that could hide delayed admission release.
+  for (int attempt = 0; attempt < 64; ++attempt) {
+    for (bool invalid_agent : {false, true}) {
+      auto chained = next;
+      chained.has_agent = invalid_agent;
+      chained.agent = invalid_agent ? "missing-agent" : "";
+      auto admission = actions->async_send_goal(chained);
+      auto handle = GetWithWatchdog(admission, "chained goal admission");
+      Check(static_cast<bool>(handle),
+            "terminal result must immediately reopen goal admission");
+      auto completion = actions->async_get_result(handle);
+      const auto completed = GetWithWatchdog(completion, "chained goal result");
+      Check(completed.code == (invalid_agent
+                                   ? rclcpp_action::ResultCode::ABORTED
+                                   : rclcpp_action::ResultCode::SUCCEEDED) &&
+                completed.result->success == !invalid_agent,
+            "success and submission failure both release goal admission");
+    }
+  }
 
   (void)events;
   (void)clouds;

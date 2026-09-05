@@ -62,6 +62,31 @@ int main() {
     std::cerr << "exact terminal cleanup did not reopen goal admission\n";
     return EXIT_FAILURE;
   }
+  if (!goals.BeginSubmit(other) ||
+      !goals.PublishJob(other, {42}).matched || goals.CancelPending(other) ||
+      !goals.RequestCancel(other).accepted || !goals.CancelPending(other)) {
+    std::cerr << "active-job cancellation did not retain the ROS request\n";
+    return EXIT_FAILURE;
+  }
+
+  goals.MarkTerminal(first);
+  goals.ReleaseTerminal(first);
+  if (goals.Phase() != open_lmm::RosGoalPhase::kActiveJob ||
+      !goals.ActiveJob() || goals.ActiveJob()->value != 42) {
+    std::cerr << "retired worker cleanup cleared the next goal\n";
+    return EXIT_FAILURE;
+  }
+
+  goals.RejectCancel(first);
+  if (!goals.CancelPending(other)) {
+    std::cerr << "stale rejection cleared the current cancellation\n";
+    return EXIT_FAILURE;
+  }
+  goals.RejectCancel(other);
+  if (goals.CancelPending(other)) {
+    std::cerr << "rejected cancellation retained a pending transport transition\n";
+    return EXIT_FAILURE;
+  }
 
   using open_lmm::Error;
   using open_lmm::JobSnapshot;

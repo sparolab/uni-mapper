@@ -182,9 +182,10 @@ rclcpp_action::CancelResponse OpenLMMROS::HandleCancel(
   }
   if (!cancel.accepted) return rclcpp_action::CancelResponse::REJECT;
   if (!cancel.job) return rclcpp_action::CancelResponse::ACCEPT;
-  return runtime_->Cancel(*cancel.job)
-             ? rclcpp_action::CancelResponse::ACCEPT
-             : rclcpp_action::CancelResponse::REJECT;
+  if (runtime_->Cancel(*cancel.job)) return rclcpp_action::CancelResponse::ACCEPT;
+  std::lock_guard lock(action_mutex_);
+  goal_coordinator_.RejectCancel(goal_handle->get_goal_id());
+  return rclcpp_action::CancelResponse::REJECT;
 }
 
 void OpenLMMROS::HandleAccepted(
@@ -207,38 +208,61 @@ void OpenLMMROS::HandleAccepted(
     auto result = std::make_shared<ExecutePipeline::Result>();
     result->message = std::string("action worker launch failed: ") +
                       error.what();
-    goal_handle->abort(result);
-    std::lock_guard lock(action_mutex_);
-    if (goal_coordinator_.MarkTerminal(goal_handle->get_goal_id())) {
-      active_goal_.reset();
-      goal_coordinator_.ReleaseTerminal(goal_handle->get_goal_id());
+    {
+      std::lock_guard lock(action_mutex_);
+      if (goal_coordinator_.MarkTerminal(goal_handle->get_goal_id())) {
+        active_goal_.reset();
+        goal_coordinator_.ReleaseTerminal(goal_handle->get_goal_id());
+      }
     }
+    goal_handle->abort(result);
   }
 }
 
 void OpenLMMROS::ExecuteGoal(
     const std::shared_ptr<GoalHandleExecutePipeline>& goal_handle) {
   const auto uuid = goal_handle->get_goal_id();
+  // Release admission before publishing a terminal result. HandleAccepted
+  // joins this worker outside action_mutex_ before starting the next one.
+  std::unique_lock action_lock(action_mutex_);
   struct TerminalGuard {
     OpenLMMROS* owner;
     rclcpp_action::GoalUUID uuid;
-    ~TerminalGuard() {
-      std::lock_guard lock(owner->action_mutex_);
-      if (!owner->goal_coordinator_.MarkTerminal(uuid)) return;
-      owner->active_goal_.reset();
-      owner->goal_coordinator_.ReleaseTerminal(uuid);
+    std::unique_lock<std::mutex>& lock;
+    void Release() {
+      if (!lock.owns_lock()) lock.lock();
+      if (owner->goal_coordinator_.MarkTerminal(uuid)) {
+        owner->active_goal_.reset();
+        owner->goal_coordinator_.ReleaseTerminal(uuid);
+      }
+      lock.unlock();
     }
-  } terminal_guard{this, uuid};
+    ~TerminalGuard() { Release(); }
+  } terminal_guard{this, uuid, action_lock};
 
   auto result = std::make_shared<ExecutePipeline::Result>();
-  {
-    std::lock_guard lock(action_mutex_);
-    if (!goal_coordinator_.BeginSubmit(uuid)) {
-      result->message = "goal was not in accepted state";
-      goal_handle->abort(result);
-      return;
+  const auto publish_cancellation = [&] {
+    // rclcpp enters CANCELING only after HandleCancel returns. Runtime
+    // cancellation can finish first; wait for that transport transition.
+    // ponytail: poll this short handoff; use a notification if ROS exposes one.
+    while (goal_coordinator_.CancelPending(uuid) &&
+           !goal_handle->is_canceling() && goal_handle->is_active()) {
+      action_lock.unlock();
+      std::this_thread::yield();
+      action_lock.lock();
     }
+    terminal_guard.Release();
+    if (goal_handle->is_canceling()) goal_handle->canceled(result);
+    // Runtime shutdown or a rejected ROS request has no CANCELING transition.
+    else if (goal_handle->is_active()) goal_handle->abort(result);
+  };
+  if (!goal_coordinator_.BeginSubmit(uuid)) {
+    result->message = "goal was not in accepted state";
+    terminal_guard.Release();
+    goal_handle->abort(result);
+    return;
   }
+  action_lock.unlock();
   auto request = DecodeGoal(*goal_handle->get_goal());
   auto submitted = request && runtime_
                        ? runtime_->Submit(request.Value())
@@ -247,31 +271,28 @@ void OpenLMMROS::ExecuteGoal(
                                      : request.GetError());
   if (!submitted) {
     result->message = submitted.GetError().Message();
-    bool canceled = false;
-    {
-      std::lock_guard lock(action_mutex_);
-      canceled = goal_coordinator_.CancelPending(uuid);
-    }
+    action_lock.lock();
+    const bool canceled = goal_coordinator_.CancelPending(uuid);
     if (canceled) {
-      goal_handle->canceled(result);
+      publish_cancellation();
     } else {
+      terminal_guard.Release();
       goal_handle->abort(result);
     }
     return;
   }
   const JobHandle job = submitted.Value();
   result->job_id = job.value;
-  bool cancel_pending = false;
-  {
-    std::lock_guard lock(action_mutex_);
-    const auto published = goal_coordinator_.PublishJob(uuid, job);
-    if (!published.matched) {
-      result->message = "submitted job no longer matches the accepted goal";
-      goal_handle->abort(result);
-      return;
-    }
-    cancel_pending = published.cancel_pending;
+  action_lock.lock();
+  const auto published = goal_coordinator_.PublishJob(uuid, job);
+  if (!published.matched) {
+    result->message = "submitted job no longer matches the accepted goal";
+    terminal_guard.Release();
+    goal_handle->abort(result);
+    return;
   }
+  const bool cancel_pending = published.cancel_pending;
+  action_lock.unlock();
   if (cancel_pending) (void)runtime_->Cancel(job);
 
   auto waited = runtime_->Wait(job);
@@ -292,11 +313,14 @@ void OpenLMMROS::ExecuteGoal(
   result->message = terminal == RosActionTerminal::kSucceeded
                         ? std::string{}
                         : waited.GetError().Message();
+  action_lock.lock();
   if (terminal == RosActionTerminal::kSucceeded) {
+    terminal_guard.Release();
     goal_handle->succeed(result);
   } else if (terminal == RosActionTerminal::kCanceled) {
-    goal_handle->canceled(result);
+    publish_cancellation();
   } else {
+    terminal_guard.Release();
     goal_handle->abort(result);
   }
 }
