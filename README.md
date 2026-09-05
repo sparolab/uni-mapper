@@ -51,6 +51,11 @@ python3.10 -m venv .venv
 
 ## Build from source
 
+Source builds and installed CMake package consumers require **CMake 3.25 or
+newer**. The minimum-version CI lane uses 3.25.0; the release image is pinned to
+3.25.3. CMake 3.5/3.16 are not supported build environments.
+See [production readiness](PRODUCTION_READINESS.md) for verified work and remaining gates.
+
 The reproducible CI toolchain image contains the supported compilers and ROS
 dependencies:
 

@@ -1,3 +1,7 @@
+if(CMAKE_VERSION VERSION_LESS 3.25)
+  message(FATAL_ERROR "open_lmm requires CMake 3.25 or newer")
+endif()
+
 include(CMakeFindDependencyMacro)
 
 set(_open_lmm_need_heavy FALSE)

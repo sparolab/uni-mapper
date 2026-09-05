@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.25)
 project(open_lmm_plugin_sdk_only LANGUAGES C)
 find_package(open_lmm 3.0 CONFIG REQUIRED COMPONENTS plugin_sdk)
 add_executable(plugin_sdk_only ../plugin_sdk_main.c)

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.25)
 project(open_lmm_contracts_only LANGUAGES CXX)
 find_package(open_lmm 3.0 CONFIG REQUIRED COMPONENTS contracts)
 add_executable(contracts_only ../contracts_main.cpp)

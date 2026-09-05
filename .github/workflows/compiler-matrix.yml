@@ -58,7 +58,14 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/root/workspace" \
             --workdir /root/workspace \
             open-lmm-compiler-matrix:ci \
-            scripts/ci/build_and_test.sh \
+            bash -euc '
+              if [[ "$1" == gcc12-gui-off ]]; then
+                python3 -m venv /tmp/open-lmm-cmake-minimum
+                /tmp/open-lmm-cmake-minimum/bin/pip install --disable-pip-version-check cmake==3.25.0
+                export PATH="/tmp/open-lmm-cmake-minimum/bin:$PATH"
+              fi
+              exec scripts/ci/build_and_test.sh "$@"
+            ' -- \
               "${{ matrix.name }}" \
               "${{ matrix.cc }}" \
               "${{ matrix.cxx }}" \

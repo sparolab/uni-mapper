@@ -63,6 +63,7 @@ echo "==> clean build: $configuration_name"
 echo "    CC=$compiler_c"
 echo "    CXX=$compiler_cxx"
 echo "    GUI=$gui_enabled"
+cmake --version
 
 build_attempt=1
 until CC="$compiler_c" CXX="$compiler_cxx" \

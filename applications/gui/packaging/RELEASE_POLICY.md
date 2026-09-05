@@ -17,10 +17,10 @@ Shared libraries use `SOVERSION=3` and full `VERSION=3.0.0`. A breaking installe
 ABI change requires a major-version and SONAME-major change. Additive source changes still require
 the normal compiler matrix and source-free package consumer checks.
 
-Plugin entry ABI v1 remains version 1. GUI plugins are the exception to the
-otherwise descriptive capability metadata: the GUI host requires the exact
-`gui:services-v3` capability before it calls `create()`, so a DSO compiled for
-the previous `GuiServices` layout is rejected safely.
+Plugin entry ABI v1 remains version 1. Algorithm hosts validate exact interface
+capability, model name, config schema and build generation before `create()`;
+the GUI host requires the exact `gui:services-v3` capability. These checks reject
+known incompatible DSOs and do not provide cross-toolchain binary compatibility.
 
 ## Supported release matrix
 
@@ -31,7 +31,10 @@ The official v3 artifacts are deliberately narrow:
 
 ROS 2 Humble and the native GUI remain source-build regression checks, but are
 not official binary artifacts. GCC 12, GCC 13 and Clang 15 remain the required
-compiler validation matrix. The release image uses CMake 3.25.3 and GTSAM
+compiler validation matrix. Source builds and installed CMake package consumers
+require CMake 3.25 or newer; the minimum-version lane uses 3.25.0. This corrects
+the former 3.5 declarations and 3.16 consumer fixtures, not a C++ API/ABI change.
+The release image uses CMake 3.25.3 and GTSAM
 4.2a9 from pinned, hash-verified inputs. Other environments may work but are
 not release gates until added to this contract.
 
