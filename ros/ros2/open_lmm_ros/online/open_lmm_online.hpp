@@ -7,6 +7,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <std_msgs/msg/string.hpp>
 
 #include <atomic>
@@ -18,6 +19,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace open_lmm {
@@ -54,6 +56,20 @@ class OpenLMMOnline : public rclcpp::Node {
     std::deque<Cloud2::ConstSharedPtr> clouds;
     std::mutex mutex;
     std::size_t merged_keyframes = 0;
+
+    // Live presentation (independent of merges): odometry path and an
+    // accumulated keyframe map in the agent's local odom frame, drawn in the
+    // shared map frame through map_T_local. map_T_local is identity until a
+    // merge aligns the agent, then follows the latest merge result.
+    std::mutex live_mutex;
+    std::vector<Eigen::Isometry3d> live_path;
+    online::KeyframeRecorder::Cloud live_map;
+    std::unordered_set<std::uint64_t> live_voxels;
+    Eigen::Isometry3d map_T_local = Eigen::Isometry3d::Identity();
+    bool aligned = false;
+    rclcpp::Publisher<Cloud2>::SharedPtr live_points_pub;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr live_path_pub;
+    rclcpp::Publisher<Cloud2>::SharedPtr live_scan_pub;
   };
 
   void OnCloud(AgentStream& agent, Cloud2::ConstSharedPtr cloud);
@@ -62,6 +78,8 @@ class OpenLMMOnline : public rclcpp::Node {
   void OnMeasurement(AgentStream& agent, const Cloud2& cloud,
                      const Odometry& odometry);
   void OnTimer();
+  void PublishLive();
+  void UpdateAlignment(AgentStream& agent, std::size_t keyframes);
   void MergeLoop(std::stop_token stop);
   bool RunMerge();
   std::filesystem::path WriteSnapshotConfig(
@@ -77,6 +95,9 @@ class OpenLMMOnline : public rclcpp::Node {
   std::size_t min_agents_ = 2;
   double max_stamp_gap_s_ = 0.02;
   int keep_snapshots_ = 2;
+  std::string live_frame_;
+  double live_voxel_m_ = 0.3;
+  rclcpp::TimerBase::SharedPtr live_timer_;
 
   std::vector<std::unique_ptr<AgentStream>> agents_;
   std::shared_ptr<RuntimeClient> runtime_;

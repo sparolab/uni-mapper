@@ -118,6 +118,8 @@ void KeyframeRecorder::WriteKeyframe(const Eigen::Isometry3d& pose) {
   {
     std::lock_guard lock(mutex_);
     ++keyframes_;
+    keyframe_poses_.push_back(pose);
+    last_cloud_ = std::make_shared<const Cloud>(std::move(filtered));
   }
   has_last_keyframe_ = true;
   last_keyframe_ = pose;
@@ -126,6 +128,19 @@ void KeyframeRecorder::WriteKeyframe(const Eigen::Isometry3d& pose) {
 std::size_t KeyframeRecorder::KeyframeCount() const {
   std::lock_guard lock(mutex_);
   return keyframes_;
+}
+
+bool KeyframeRecorder::KeyframePose(std::size_t index,
+                                    Eigen::Isometry3d& pose) const {
+  std::lock_guard lock(mutex_);
+  if (index >= keyframe_poses_.size()) return false;
+  pose = keyframe_poses_[index];
+  return true;
+}
+
+KeyframeRecorder::Cloud::ConstPtr KeyframeRecorder::LastKeyframeCloud() const {
+  std::lock_guard lock(mutex_);
+  return last_cloud_;
 }
 
 std::size_t KeyframeRecorder::Snapshot(const fs::path& destination) const {

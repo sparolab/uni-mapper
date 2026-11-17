@@ -21,12 +21,12 @@ def _nodes(context):
     agents = [a for a in get("agents").replace(",", " ").split() if a]
     frame_id = get("rviz_frame_id")
     rviz_config = os.path.join(
-        get_package_share_directory("open_lmm_ros"), "rviz", "open_lmm.rviz"
+        get_package_share_directory("open_lmm_ros"), "rviz", "open_lmm_online.rviz"
     )
     online = Node(
         package="open_lmm_ros",
         executable="open_lmm_online_node",
-        name="open_lmm_ros",  # matches the topics in rviz/open_lmm.rviz
+        name="open_lmm_ros",  # matches the topics in rviz/open_lmm_online.rviz
         output="screen",
         parameters=[
             {

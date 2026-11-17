@@ -3,10 +3,13 @@
 #include "../runtime_adapter/ros_visualization_bridge.hpp"
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <rclcpp_components/register_node_macro.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <fstream>
 #include <iomanip>
@@ -85,6 +88,9 @@ OpenLMMOnline::OpenLMMOnline(const rclcpp::NodeOptions& options)
   max_stamp_gap_s_ = declare_parameter<double>("max_stamp_gap_s", 0.02);
   keep_snapshots_ =
       static_cast<int>(declare_parameter<int64_t>("keep_snapshots", 2));
+  live_frame_ = declare_parameter<std::string>("live_frame_id", "map");
+  live_voxel_m_ = declare_parameter<double>("live_voxel_m", 0.3);
+  const double live_period_s = declare_parameter<double>("live_period_s", 1.0);
 
   online::KeyframeParams kf;
   kf.min_translation_m = declare_parameter<double>("keyframe_translation_m", 1.0);
@@ -116,6 +122,13 @@ OpenLMMOnline::OpenLMMOnline(const rclcpp::NodeOptions& options)
         [this, raw](Odometry::ConstSharedPtr msg) {
           OnOdometry(*raw, std::move(msg));
         });
+    const auto latched = rclcpp::QoS(1).transient_local();
+    agent->live_points_pub =
+        create_publisher<Cloud2>("~/live/" + name + "/points", latched);
+    agent->live_path_pub = create_publisher<nav_msgs::msg::Path>(
+        "~/live/" + name + "/path", latched);
+    agent->live_scan_pub =
+        create_publisher<Cloud2>("~/live/" + name + "/scan", rclcpp::QoS(5));
     RCLCPP_INFO(get_logger(), "agent %s: %s%s + %s%s", name.c_str(),
                 base.c_str(), cloud_topic.c_str(), base.c_str(),
                 odom_topic.c_str());
@@ -128,11 +141,14 @@ OpenLMMOnline::OpenLMMOnline(const rclcpp::NodeOptions& options)
   merge_worker_ = std::jthread([this](std::stop_token stop) { MergeLoop(stop); });
   timer_ = create_wall_timer(
       std::chrono::duration<double>(merge_period_s), [this] { OnTimer(); });
+  live_timer_ = create_wall_timer(std::chrono::duration<double>(live_period_s),
+                                  [this] { PublishLive(); });
   PublishStatus("recording into " + live.string());
 }
 
 OpenLMMOnline::~OpenLMMOnline() {
   timer_.reset();
+  live_timer_.reset();
   merge_worker_.request_stop();
   merge_wake_.notify_all();
   if (merge_worker_.joinable()) merge_worker_.join();
@@ -198,8 +214,42 @@ void OpenLMMOnline::OnMeasurement(AgentStream& agent, const Cloud2& cloud,
                                   const Odometry& odometry) {
   online::KeyframeRecorder::Cloud body;
   pcl::fromROSMsg(cloud, body);
+  const Eigen::Isometry3d world_T_body = ToIsometry(odometry);
+  Eigen::Isometry3d map_T_local;
+  {
+    std::lock_guard lock(agent.live_mutex);
+    agent.live_path.push_back(world_T_body);
+    map_T_local = agent.map_T_local;
+  }
+  if (!body.empty() && agent.live_scan_pub->get_subscription_count() > 0) {
+    online::KeyframeRecorder::Cloud scan;
+    pcl::transformPointCloud(body, scan,
+                             (map_T_local * world_T_body).matrix().cast<float>());
+    Cloud2 message;
+    pcl::toROSMsg(scan, message);
+    message.header.frame_id = live_frame_;
+    message.header.stamp = cloud.header.stamp;
+    agent.live_scan_pub->publish(message);
+  }
   try {
-    if (agent.recorder->Add(ToIsometry(odometry), body)) {
+    if (agent.recorder->Add(world_T_body, body)) {
+      if (auto keyframe = agent.recorder->LastKeyframeCloud();
+          keyframe && !keyframe->empty()) {
+        online::KeyframeRecorder::Cloud local;
+        pcl::transformPointCloud(*keyframe, local,
+                                 world_T_body.matrix().cast<float>());
+        const double inv = 1.0 / live_voxel_m_;
+        std::lock_guard lock(agent.live_mutex);
+        for (const auto& p : local.points) {
+          const auto qx = static_cast<std::int64_t>(std::floor(p.x * inv)) & 0x1FFFFF;
+          const auto qy = static_cast<std::int64_t>(std::floor(p.y * inv)) & 0x1FFFFF;
+          const auto qz = static_cast<std::int64_t>(std::floor(p.z * inv)) & 0x1FFFFF;
+          const std::uint64_t key = (static_cast<std::uint64_t>(qx) << 42) |
+                                    (static_cast<std::uint64_t>(qy) << 21) |
+                                    static_cast<std::uint64_t>(qz);
+          if (agent.live_voxels.insert(key).second) agent.live_map.push_back(p);
+        }
+      }
       const auto count = agent.recorder->KeyframeCount();
       if (count % 50 == 0) {
         RCLCPP_INFO(get_logger(), "agent %s: %zu keyframes",
@@ -210,6 +260,76 @@ void OpenLMMOnline::OnMeasurement(AgentStream& agent, const Cloud2& cloud,
     RCLCPP_ERROR(get_logger(), "agent %s keyframe write failed: %s",
                  agent.name.c_str(), error.what());
   }
+}
+
+void OpenLMMOnline::PublishLive() {
+  const auto stamp = now();
+  for (auto& agent : agents_) {
+    online::KeyframeRecorder::Cloud points;
+    nav_msgs::msg::Path path;
+    path.header.frame_id = live_frame_;
+    path.header.stamp = stamp;
+    {
+      std::lock_guard lock(agent->live_mutex);
+      const Eigen::Isometry3d& T = agent->map_T_local;
+      // pcl::transformPointCloud divides by width; skip empty clouds.
+      if (!agent->live_map.empty()) {
+        pcl::transformPointCloud(agent->live_map, points, T.matrix().cast<float>());
+      }
+      const std::size_t step = std::max<std::size_t>(1, agent->live_path.size() / 4000);
+      path.poses.reserve(agent->live_path.size() / step + 1);
+      for (std::size_t i = 0; i < agent->live_path.size(); i += step) {
+        const Eigen::Isometry3d pose = T * agent->live_path[i];
+        geometry_msgs::msg::PoseStamped out;
+        out.header = path.header;
+        out.pose.position.x = pose.translation().x();
+        out.pose.position.y = pose.translation().y();
+        out.pose.position.z = pose.translation().z();
+        const Eigen::Quaterniond q(pose.rotation());
+        out.pose.orientation.x = q.x();
+        out.pose.orientation.y = q.y();
+        out.pose.orientation.z = q.z();
+        out.pose.orientation.w = q.w();
+        path.poses.push_back(std::move(out));
+      }
+    }
+    Cloud2 message;
+    pcl::toROSMsg(points, message);
+    message.header.frame_id = live_frame_;
+    message.header.stamp = stamp;
+    agent->live_points_pub->publish(message);
+    agent->live_path_pub->publish(path);
+  }
+}
+
+void OpenLMMOnline::UpdateAlignment(AgentStream& agent, std::size_t keyframes) {
+  auto id = AgentId::Parse(agent.name);
+  if (!id) return;
+  VisualizationQuery query;
+  query.agent = id.Value();
+  query.include_points = false;
+  auto snapshot = runtime_->Visualization(query);
+  if (!snapshot || snapshot.Value().poses.empty()) return;
+  // Use the latest keyframe the merge saw: merged pose vs recorded pose.
+  const VisualizationPose* latest = nullptr;
+  for (const auto& pose : snapshot.Value().poses) {
+    if (pose.index < 0 || static_cast<std::size_t>(pose.index) >= keyframes) continue;
+    if (!latest || pose.index > latest->index) latest = &pose;
+  }
+  Eigen::Isometry3d local;
+  if (!latest || !agent.recorder->KeyframePose(latest->index, local)) return;
+  const Eigen::Isometry3d map_T_local = latest->transform.cast<double>() * local.inverse();
+  bool first = false;
+  {
+    std::lock_guard lock(agent.live_mutex);
+    first = !agent.aligned;
+    agent.map_T_local = map_T_local;
+    agent.aligned = true;
+  }
+  const auto t = map_T_local.translation();
+  RCLCPP_INFO(get_logger(), "%s %s: map_T_local t=(%.2f, %.2f, %.2f) yaw=%.1f deg",
+              agent.name.c_str(), first ? "aligned" : "realigned", t.x(), t.y(), t.z(),
+              std::atan2(map_T_local(1, 0), map_T_local(0, 0)) * 180.0 / M_PI);
 }
 
 void OpenLMMOnline::OnTimer() {
@@ -338,7 +458,11 @@ bool OpenLMMOnline::RunMerge() {
     }
   }
   if (outcome == "succeeded") {
-    for (auto& [agent, count] : snapped) agent->merged_keyframes = count;
+    for (auto& [agent, count] : snapped) {
+      agent->merged_keyframes = count;
+      UpdateAlignment(*agent, count);
+    }
+    PublishLive();
   }
   std::ostringstream report;
   report << id.str() << ' ' << outcome << " in " << std::fixed

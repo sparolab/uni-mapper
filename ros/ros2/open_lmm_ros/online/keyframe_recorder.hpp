@@ -10,6 +10,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace open_lmm::online {
 
@@ -39,6 +40,11 @@ class KeyframeRecorder {
   bool Add(const Eigen::Isometry3d& world_T_body, const Cloud& body_cloud);
 
   [[nodiscard]] std::size_t KeyframeCount() const;
+  // Pose of keyframe `index` as written to the pose file (local odom frame).
+  [[nodiscard]] bool KeyframePose(std::size_t index,
+                                  Eigen::Isometry3d& pose) const;
+  // Filtered cloud of the most recent keyframe, in that keyframe's frame.
+  [[nodiscard]] Cloud::ConstPtr LastKeyframeCloud() const;
   [[nodiscard]] const std::filesystem::path& Directory() const {
     return directory_;
   }
@@ -67,6 +73,8 @@ class KeyframeRecorder {
   std::ofstream pose_stream_;
   mutable std::mutex mutex_;
   std::size_t keyframes_ = 0;
+  std::vector<Eigen::Isometry3d> keyframe_poses_;
+  Cloud::ConstPtr last_cloud_;
 };
 
 }  // namespace open_lmm::online
