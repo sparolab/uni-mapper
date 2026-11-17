@@ -129,6 +129,26 @@ target_link_libraries(open_lmm_rosnode
   open_lmm_ros_component
 )
 
+### open_lmm_online (phase 1: periodic re-merge of streamed keyframes) ###
+find_package(PCL REQUIRED COMPONENTS common io filters)
+ament_auto_add_library(open_lmm_online_component SHARED
+  ros2/open_lmm_ros/online/keyframe_recorder.cpp
+  ros2/open_lmm_ros/online/open_lmm_online.cpp
+)
+target_include_directories(open_lmm_online_component SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(open_lmm_online_component
+  open_lmm_ros_component
+  open_lmm::client
+  ${PCL_LIBRARIES}
+)
+rclcpp_components_register_nodes(open_lmm_online_component "open_lmm::OpenLMMOnline")
+
+ament_auto_add_executable(open_lmm_online_node
+  ros2/open_lmm_ros/online/open_lmm_online_node.cpp
+)
+target_include_directories(open_lmm_online_node SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(open_lmm_online_node open_lmm_online_component)
+
 # Install launch files.
 install(DIRECTORY
   ros2/launch

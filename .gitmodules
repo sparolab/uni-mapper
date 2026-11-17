@@ -1,0 +1,4 @@
+[submodule "thirdparty/FAST_LIO_ROS2"]
+	path = thirdparty/FAST_LIO_ROS2
+	url = https://github.com/hku-mars/FAST_LIO.git
+	branch = ROS2
