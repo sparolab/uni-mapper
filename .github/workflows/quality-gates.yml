@@ -41,7 +41,7 @@ jobs:
               /usr/bin/clang-15 /usr/bin/clang++-15
       - name: Preserve static evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: quality-static-high-confidence-evidence
           path: .ci-build/quality-static-required
@@ -72,7 +72,7 @@ jobs:
               /usr/bin/clang-15 /usr/bin/clang++-15 smoke
       - name: Preserve fuzz evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: quality-fuzz-smoke-evidence
           path: .ci-build/quality-fuzz-smoke
@@ -103,7 +103,7 @@ jobs:
               /usr/bin/clang-15 /usr/bin/clang++-15 verify
       - name: Preserve coverage evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: quality-critical-coverage-evidence
           path: .ci-build/quality-critical-coverage
@@ -132,7 +132,7 @@ jobs:
               /usr/bin/clang-15 /usr/bin/clang++-15
       - name: Preserve broad static evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: quality-static-broad-evidence
           path: .ci-build/quality-static-advisory
@@ -163,7 +163,7 @@ jobs:
               /usr/bin/clang-15 /usr/bin/clang++-15 nightly
       - name: Preserve nightly fuzz evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: quality-fuzz-nightly-evidence
           path: .ci-build/quality-fuzz-nightly
